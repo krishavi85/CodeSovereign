@@ -1,0 +1,12 @@
+# Superseded material kept only as a local safety net
+_archive/
+
+# Dependencies
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode/
+.idea/

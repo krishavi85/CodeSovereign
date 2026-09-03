@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co https://api.openai.com https://api.minimaxi.chat https://api.minimax.chat https://api.anthropic.com; frame-src 'self' data: blob:">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<meta name="x-content-type-options" content="nosniff">
+<title>CodeSovereign — AI App Factory</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#070a11;color:#e6e9f2;font-size:14px;-webkit-font-smoothing:antialiased;overflow:hidden}
+::selection{background:rgba(109,93,252,.35)}
+a{color:#8b93f8;text-decoration:none}a:hover{color:#a9b0ff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.18);border-radius:6px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.16);background-clip:padding-box}
+::-webkit-scrollbar-track{background:transparent}
+button{font-family:inherit}
+input,textarea,select{font-family:inherit;color:inherit}
+button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:focus-visible{outline:2px solid #6d5dfc;outline-offset:2px;border-radius:6px}
+@keyframes csPulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes csShimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes csSpin{to{transform:rotate(360deg)}}
+@keyframes csFadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+@keyframes csToast{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+.cs-mono{font-family:'JetBrains Mono',monospace}
+
+/* ============ APP LAYOUT ============ */
+#appRoot{position:fixed;inset:0;display:flex;flex-direction:column;background:#070a11;overflow:hidden}
+.cs-top{height:60px;flex:none;display:flex;align-items:center;gap:14px;padding:0 16px;background:linear-gradient(180deg,#0c1120,#0a0e1a);border-bottom:1px solid rgba(255,255,255,.06);z-index:20}
+.cs-logo{display:flex;align-items:center;gap:11px}
+.cs-logo .badge{width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#22d3ee,#3b82f6);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px;color:#06121f;box-shadow:0 0 18px rgba(34,211,238,.35)}
+.cs-logo .name{font-weight:700;letter-spacing:.14em;font-size:14px}
+.cs-nav{display:flex;align-items:stretch;gap:4px;height:100%}
+.cs-nav button{position:relative;height:100%;border:none;background:transparent;color:#8b93a7;font:600 13.5px Inter,sans-serif;cursor:pointer;border-bottom:2px solid transparent;transition:color .15s,border-color .15s,background .15s;display:flex;align-items:center;gap:8px;padding:0 14px}
+.cs-nav button:hover{color:#c7cddb}
+.cs-nav button.active{color:#e6e9f2;border-bottom-color:#22d3ee}
+.cs-spacer{flex:1}
+.cs-chip{display:flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid rgba(255,255,255,.09);border-radius:9px;background:rgba(255,255,255,.02);font-size:13px;cursor:pointer;transition:all .15s;color:#e6e9f2;font-family:inherit}
+.cs-chip:hover{background:rgba(255,255,255,.05)}
+.cs-chip .label{color:#7b859c;flex:none}
+.cs-chip .val{font-weight:600}
+.cs-dot{width:7px;height:7px;border-radius:50%;flex:none}
+.cs-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:8px 13px;border-radius:9px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;font-family:inherit;border:1px solid transparent}
+.cs-btn-primary{background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;border:none;box-shadow:0 4px 16px rgba(109,93,252,.4)}
+.cs-btn-primary:hover{filter:brightness(1.08)}
+.cs-btn-ghost{background:rgba(255,255,255,.03);border-color:rgba(255,255,255,.11);color:#e6e9f2}
+.cs-btn-ghost:hover{background:rgba(255,255,255,.06)}
+.cs-icon-btn{width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.02);color:#9aa3b8;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;transition:all .15s}
+.cs-icon-btn:hover{background:rgba(255,255,255,.06);color:#e6e9f2}
+.cs-avatar{width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#6d5dfc,#a855f7);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;color:#fff;flex:none}
+
+.cs-body{flex:1;display:flex;min-height:0}
+.cs-rail{width:70px;flex:none;background:#0a0e1a;border-right:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px}
+.cs-rail button{position:relative;width:52px;height:54px;border-radius:11px;border:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;background:transparent;color:#6b7488;transition:all .15s;font-size:9.5px;font-weight:500}
+.cs-rail button > svg{width:18px;height:18px;flex:none}
+/* ============ SVG SIZE CONSTRAINTS (factory/recovery tab fix) ============ */
+.screen-inner > svg, .screen-inner .card > svg, .screen-inner h1 > svg,
+.screen-inner h2 > svg, .screen-inner h3 > svg, .screen-inner h4 > svg,
+.screen-inner div > svg, .screen-inner span > svg, .screen-inner button > svg, .screen-inner p > svg, .screen-inner a > svg {width:1em;height:1em;flex:none;vertical-align:-.15em;display:inline-block}
+.cs-rail button > svg{width:18px;height:18px;flex:none}
+.btn > svg, .pill > svg, .cs-chip > svg, .cs-btn > svg, .cs-icon-btn > svg {width:1em;height:1em;flex:none}
+.icon-lg{width:22px;height:22px;flex:none;vertical-align:-.2em}
+.icon-md{width:16px;height:16px;flex:none;vertical-align:-.15em}
+.icon-sm{width:13px;height:13px;flex:none;vertical-align:-.1em}
+.cs-rail button:hover{background:rgba(255,255,255,.04);color:#c7cddb}
+.cs-rail button.active{background:rgba(109,93,252,.16);color:#a9b0ff;box-shadow:inset 0 0 0 1px rgba(109,93,252,.35)}
+.cs-rail .badge-dot{position:absolute;top:8px;right:9px;width:7px;height:7px;border-radius:50%;background:#ef4444;box-shadow:0 0 6px #ef4444;animation:csPulse 1.6s infinite}
+
+.cs-main,.cs-screen{flex:1;min-width:0;position:relative;background:radial-gradient(120% 100% at 80% -10%,rgba(76,60,180,.10),transparent 55%),#080b13;display:flex;flex-direction:column;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable}
+.cs-main::-webkit-scrollbar-track{background:transparent}
+.cs-screen{flex:1;min-height:0;overflow:auto}
+
+/* ============ CARDS / BUTTONS ============ */
+.card{background:#0c1120;border:1px solid rgba(255,255,255,.06);border-radius:14px}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 14px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;border:1px solid transparent;transition:all .15s}
+.btn.primary{background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;border:none}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.ghost{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.11);color:#e6e9f2}
+.btn.ghost:hover{background:rgba(255,255,255,.06)}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600}
+:root{--bg:#070a11;--bg-2:#0d1220;--line:rgba(255,255,255,.08);--muted:#8b93a7;--accent:#7c6ff5;--accent-2:#5b4de8;--good:#34d399;--warn:#f59e0b;--err:#ef4444;--info:#60a5fa}
+
+/* ============ TOASTS ============ */
+#toasts{position:fixed;right:18px;bottom:44px;display:flex;flex-direction:column-reverse;gap:9px;z-index:99;pointer-events:none}
+.toast{display:flex;align-items:center;gap:10px;background:#141a2b;border:1px solid rgba(255,255,255,.1);border-left:3px solid #a78bfa;border-radius:10px;padding:11px 14px;font:500 12.5px Inter,sans-serif;color:#e6e9f2;box-shadow:0 12px 30px rgba(0,0,0,.5);max-width:380px;pointer-events:auto;animation:csToast .25s ease}
+.toast .dot{width:8px;height:8px;border-radius:50%;background:#a78bfa;flex:none;box-shadow:0 0 8px #a78bfa}
+
+/* ============ IDE ============ */
+.ide-layout{display:flex;height:100%;min-height:0;background:#070a11}
+.ide-side{width:240px;flex:none;background:#0a0e1a;border-right:1px solid var(--line);overflow:auto}
+.ide-side h4{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin:14px 16px 6px;font-weight:600}
+.ide-main{flex:1;display:flex;flex-direction:column;min-width:0}
+.ide-tabs{height:38px;background:#0a0e1a;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 10px;gap:4px;flex:none}
+.ide-tab{padding:6px 12px;font-size:12px;background:transparent;border:1px solid transparent;color:var(--muted);border-radius:6px;cursor:pointer}
+.ide-tab.active{background:#0c1120;color:#e6e9f2;border-color:var(--line)}
+.ide-content{flex:1;display:flex;min-height:0}
+.ide-editor{flex:1;display:flex;flex-direction:column;min-width:0;background:#0c1120}
+.ide-editor textarea{flex:1;width:100%;border:0;background:transparent;color:#e6e9f2;padding:14px;font-family:'JetBrains Mono',monospace;font-size:13px;line-height:1.6;resize:none;outline:none}
+.ide-right{width:340px;flex:none;background:#0a0e1a;border-left:1px solid var(--line);overflow:auto;display:flex;flex-direction:column}
+.ide-panel{padding:14px 16px;border-bottom:1px solid var(--line);font-size:12.5px}
+.ide-panel h5{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;margin:0 0 10px;font-weight:600}
+.tree-row{display:flex;align-items:center;gap:6px;padding:4px 14px;cursor:pointer;font-size:12.5px;color:#c7cddb;border-radius:0}
+.tree-row:hover{background:rgba(255,255,255,.04)}
+.tree-row.active{background:rgba(109,93,252,.16);color:#a9b0ff}
+.tree-row .ext{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted);min-width:36px}
+.tree-row.dir{font-weight:600;color:#9aa3b8}
+
+/* ============ TYPE SCALE (text-too-large fix) ============ */
+.cs-h1{font-size:20px;margin:0;font-weight:700;line-height:1.25}
+.cs-h2{font-size:16px;margin:0;font-weight:700;line-height:1.3}
+.cs-h3{font-size:13.5px;margin:0;font-weight:600;line-height:1.35}
+.cs-stat{font-size:22px;font-weight:700;line-height:1.1}
+.cs-stat-big{font-size:26px;font-weight:700;line-height:1.1}
+.cs-eyebrow{font-size:10.5px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);font-weight:600}
+.cs-muted{color:var(--muted);font-size:12.5px}
+.cs-body-text{font-size:13px;line-height:1.55}
+.screen-inner{padding:18px 22px;max-width:1400px;margin:0 auto;width:100%}
+.screen-inner .card{padding:16px}
+.screen-inner .card h1, .screen-inner .card h2, .screen-inner .card h3{margin:0 0 10px}
+
+
+/* Firefox scrollbar */
+.cs-main, .cs-screen { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
+
+</style>
+</head>
+<body>
+<div id="appRoot">
+  <!-- TOP NAV (rendered by app.js) -->
+  <div id="topnav"></div>
+
+  <div class="cs-body">
+    <!-- LEFT RAIL (rendered by app.js) -->
+    <div id="rail"></div>
+    <!-- MAIN AREA (rendered by app.js) -->
+    <main id="main" class="cs-main"></main>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<!-- Pipeline Picker Modal (driven by PipelineBuilder) -->
+<div id="pipelineModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:200;backdrop-filter:blur(6px)">
+  <div style="position:absolute;inset:40px;max-width:1200px;margin:auto;background:#0a0e1a;border:1px solid rgba(255,255,255,.1);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 80px rgba(0,0,0,.6);height:80vh;max-height:720px">
+    <div style="height:54px;flex:none;display:flex;align-items:center;padding:0 18px;border-bottom:1px solid rgba(255,255,255,.08);background:#0c1120;gap:14px">
+      <span style="width:22px;height:22px;display:inline-flex;color:#22d3ee">&#x1F680;</span>
+      <div style="flex:1">
+        <div style="font:700 14.5px Inter,sans-serif;color:#e6e9f2">Choose a Pipeline</div>
+        <div style="font:500 11.5px Inter,sans-serif;color:#7b859c;margin-top:2px">Scaffolds every artifact, plugin, config and source file for the chosen app type</div>
+      </div>
+      <button id="closePipelineModal" class="cs-icon-btn" style="width:30px;height:30px" title="Close">&#x2715;</button>
+    </div>
+    <div id="pipelineModalGrid" style="flex:1;overflow:auto;padding:18px;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;align-content:start"></div>
+  </div>
+</div>
+
+<!-- Preview Modal -->
+<div id="previewModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:200;backdrop-filter:blur(6px)">
+  <div style="position:absolute;inset:40px 40px 40px 40px;background:#0a0e1a;border:1px solid rgba(255,255,255,.1);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 80px rgba(0,0,0,.6)">
+    <div style="height:46px;flex:none;display:flex;align-items:center;padding:0 14px;border-bottom:1px solid rgba(255,255,255,.08);background:#0c1120;gap:10px">
+      <span style="display:flex;gap:6px"><span style="width:10px;height:10px;border-radius:50%;background:#ef4444"></span><span style="width:10px;height:10px;border-radius:50%;background:#f59e0b"></span><span style="width:10px;height:10px;border-radius:50%;background:#10b981"></span></span>
+      <span id="previewTitle" class="cs-mono" style="color:#8b93a7;font-size:12.5px;flex:1;text-align:center">preview</span>
+      <button id="previewRefresh" class="cs-icon-btn" style="width:28px;height:28px" title="Refresh">↻</button>
+      <button id="previewClose" class="cs-icon-btn" style="width:28px;height:28px" title="Close">✕</button>
+    </div>
+    <iframe id="previewFrame" sandbox="allow-scripts" style="flex:1;border:0;background:#fff"></iframe>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script src="engine-extras.js"></script>
+<script src="engine-pipeline-builder.js"></script>
+<script src="engine.marketplace.js"></script>
+<script src="engine.github.js"></script>
+<script src="engine-universal.js"></script>
+<script src="engine.recovery.js"></script>
+<script src="engine.recovery.v4.js"></script>
+<script src="engine.plugins.js"></script>
+<script src="app.plugins.js"></script>
+<script src="app.plugins.extras.js"></script>
+<script src="engine.llm.js"></script>
+<script src="app.llm.extras.js"></script>
+<script src="app.bus.js"></script>
+<script src="app.bus_ui.js"></script>
+<script src="backend.js"></script>
+<script src="app.marketplace.js"></script>
+<script src="app.github.js"></script>
+<script src="engine.workspaces.js"></script>
+<script src="engine.ratings.js"></script>
+<script src="engine.actions.js"></script>
+<script src="engine.oauth.js"></script>
+<script src="app.workspaces.js"></script>
+<script src="app.ratings.js"></script>
+<script src="app.actions.js"></script>
+<script src="app.oauth.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

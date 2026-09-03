@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.supabase.co https://github.com https://api.github.com https://oauth2.googleapis.com https://login.microsoftonline.com https://gitlab.com https://*.amazonaws.com; img-src 'self' data:">
+<title>CodeSovereign — OAuth Callback</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Inter', system-ui, sans-serif; background: #070a11; color: #e6e9f2; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .card { background: #0c1120; border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 18px; padding: 32px; max-width: 520px; width: 100%; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4); }
+  h1 { margin: 0 0 8px; font-size: 22px; }
+  .badge { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px; border-radius: 999px; font-size: 12px; font-weight: 600; margin-bottom: 16px; }
+  .badge.ok { background: rgba(52, 211, 153, 0.15); color: #34d399; }
+  .badge.err { background: rgba(239, 68, 68, 0.15); color: #ef4444; }
+  .badge.wait { background: rgba(245, 158, 11, 0.15); color: #f59e0b; }
+  .code { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; background: #0a0e1a; padding: 12px 14px; border-radius: 9px; word-break: break-all; color: #c7cddb; max-height: 200px; overflow: auto; border: 1px solid rgba(255, 255, 255, 0.06); }
+  .row { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  button { font-family: inherit; padding: 9px 16px; border-radius: 9px; font-size: 13px; font-weight: 600; cursor: pointer; border: 1px solid transparent; transition: all 0.15s; }
+  .primary { background: linear-gradient(135deg, #7c6ff5, #5b4de8); color: #fff; }
+  .ghost { background: rgba(255, 255, 255, 0.04); border-color: rgba(255, 255, 255, 0.11); color: #e6e9f2; }
+  .meta { color: #8b93a7; font-size: 13px; line-height: 1.55; margin: 10px 0 18px; }
+  .spinner { width: 18px; height: 18px; border: 2.5px solid rgba(255, 255, 255, 0.1); border-top-color: #22d3ee; border-radius: 50%; animation: spin 0.7s linear infinite; display: inline-block; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  a { color: #8b93f8; }
+</style>
+</head>
+<body>
+<div class="card">
+  <span id="badge" class="badge wait"><span class="spinner"></span> Completing OAuth…</span>
+  <h1 id="title">OAuth Callback</h1>
+  <p id="meta" class="meta">Exchanging authorization code for an access token.</p>
+  <div id="details"></div>
+  <div class="row">
+    <button id="closeBtn" class="primary" style="display:none">Close window</button>
+    <button id="retryBtn" class="ghost" style="display:none">Retry</button>
+    <button id="copyBtn" class="ghost" style="display:none">Copy details</button>
+  </div>
+</div>
+
+<script src="engine.oauth.js"></script>
+<script>
+  (function() {
+    const badge = document.getElementById('badge');
+    const title = document.getElementById('title');
+    const meta = document.getElementById('meta');
+    const details = document.getElementById('details');
+    const closeBtn = document.getElementById('closeBtn');
+    const retryBtn = document.getElementById('retryBtn');
+    const copyBtn = document.getElementById('copyBtn');
+
+    function setStatus(kind, titleText, metaText) {
+      badge.className = 'badge ' + kind;
+      badge.innerHTML = kind === 'wait'
+        ? '<span class="spinner"></span> ' + titleText
+        : (kind === 'ok' ? '✓ ' : '✗ ') + titleText;
+      title.textContent = titleText;
+      meta.textContent = metaText;
+    }
+
+    function showError(msg) {
+      setStatus('err', 'OAuth failed', msg);
+      details.innerHTML = '<div class="code">' + msg + '</div>';
+      closeBtn.style.display = 'inline-flex';
+      retryBtn.style.display = 'inline-flex';
+      copyBtn.style.display = 'inline-flex';
+    }
+
+    function showSuccess(result) {
+      setStatus('ok', 'Connected', 'You can close this window and return to the app.');
+      let html = '';
+      if (result.token) {
+        html += '<div style="font-size:11px;color:#8b93a7;text-transform:uppercase;letter-spacing:1.2px;margin:14px 0 6px">Access token</div>';
+        html += '<div class="code">' + (result.token.access_token ? maskToken(result.token.access_token) : '(stored)') + '</div>';
+        if (result.token.refresh_token) {
+          html += '<div style="font-size:11px;color:#8b93a7;text-transform:uppercase;letter-spacing:1.2px;margin:14px 0 6px">Refresh token</div>';
+          html += '<div class="code">' + maskToken(result.token.refresh_token) + '</div>';
+        }
+        if (result.token.expires_in) {
+          html += '<div style="font-size:11px;color:#8b93a7;margin-top:8px">Expires in ' + result.token.expires_in + 's</div>';
+        }
+      }
+      details.innerHTML = html;
+      closeBtn.style.display = 'inline-flex';
+      copyBtn.style.display = 'inline-flex';
+
+      // post the result back to the opener window
+      try {
+        if (window.opener && !window.opener.closed) {
+          window.opener.postMessage(Object.assign({ type: 'cs-oauth-result' }, result), window.location.origin);
+        }
+      } catch (_) {}
+    }
+
+    function maskToken(t) {
+      if (!t) return '';
+      if (t.length <= 12) return t;
+      return t.slice(0, 6) + '…' + t.slice(-4);
+    }
+
+    closeBtn.addEventListener('click', () => { try { window.close(); } catch (_) {} });
+    retryBtn.addEventListener('click', () => { window.location.reload(); });
+    copyBtn.addEventListener('click', () => {
+      try {
+        navigator.clipboard.writeText(details.innerText);
+        copyBtn.textContent = 'Copied!';
+        setTimeout(() => { copyBtn.textContent = 'Copy details'; }, 1500);
+      } catch (_) {}
+    });
+
+    // run the callback handler
+    if (!window.OAuthClient) {
+      showError('engine.oauth.js failed to load.');
+      return;
+    }
+
+    OauthClient = window.OAuthClient;
+    const result = OauthClient.handleRedirect();
+
+    if (!result) {
+      setStatus('err', 'No OAuth code found', 'This page expects a ?code=… query string from an OAuth provider redirect. No code was found in the current URL.');
+      closeBtn.style.display = 'inline-flex';
+      retryBtn.style.display = 'inline-flex';
+      return;
+    }
+
+    if (result.error) {
+      showError('Provider returned an error: ' + result.error + (result.error_description ? ' — ' + result.error_description : ''));
+      return;
+    }
+
+    if (result.code) {
+      // wait for the engine to finish exchanging; the engine fires no event yet so
+      // we manually watch the token store for the new token, with a 15s timeout.
+      setStatus('wait', 'Completing OAuth…', 'Exchanging authorization code for an access token.');
+      const start = Date.now();
+      const provider = result.provider;
+      const tick = setInterval(() => {
+        const tok = OauthClient.getToken(provider);
+        if (tok && tok.access_token) {
+          clearInterval(tick);
+          showSuccess({ provider: provider, token: tok });
+        } else if (Date.now() - start > 15000) {
+          clearInterval(tick);
+          showError('Timed out waiting for token exchange. Check your network or the client_id/client_secret in the OAuth settings.');
+        }
+      }, 200);
+    } else if (result.accessToken) {
+      // implicit flow
+      showSuccess({ provider: result.provider, token: { access_token: result.accessToken, token_type: result.tokenType, expires_in: result.expiresIn } });
+    } else {
+      setStatus('err', 'Unexpected response', 'No code or access_token was returned. URL: ' + window.location.href);
+    }
+  })();
+</script>
+</body>
+</html>

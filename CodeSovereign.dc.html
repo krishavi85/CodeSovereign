@@ -1,0 +1,1467 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:'Inter',system-ui,sans-serif;background:#070a11;color:#e6e9f2}
+::selection{background:rgba(109,93,252,.35)}
+a{color:#8b93f8;text-decoration:none}a:hover{color:#a9b0ff}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:6px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:rgba(255,255,255,.16);background-clip:padding-box}
+button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:focus-visible{outline:2px solid #6d5dfc;outline-offset:2px;border-radius:6px}
+@keyframes csPulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes csFlow{to{stroke-dashoffset:-1000}}
+</style>
+</helmet>
+<div style="height:100vh;min-width:1500px;display:flex;flex-direction:column;background:#070a11;overflow:hidden;font-size:14px">
+
+  <!-- ============ TOP BAR ============ -->
+  <header style="height:60px;flex:none;display:flex;align-items:center;gap:14px;padding:0 16px;background:linear-gradient(180deg,#0c1120,#0a0e1a);border-bottom:1px solid rgba(255,255,255,.06);z-index:20">
+    <div style="display:flex;align-items:center;gap:11px">
+      <div style="width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#22d3ee,#3b82f6);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:17px;color:#06121f;box-shadow:0 0 18px rgba(34,211,238,.35)">C</div>
+      <span style="font-weight:700;letter-spacing:.14em;font-size:14px">CODESOVEREIGN</span>
+    </div>
+    <nav style="display:flex;align-items:stretch;gap:4px;height:100%">
+      <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="4">
+        <button onClick="{{ t.go }}" style="{{ t.style }}">
+          <span style="display:flex;align-items:center;gap:8px;padding:0 14px;height:100%">
+            <span style="width:17px;height:17px;display:inline-flex" dangerouslySetInnerHTML="{{ t.icon }}"></span>
+            <span>{{ t.label }}</span>
+          </span>
+        </button>
+      </sc-for>
+    </nav>
+    <div style="flex:1"></div>
+    <div onClick="{{ cycleModel }}" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid rgba(255,255,255,.09);border-radius:9px;background:rgba(255,255,255,.02);font-size:13px;cursor:pointer" style-hover="background:rgba(255,255,255,.05)">
+      <span style="color:#7b859c;flex:none">Model:</span><span style="font-weight:600;max-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ model }}</span>
+      <span style="color:#6b7488;font-size:11px">▾</span>
+    </div>
+    <button onClick="{{ toggleEnv }}" style="display:flex;align-items:center;gap:8px;padding:7px 12px;border:1px solid rgba(255,255,255,.09);border-radius:9px;background:rgba(255,255,255,.02);font-size:13px;cursor:pointer;color:#e6e9f2">
+      <span style="color:#7b859c">Environment:</span>
+      <span style="width:7px;height:7px;border-radius:50%;background:{{ envColor }};box-shadow:0 0 8px {{ envColor }}"></span>
+      <span style="font-weight:600">{{ env }}</span><span style="color:#6b7488;font-size:11px">▾</span>
+    </button>
+    <button onClick="{{ runPreview }}" style="display:flex;align-items:center;gap:8px;padding:8px 13px;border:1px solid rgba(255,255,255,.11);border-radius:9px;background:rgba(255,255,255,.03);font-size:13px;font-weight:600;color:#e6e9f2;cursor:pointer" style-hover="background:rgba(255,255,255,.06)">
+      <span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ icRun }}"></span>Run Preview</button>
+    <button onClick="{{ deployBtn }}" style="display:flex;align-items:center;justify-content:center;gap:8px;padding:8px 15px;min-width:122px;border:none;border-radius:9px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);font-size:13px;font-weight:600;color:#fff;cursor:pointer;box-shadow:0 4px 16px rgba(109,93,252,.4)" style-hover="filter:brightness(1.08)">
+      <span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ icDeploy }}"></span>{{ deployLabel }}</button>
+    <button onClick="{{ goSettings }}" style="width:34px;height:34px;border-radius:9px;border:1px solid rgba(255,255,255,.09);background:rgba(255,255,255,.02);color:#9aa3b8;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:rgba(255,255,255,.06)"><span style="width:16px;height:16px;display:inline-flex" dangerouslySetInnerHTML="{{ icGear }}"></span></button>
+    <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#6d5dfc,#a855f7);display:flex;align-items:center;justify-content:center;font-weight:600;font-size:13px;color:#fff">K</div>
+    <button onClick="{{ closeApp }}" style="width:30px;height:30px;border-radius:8px;border:none;background:transparent;color:#6b7488;cursor:pointer;font-size:16px" style-hover="color:#e6e9f2">✕</button>
+    <sc-if value="{{ isIDE }}" hint-placeholder-val="{{ false }}">
+      <div style="display:flex;align-items:center;gap:2px;margin-left:6px;padding-left:12px;border-left:1px solid rgba(255,255,255,.08)">
+        <button onClick="{{ winMin }}" title="Minimize" style="width:30px;height:30px;border-radius:7px;border:none;background:transparent;color:#8b93a7;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:rgba(255,255,255,.06);color:#e6e9f2"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg></button>
+        <button onClick="{{ winMax }}" title="Maximize" style="width:30px;height:30px;border-radius:7px;border:none;background:transparent;color:#8b93a7;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:rgba(255,255,255,.06);color:#e6e9f2"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg></button>
+        <button onClick="{{ winClose }}" title="Close" style="width:30px;height:30px;border-radius:7px;border:none;background:transparent;color:#8b93a7;cursor:pointer;display:flex;align-items:center;justify-content:center" style-hover="background:#e0483b;color:#fff"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+      </div>
+    </sc-if>
+  </header>
+
+  <div style="flex:1;display:flex;min-height:0">
+    <!-- ============ LEFT RAIL ============ -->
+    <nav style="width:70px;flex:none;background:#0a0e1a;border-right:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px">
+      <sc-for list="{{ rail }}" as="r" hint-placeholder-count="4">
+        <button onClick="{{ r.go }}" title="{{ r.label }}" style="{{ r.style }}">
+          <sc-if value="{{ r.badge }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;top:8px;right:9px;width:7px;height:7px;border-radius:50%;background:#ef4444;box-shadow:0 0 6px #ef4444;animation:csPulse 1.6s infinite"></span></sc-if>
+          <span style="width:20px;height:20px;display:inline-flex" dangerouslySetInnerHTML="{{ r.icon }}"></span>
+          <sc-if value="{{ railExpanded }}" hint-placeholder-val="{{ true }}"><span style="font-size:9.5px;font-weight:500">{{ r.label }}</span></sc-if>
+        </button>
+      </sc-for>
+      <div style="flex:1"></div>
+      <button onClick="{{ goSettings }}" style="{{ railSettingsStyle }}">
+        <span style="width:20px;height:20px;display:inline-flex" dangerouslySetInnerHTML="{{ icGear }}"></span>
+        <sc-if value="{{ railExpanded }}" hint-placeholder-val="{{ true }}"><span style="font-size:9.5px;font-weight:500">Settings</span></sc-if>
+      </button>
+      <button onClick="{{ toggleRail }}" style="width:34px;height:34px;border-radius:8px;border:none;background:transparent;color:#4d5670;cursor:pointer" style-hover="color:#9aa3b8">{{ railArrow }}</button>
+    </nav>
+
+    <!-- ============ MAIN ============ -->
+    <main style="flex:1;min-width:0;position:relative;background:radial-gradient(120% 100% at 80% -10%,rgba(76,60,180,.10),transparent 55%),#080b13">
+
+      <!-- FACTORY -->
+      <sc-if value="{{ isFactory }}" hint-placeholder-val="{{ true }}">
+        <div style="height:100%;display:flex;min-height:0">
+          <div style="flex:1;min-width:0;overflow:auto;padding:20px 22px 40px">
+
+            <!-- Factory Control -->
+            <div style="border:1px solid rgba(255,255,255,.07);border-radius:14px;background:linear-gradient(180deg,rgba(20,26,42,.7),rgba(13,17,28,.7));padding:18px 20px;margin-bottom:16px">
+              <div style="font-size:12px;font-weight:600;color:#8b93a7;letter-spacing:.02em;margin-bottom:14px">Factory Control</div>
+              <div style="display:flex;align-items:center;gap:18px">
+                <div style="width:56px;height:56px;border-radius:13px;background:linear-gradient(135deg,#3b2f6e,#7c4dcf);display:flex;align-items:center;justify-content:center;flex:none">
+                  <span style="width:26px;height:26px;display:inline-flex;color:#fff" dangerouslySetInnerHTML="{{ icWave }}"></span></div>
+                <div style="min-width:190px">
+                  <div style="display:flex;align-items:center;gap:9px"><span style="font-size:18px;font-weight:700">BeatShore</span>
+                    <span style="font-size:10.5px;font-weight:600;color:#34d399;background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.25);padding:2px 8px;border-radius:6px">Production</span></div>
+                  <div style="color:#8b93a7;font-size:12.5px;margin-top:3px">Next-gen music experience platform</div>
+                  <div style="display:flex;align-items:center;gap:10px;color:#6b7488;font-size:12px;margin-top:7px">
+                    <span>v1.3.0</span><span>•</span><span style="display:inline-flex;align-items:center;gap:4px"><span style="width:12px;height:12px;display:inline-flex" dangerouslySetInnerHTML="{{ icBranch }}"></span>main</span>
+                    <span onClick="{{ viewProject }}" style="border:1px solid rgba(255,255,255,.1);border-radius:6px;padding:2px 8px;color:#9aa3b8;cursor:pointer">View Project ▾</span></div>
+                </div>
+                <div style="flex:1"></div>
+                <div style="display:flex;gap:11px">
+                  <sc-for list="{{ factoryActions }}" as="a" hint-placeholder-count="4">
+                    <button onClick="{{ a.go }}" style="{{ a.style }}">
+                      <span style="width:17px;height:17px;display:inline-flex" dangerouslySetInnerHTML="{{ a.icon }}"></span>
+                      <span style="display:flex;flex-direction:column;align-items:flex-start;line-height:1.25"><span style="font-size:13.5px;font-weight:600">{{ a.title }}</span><span style="font-size:11px;opacity:.72;font-weight:400">{{ a.sub }}</span></span>
+                    </button>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+
+            <!-- Build Pipeline -->
+            <div style="border:1px solid rgba(255,255,255,.07);border-radius:14px;background:rgba(13,17,28,.6);padding:18px 20px;margin-bottom:16px">
+              <div style="font-size:12px;font-weight:600;color:#8b93a7;margin-bottom:16px">Build Pipeline</div>
+              <div style="display:flex;align-items:center;gap:6px">
+                <sc-for list="{{ pipeline }}" as="p" hint-placeholder-count="6">
+                  <div style="flex:1;display:flex;align-items:center;gap:6px">
+                    <div style="flex:1;display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:11px;border:1px solid {{ p.border }};background:{{ p.bg }}">
+                      <div style="width:34px;height:34px;border-radius:9px;background:{{ p.iconBg }};display:flex;align-items:center;justify-content:center;flex:none;color:{{ p.iconColor }}">
+                        <span style="width:17px;height:17px;display:inline-flex" dangerouslySetInnerHTML="{{ p.icon }}"></span></div>
+                      <div style="min-width:0"><div style="font-size:12.5px;font-weight:600;color:{{ p.titleColor }}">{{ p.n }} {{ p.name }}</div>
+                        <div style="font-size:10.5px;color:#6b7488;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.sub }}</div></div>
+                    </div>
+                    <span style="color:#3a4256;font-size:13px">{{ p.arrow }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display:flex;align-items:center;gap:14px;margin-top:16px">
+                <span style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:{{ pipeColor }};font-weight:600"><span style="{{ pipeDotStyle }}"></span>{{ pipeLabel }}</span>
+                <span style="font-size:12.5px;color:#e6e9f2;font-weight:600">{{ pipeName }}</span>
+                <span style="font-size:12.5px;color:#8b93a7">{{ pipeDesc }}</span>
+                <div style="flex:1;height:5px;border-radius:4px;background:rgba(255,255,255,.06);overflow:hidden;max-width:340px"><div style="width:{{ pipePct }};height:100%;background:linear-gradient(90deg,#22d3ee,#6d5dfc);transition:width .2s"></div></div>
+                <span style="font-size:12px;color:#8b93a7">Elapsed: <b style="color:#e6e9f2">08:42</b></span>
+                <span style="font-size:12px;color:#8b93a7">Est. remaining: <b style="color:#e6e9f2">04:18</b></span>
+              </div>
+            </div>
+
+            <!-- Production Line -->
+            <div style="border:1px solid rgba(255,255,255,.07);border-radius:14px;background:rgba(13,17,28,.6);padding:18px 20px;margin-bottom:16px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+                <div style="font-size:12px;font-weight:600;color:#8b93a7">Production Line <span style="color:#5f6980">(Build Targets)</span></div>
+                <span onClick="{{ viewQueue }}" style="font-size:12px;color:#8b93f8;cursor:pointer;display:inline-flex;align-items:center;gap:6px">View Full Queue ⤢</span></div>
+              <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px">
+                <sc-for list="{{ targets }}" as="t" hint-placeholder-count="6">
+                  <div style="{{ t.cardStyle }}">
+                    <div style="display:flex;align-items:center;gap:9px;margin-bottom:12px">
+                      <span style="width:22px;height:22px;display:inline-flex;color:{{ t.iconColor }}" dangerouslySetInnerHTML="{{ t.icon }}"></span>
+                      <div style="min-width:0"><div style="font-size:13px;font-weight:600;white-space:nowrap">{{ t.name }}</div><div style="font-size:10px;color:#6b7488;white-space:nowrap">{{ t.sub }}</div></div></div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+                      <span style="font-size:11px;font-weight:600;color:{{ t.statusColor }};background:{{ t.statusBg }};padding:2px 8px;border-radius:6px;display:inline-flex;align-items:center;gap:5px"><span style="width:12px;height:12px;display:inline-flex" dangerouslySetInnerHTML="{{ t.statusIcon }}"></span>{{ t.status }}</span>
+                      <span style="font-size:11px;color:#8b93a7">{{ t.meta }}</span></div>
+                    <sc-if value="{{ t.building }}" hint-placeholder-val="{{ true }}"><div style="height:4px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden;margin-bottom:8px"><div style="width:{{ t.progress }};height:100%;background:{{ t.iconColor }}"></div></div></sc-if>
+                    <svg viewBox="0 0 120 26" preserveAspectRatio="none" style="width:100%;height:26px;display:block"><polyline points="{{ t.spark }}" fill="none" stroke="{{ t.iconColor }}" stroke-width="1.5" opacity=".85"/></svg>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <!-- Modules -->
+            <div style="border:1px solid rgba(255,255,255,.07);border-radius:14px;background:rgba(13,17,28,.6);padding:18px 20px;margin-bottom:16px">
+              <div style="font-size:12px;font-weight:600;color:#8b93a7;margin-bottom:14px">Templates <span style="color:#3a4256">·</span> Components <span style="color:#3a4256">·</span> Modules</div>
+              <div style="display:grid;grid-template-columns:repeat(8,1fr);gap:11px">
+                <sc-for list="{{ modules }}" as="m" hint-placeholder-count="7">
+                  <div onClick="{{ m.open }}" style="border:1px solid rgba(255,255,255,.08);border-radius:11px;background:rgba(255,255,255,.02);padding:13px;cursor:pointer" style-hover="border-color:rgba(109,93,252,.4);background:rgba(109,93,252,.05)">
+                    <div style="width:30px;height:30px;border-radius:8px;background:{{ m.bg }};display:flex;align-items:center;justify-content:center;color:{{ m.color }};margin-bottom:11px"><span style="width:16px;height:16px;display:inline-flex" dangerouslySetInnerHTML="{{ m.icon }}"></span></div>
+                    <div style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ m.name }}</div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-top:5px"><span style="font-size:10.5px;color:#6b7488">{{ m.ver }}</span><span style="font-size:9.5px;font-weight:600;color:#34d399">{{ m.active }}</span></div>
+                  </div>
+                </sc-for>
+                <div onClick="{{ addModule }}" style="border:1px dashed rgba(255,255,255,.14);border-radius:11px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:#7b859c;cursor:pointer;min-height:88px" style-hover="border-color:rgba(109,93,252,.5);color:#a9b0ff">
+                  <span style="width:18px;height:18px;display:inline-flex" dangerouslySetInnerHTML="{{ icPlus }}"></span><span style="font-size:11.5px;font-weight:500">Add Module</span></div>
+              </div>
+            </div>
+
+            <!-- Artifacts + Quality -->
+            <div style="display:grid;grid-template-columns:1.35fr 1fr;gap:16px">
+              <div style="border:1px solid rgba(255,255,255,.07);border-radius:14px;background:rgba(13,17,28,.6);padding:18px 20px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px"><div style="font-size:12px;font-weight:600;color:#8b93a7">Artifacts / Releases</div><span onClick="{{ viewReleases }}" style="font-size:12px;color:#8b93f8;cursor:pointer">View All Releases</span></div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:11px">
+                  <sc-for list="{{ artifacts }}" as="a" hint-placeholder-count="4">
+                    <div style="border:1px solid rgba(255,255,255,.08);border-radius:11px;background:rgba(255,255,255,.02);padding:13px">
+                      <span style="width:20px;height:20px;display:inline-flex;color:{{ a.color }}" dangerouslySetInnerHTML="{{ a.icon }}"></span>
+                      <div style="font-size:12px;font-weight:600;margin-top:9px">{{ a.name }}</div>
+                      <div style="font-size:10.5px;color:#6b7488">{{ a.file }}</div>
+                      <div style="font-size:12.5px;font-weight:600;margin-top:9px">{{ a.size }}</div>
+                      <div style="font-size:10.5px;color:#6b7488">{{ a.built }}</div>
+                      <div style="display:flex;align-items:center;justify-content:space-between;margin-top:9px"><span style="font-size:10.5px;font-weight:600;color:{{ a.stColor }}">{{ a.status }}</span><span onClick="{{ a.dl }}" style="width:15px;height:15px;display:inline-flex;color:#7b859c;cursor:pointer" style-hover="color:#e6e9f2" dangerouslySetInnerHTML="{{ icDl }}"></span></div>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px;margin-top:15px;font-size:11.5px;color:#7b859c">
+                  <span>Artifacts retained for <b style="color:#c7cddb">30 days</b></span><span style="color:#3a4256">|</span>
+                  <span>Storage: <b style="color:#c7cddb">12.6 GB / 100 GB</b></span>
+                  <div style="flex:1;height:5px;border-radius:4px;background:rgba(255,255,255,.06);max-width:200px;overflow:hidden"><div style="width:12%;height:100%;background:linear-gradient(90deg,#6d5dfc,#a855f7)"></div></div><span>12%</span></div>
+              </div>
+
+              <div style="border:1px solid rgba(255,255,255,.07);border-radius:14px;background:rgba(13,17,28,.6);padding:18px 20px">
+                <div style="font-size:12px;font-weight:600;color:#8b93a7;margin-bottom:14px">Quality &amp; Checks</div>
+                <div style="display:flex;gap:18px">
+                  <div style="flex:none;display:flex;flex-direction:column;align-items:center;justify-content:center;width:130px">
+                    <div style="position:relative;width:112px;height:112px">
+                      <svg viewBox="0 0 120 120" style="width:112px;height:112px;transform:rotate(-90deg)"><circle cx="60" cy="60" r="52" fill="none" stroke="rgba(255,255,255,.07)" stroke-width="9"/><circle cx="60" cy="60" r="52" fill="none" stroke="url(#qg)" stroke-width="9" stroke-linecap="round" stroke-dasharray="326" stroke-dashoffset="19.5"/><defs><linearGradient id="qg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#22d3ee"/><stop offset="1" stop-color="#34d399"/></linearGradient></defs></svg>
+                      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center"><span style="font-size:32px;font-weight:700">94</span></div></div>
+                    <div style="font-size:12px;font-weight:600;margin-top:8px">Quality Score</div><div style="font-size:11px;color:#34d399">Excellent</div><div style="font-size:10.5px;color:#6b7488;margin-top:2px">↑ 6 pts vs last build</div></div>
+                  <div style="flex:1;display:flex;flex-direction:column;gap:9px">
+                    <sc-for list="{{ checks }}" as="c" hint-placeholder-count="5">
+                      <div style="display:flex;align-items:center;gap:9px;font-size:12.5px"><span style="width:15px;height:15px;display:inline-flex;color:#34d399" dangerouslySetInnerHTML="{{ icCheckC }}"></span><span style="flex:1">{{ c.name }}</span><span style="color:#8b93a7">{{ c.result }}</span><span style="width:14px;height:14px;display:inline-flex;color:#34d399" dangerouslySetInnerHTML="{{ icCheck }}"></span></div>
+                    </sc-for>
+                    <div style="display:flex;align-items:center;gap:9px;margin-top:6px;padding-top:12px;border-top:1px solid rgba(255,255,255,.06)"><span style="width:20px;height:20px;display:inline-flex;color:#34d399" dangerouslySetInnerHTML="{{ icShield }}"></span><span style="font-size:12.5px;font-weight:600">Deployment Readiness</span><span style="flex:1"></span><span style="font-size:12px;color:#34d399;font-weight:600">Ready to deploy</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Factory right sidebar -->
+          <aside style="width:330px;flex:none;border-left:1px solid rgba(255,255,255,.06);background:#0a0e1a;overflow:auto;padding:16px 18px">
+            <div style="display:flex;gap:20px;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:16px">
+              <sc-for list="{{ factoryTabs }}" as="t" hint-placeholder-count="3"><span onClick="{{ t.select }}" style="{{ t.tabStyle }}">{{ t.label }}</span></sc-for>
+            </div>
+
+            <sc-if value="{{ ftEnv }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><span style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c">PRODUCTION TARGET</span><span style="width:14px;height:14px;display:inline-flex;color:#5f6980" dangerouslySetInnerHTML="{{ icEdit }}"></span></div>
+            <sc-for list="{{ prodTarget }}" as="r" hint-placeholder-count="3"><div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:#8b93a7">{{ r.k }}</span><span style="font-weight:600;color:{{ r.color }}">{{ r.v }}</span></div></sc-for>
+
+            <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c;margin:20px 0 10px">TECHNOLOGY STACK</div>
+            <sc-for list="{{ techStack }}" as="r" hint-placeholder-count="6"><div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:#8b93a7">{{ r.k }}</span><span style="font-weight:600">{{ r.v }}</span></div></sc-for>
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:20px 0 10px"><span style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c">RECENT ACTIVITY</span><span onClick="{{ viewLog }}" style="font-size:11px;color:#8b93f8;cursor:pointer">View All</span></div>
+            <sc-for list="{{ recentActivity }}" as="a" hint-placeholder-count="4"><div style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:12px"><span style="color:#6b7488;font-size:11px;width:52px;flex:none">{{ a.time }}</span><div style="flex:1;min-width:0"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.text }}</div><div style="font-size:10.5px;color:#6b7488">{{ a.sub }}</div></div><span style="width:15px;height:15px;display:inline-flex;color:{{ a.color }}" dangerouslySetInnerHTML="{{ a.icon }}"></span></div></sc-for>
+            </sc-if>
+
+            <sc-if value="{{ ftRelease }}" hint-placeholder-val="{{ false }}">
+            <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c;margin:2px 0 10px">BUILD &amp; RELEASE</div>
+            <sc-for list="{{ buildRelease }}" as="r" hint-placeholder-count="5"><div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:#8b93a7">{{ r.k }}</span><span style="font-weight:600;color:{{ r.color }}">{{ r.v }}</span></div></sc-for>
+            <button onClick="{{ bumpVersion }}" style="width:100%;margin-top:14px;padding:10px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 12.5px Inter;cursor:pointer">Bump version → 1.3.1</button>
+            <button onClick="{{ channelPick }}" style="width:100%;margin-top:9px;padding:10px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 12.5px Inter;cursor:pointer">Release channel: Stable ▾</button>
+            </sc-if>
+
+            <sc-if value="{{ ftActivity }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin:2px 0 10px"><span style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c">ALL ACTIVITY</span><span onClick="{{ viewLog }}" style="font-size:11px;color:#8b93f8;cursor:pointer">Open log</span></div>
+            <sc-for list="{{ activityFull }}" as="a" hint-placeholder-count="7"><div style="display:flex;align-items:center;gap:10px;padding:8px 0;font-size:12px"><span style="color:#6b7488;font-size:11px;width:52px;flex:none">{{ a.time }}</span><div style="flex:1;min-width:0"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.text }}</div><div style="font-size:10.5px;color:#6b7488">{{ a.sub }}</div></div><span style="width:15px;height:15px;display:inline-flex;color:{{ a.color }}" dangerouslySetInnerHTML="{{ a.icon }}"></span></div></sc-for>
+            </sc-if>
+          </aside>
+        </div>
+      </sc-if>
+
+      <!-- other screens injected below -->
+      <sc-if value="{{ isAgent }}" hint-placeholder-val="{{ false }}">
+        <div style="height:100%;display:flex;min-height:0">
+          <!-- Execution plan -->
+          <div style="width:290px;flex:none;border-right:1px solid rgba(255,255,255,.06);overflow:auto;padding:18px 16px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><span style="font-size:13px;font-weight:600">Execution Plan</span><span style="font-size:11.5px;color:#8b93a7">{{ planDone }} completed</span></div>
+            <div style="height:5px;border-radius:4px;background:rgba(255,255,255,.07);overflow:hidden;margin-bottom:16px"><div style="width:{{ planPct }};height:100%;background:linear-gradient(90deg,#22d3ee,#6d5dfc);transition:width .3s"></div></div>
+            <sc-for list="{{ planSteps }}" as="s" hint-placeholder-count="6">
+              <div style="{{ s.cardStyle }}">
+                <div style="{{ s.badgeStyle }}">{{ s.n }}</div>
+                <div style="min-width:0;flex:1">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:13px;font-weight:600;color:{{ s.titleColor }}">{{ s.title }}</span><span style="font-size:10px;font-weight:600;color:{{ s.stColor }};background:{{ s.stBg }};padding:2px 7px;border-radius:6px;white-space:nowrap">{{ s.st }}</span></div>
+                  <div style="font-size:11.5px;color:#7b859c;margin-top:4px;line-height:1.4">{{ s.desc }}</div>
+                </div>
+              </div>
+            </sc-for>
+            <button onClick="{{ addStep }}" style="width:100%;padding:11px;border:1px dashed rgba(255,255,255,.14);border-radius:11px;background:transparent;color:#8b93a7;cursor:pointer;font:500 12.5px Inter;display:flex;align-items:center;justify-content:center;gap:7px;margin-top:4px" style-hover="border-color:rgba(109,93,252,.5);color:#a9b0ff"><span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ icPlus }}"></span>Add custom step</button>
+          </div>
+
+          <!-- Center workspace -->
+          <div style="flex:1;min-width:0;overflow:auto;padding:22px 24px 36px">
+            <div style="display:flex;align-items:flex-start;gap:13px;margin-bottom:18px">
+              <div style="width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#6d5dfc,#a855f7);display:flex;align-items:center;justify-content:center;color:#fff;flex:none"><span style="width:21px;height:21px;display:inline-flex" dangerouslySetInnerHTML="{{ icSparkle }}"></span></div>
+              <div style="flex:1"><div style="font-size:20px;font-weight:700">Agent Workspace</div><div style="font-size:13px;color:#8b93a7;margin-top:2px">Plan, build, review, and deploy with coordinated agents.</div></div>
+              <div style="display:flex;align-items:center;gap:12px">
+                <span onClick="{{ autoMode }}" style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#8b93a7;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:6px 10px;cursor:pointer">Auto <span style="width:12px;height:12px;display:inline-flex" dangerouslySetInnerHTML="{{ icChev }}"></span></span>
+                <span style="display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#e6e9f2">Stream <span onClick="{{ toggleStream }}" style="{{ streamTrackStyle }}"><span style="{{ streamKnobStyle }}"></span></span></span>
+              </div>
+            </div>
+
+            <div style="border:1px solid rgba(109,93,252,.4);border-radius:13px;background:rgba(124,91,214,.05);padding:6px 6px 6px 18px;display:flex;align-items:center;gap:12px;margin-bottom:14px;box-shadow:0 0 0 3px rgba(109,93,252,.08)">
+              <input value="{{ agentPrompt }}" onChange="{{ setAgentPrompt }}" onKeyDown="{{ keyRun }}" placeholder="Describe what you want to build…" style="flex:1;background:transparent;border:none;outline:none;color:#e6e9f2;font:400 14px Inter,sans-serif;padding:13px 0">
+              <span onClick="{{ attachSpec }}" style="width:20px;height:20px;display:inline-flex;color:#7b859c;cursor:pointer" dangerouslySetInnerHTML="{{ icClip }}"></span>
+              <span onClick="{{ mention }}" style="width:20px;height:20px;display:inline-flex;color:#7b859c;cursor:pointer" dangerouslySetInnerHTML="{{ icAt }}"></span>
+              <button onClick="{{ runAgent }}" style="display:flex;align-items:center;gap:8px;padding:11px 18px;border:none;border-radius:10px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 13.5px Inter;cursor:pointer"><span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ icPlay }}"></span>Run <span style="width:14px;height:14px;display:inline-flex" dangerouslySetInnerHTML="{{ icChev }}"></span></button>
+            </div>
+            <div style="display:flex;gap:11px;margin-bottom:20px">
+              <button onClick="{{ approvePlan }}" style="display:flex;align-items:center;gap:8px;padding:9px 15px;border:1px solid rgba(124,91,214,.4);border-radius:9px;background:rgba(124,91,214,.1);color:#c4b5fd;font:600 12.5px Inter;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex" dangerouslySetInnerHTML="{{ icSparkle }}"></span>Approve Plan</button>
+              <button onClick="{{ stopRun }}" style="{{ stopStyle }}"><span style="width:13px;height:13px;display:inline-flex" dangerouslySetInnerHTML="{{ icStop }}"></span>{{ stopLabel }}</button>
+            </div>
+
+            <!-- Activity stream -->
+            <div style="border:1px solid rgba(255,255,255,.07);border-radius:13px;background:rgba(13,17,28,.5);margin-bottom:18px">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.06)">
+                <div style="display:flex;align-items:center;gap:10px"><span style="font-size:13px;font-weight:600">Activity Stream</span><span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:{{ liveColor }}"><span style="{{ liveDotStyle }}"></span>{{ liveLabel }}</span></div>
+                <div style="display:flex;align-items:center;gap:12px"><span onClick="{{ viewLog }}" style="font-size:12px;color:#8b93f8;cursor:pointer">View Full Log</span><span onClick="{{ expandView }}" style="width:15px;height:15px;display:inline-flex;color:#7b859c;cursor:pointer" dangerouslySetInnerHTML="{{ icExpand }}"></span></div>
+              </div>
+              <div style="padding:6px 6px">
+                <sc-for list="{{ activityRows }}" as="r" hint-placeholder-count="6">
+                  <div style="display:flex;align-items:center;gap:13px;padding:12px 12px;border-radius:10px" style-hover="background:rgba(255,255,255,.02)">
+                    <span style="width:9px;height:9px;border-radius:50%;flex:none;background:{{ r.color }};box-shadow:0 0 8px {{ r.color }}"></span>
+                    <span style="width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;background:{{ r.stBg }};color:{{ r.color }}"><span style="width:16px;height:16px;display:inline-flex" dangerouslySetInnerHTML="{{ r.icon }}"></span></span>
+                    <span style="font-size:13px;font-weight:600;width:66px;flex:none">{{ r.name }}</span>
+                    <span style="font-size:10.5px;font-weight:600;color:{{ r.color }};background:{{ r.stBg }};padding:2px 8px;border-radius:6px;flex:none">{{ r.st }}</span>
+                    <span style="flex:1;font-size:12.5px;color:#8b93a7;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.desc }}</span>
+                    <sc-for list="{{ r.badges }}" as="b" hint-placeholder-count="0"><span style="font-size:10.5px;font-weight:600;color:{{ b.color }};background:{{ b.bg }};padding:3px 9px;border-radius:6px;flex:none;white-space:nowrap">{{ b.t }}</span></sc-for>
+                    <sc-if value="{{ r.file }}" hint-placeholder-val="{{ false }}"><span style="display:inline-flex;align-items:center;gap:5px;font:500 11px JetBrains Mono,monospace;color:#c7cddb;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:3px 8px;border-radius:6px;flex:none">{{ r.file.name }} <b style="color:#34d399">{{ r.file.d }}</b></span></sc-if>
+                    <sc-if value="{{ r.time }}" hint-placeholder-val="{{ false }}"><span style="font-size:11px;color:#6b7488;flex:none">{{ r.time }}</span></sc-if>
+                    <span style="width:15px;height:15px;display:inline-flex;color:#5f6980;flex:none" dangerouslySetInnerHTML="{{ icChev }}"></span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <!-- Specialist agents -->
+            <div style="font-size:13px;font-weight:600;margin-bottom:12px">Specialist Agents</div>
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px">
+              <sc-for list="{{ specialists }}" as="s" hint-placeholder-count="5">
+                <div style="border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02);padding:13px">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px"><span style="width:30px;height:30px;border-radius:8px;display:flex;align-items:center;justify-content:center;background:{{ s.stColor }}20;color:{{ s.color }}"><span style="width:16px;height:16px;display:inline-flex" dangerouslySetInnerHTML="{{ s.icon }}"></span></span><span style="width:13px;height:13px;display:inline-flex;color:#5f6980" dangerouslySetInnerHTML="{{ icChev }}"></span></div>
+                  <div style="font-size:12.5px;font-weight:600">{{ s.name }}</div>
+                  <div style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:{{ s.stColor }};margin-top:2px"><span style="width:5px;height:5px;border-radius:50%;background:{{ s.stColor }}"></span>{{ s.st }}</div>
+                  <svg viewBox="0 0 120 22" preserveAspectRatio="none" style="width:100%;height:22px;margin-top:8px;display:block"><polyline points="{{ s.spark }}" fill="none" stroke="{{ s.color }}" stroke-width="1.5" opacity=".7"/></svg>
+                </div>
+              </sc-for>
+            </div>
+
+            <!-- Artifacts -->
+            <div style="border:1px solid rgba(255,255,255,.07);border-radius:13px;background:rgba(13,17,28,.5);padding:6px 16px 16px">
+              <div style="display:flex;gap:20px;border-bottom:1px solid rgba(255,255,255,.06);margin-bottom:14px;padding-top:8px">
+                <sc-for list="{{ artTabs }}" as="t" hint-placeholder-count="3"><span onClick="{{ t.select }}" style="{{ t.tabStyle }}">{{ t.label }}</span></sc-for>
+              </div>
+              <sc-if value="{{ atPatch }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;flex-direction:column;gap:2px">
+                  <div style="font:600 13px 'JetBrains Mono',monospace;margin-bottom:8px"><span style="color:#34d399">+513</span> <span style="color:#f87171">-31</span> <span style="color:#8b93a7;font:400 12px Inter,sans-serif">across 6 files</span></div>
+                  <sc-for list="{{ agentArtifacts }}" as="a" hint-placeholder-count="6"><div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span style="flex:1;font:500 12px 'JetBrains Mono',monospace">{{ a.name }}</span><span style="font-size:11px;color:#34d399;font-weight:600">{{ a.plus }}</span><span style="font-size:11px;color:#f87171">{{ a.minus }}</span></div></sc-for>
+                </div>
+              </sc-if>
+              <sc-if value="{{ atActions }}" hint-placeholder-val="{{ false }}">
+                <sc-for list="{{ recentActions }}" as="a" hint-placeholder-count="4"><div style="display:flex;align-items:center;gap:11px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span style="width:15px;height:15px;display:inline-flex;color:#a78bfa" dangerouslySetInnerHTML="{{ icSparkle }}"></span><span style="flex:1;font-size:12.5px;font-weight:500">{{ a.t }}</span><span style="font-size:11px;color:#8b93a7">{{ a.d }}</span><span style="font-size:10.5px;color:#6b7488">{{ a.time }}</span></div></sc-for>
+              </sc-if>
+              <sc-if value="{{ atArtifacts }}" hint-placeholder-val="{{ true }}">
+              <div style="display:grid;grid-template-columns:repeat(3,1fr) 150px;gap:11px">
+                <sc-for list="{{ agentArtifacts }}" as="a" hint-placeholder-count="6">
+                  <div style="display:flex;align-items:center;gap:10px;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.02);padding:11px 12px">
+                    <span style="width:28px;height:28px;border-radius:7px;flex:none;display:flex;align-items:center;justify-content:center;background:{{ a.color }}1e;color:{{ a.color }}"><span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ icFile }}"></span></span>
+                    <div style="min-width:0;flex:1"><div style="font:500 12px JetBrains Mono,monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.name }}</div><div style="font-size:10.5px;color:#6b7488">{{ a.type }}</div></div>
+                    <div style="text-align:right;flex:none"><div style="font-size:10.5px;color:#34d399;font-weight:600">{{ a.plus }}</div><div style="font-size:10.5px;color:#f87171">{{ a.minus }}</div></div>
+                  </div>
+                </sc-for>
+                <div style="grid-row:span 2;border:1px solid rgba(255,255,255,.08);border-radius:10px;background:rgba(255,255,255,.02);padding:13px;display:flex;flex-direction:column">
+                  <div style="font-size:12px;font-weight:600;margin-bottom:8px">Patch Summary</div>
+                  <div style="font:600 13px JetBrains Mono,monospace"><span style="color:#34d399">+513</span> <span style="color:#f87171">-31</span></div>
+                  <div style="font-size:10.5px;color:#6b7488;margin-top:3px">6 files changed</div>
+                  <div style="flex:1"></div>
+                  <button onClick="{{ viewArtifacts }}" style="width:100%;padding:8px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 11.5px Inter;cursor:pointer">View All Artifacts →</button>
+                </div>
+              </div>
+              </sc-if>
+            </div>
+          </div>
+
+          <!-- Right context -->
+          <aside style="width:330px;flex:none;border-left:1px solid rgba(255,255,255,.06);background:#0a0e1a;overflow:auto;padding:16px 18px">
+            <div style="display:flex;gap:20px;border-bottom:1px solid rgba(255,255,255,.07);margin-bottom:16px">
+              <sc-for list="{{ ctxTabs }}" as="t" hint-placeholder-count="3"><span onClick="{{ t.select }}" style="{{ t.tabStyle }}">{{ t.label }}</span></sc-for>
+            </div>
+            <sc-if value="{{ ctContext }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px"><span style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c">CONTEXT FILES</span><span style="font-size:11px;color:#8b93a7;background:rgba(255,255,255,.05);padding:1px 7px;border-radius:6px">8</span></div>
+            <sc-for list="{{ contextFiles }}" as="f" hint-placeholder-count="5">
+              <div style="display:flex;align-items:center;gap:10px;padding:7px 0" style-hover="opacity:.8">
+                <span style="font:600 9px JetBrains Mono,monospace;color:{{ f.color }};background:{{ f.color }}1e;padding:3px 6px;border-radius:5px;flex:none;width:32px;text-align:center">{{ f.ext }}</span>
+                <span style="flex:1;font:500 12.5px JetBrains Mono,monospace">{{ f.name }}</span>
+                <span style="font-size:10.5px;color:#6b7488">{{ f.path }}</span></div>
+            </sc-for>
+            <div onClick="{{ moreFiles }}" style="font-size:12px;color:#8b93f8;margin-top:8px;cursor:pointer">+ 3 more files</div>
+
+            <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c;margin:20px 0 6px;display:flex;justify-content:space-between"><span>TOOLS</span><span style="color:#8b93a7">6</span></div>
+            <sc-for list="{{ tools }}" as="t" hint-placeholder-count="6">
+              <div style="display:flex;align-items:center;gap:12px;padding:9px 0">
+                <span style="width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;background:rgba(255,255,255,.04);color:#9aa3b8" dangerouslySetInnerHTML="{{ t.icon }}"></span>
+                <div style="flex:1"><div style="font-size:12.5px;font-weight:600">{{ t.name }}</div><div style="font-size:10.5px;color:#6b7488">{{ t.desc }}</div></div>
+                <div onClick="{{ t.toggle }}" style="{{ t.trackStyle }}"><span style="{{ t.knobStyle }}"></span></div>
+              </div>
+            </sc-for>
+
+            <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c;margin:20px 0 12px">MODEL SETTINGS</div>
+            <div onClick="{{ cycleModel }}" style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;padding:6px 0;cursor:pointer"><span style="color:#8b93a7">Model</span><span style="font-weight:600">{{ model }} ▾</span></div>
+            <div style="padding:8px 0"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span style="color:#8b93a7">Temperature</span><span style="font-weight:600">{{ temp }}</span></div><input type="range" min="0" max="1" step="0.1" value="{{ temp }}" onChange="{{ setTemp }}" style="width:100%;accent-color:#6d5dfc;height:16px;cursor:pointer"></div>
+            <div style="padding:8px 0"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span style="color:#8b93a7">Max Tokens</span><span style="font-weight:600">{{ maxTok }}</span></div><input type="range" min="512" max="16384" step="512" value="{{ maxTok }}" onChange="{{ setMaxTok }}" style="width:100%;accent-color:#6d5dfc;height:16px;cursor:pointer"></div>
+            <div style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;padding:6px 0"><span style="color:#8b93a7">Context Window</span><span style="font-weight:600">128K</span></div>
+            <button onClick="{{ advSettings }}" style="width:100%;margin-top:14px;padding:10px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 12.5px Inter;cursor:pointer">Advanced Settings ›</button>
+            </sc-if>
+
+            <sc-if value="{{ ctMemory }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:11px"><span style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c">PROJECT MEMORY</span><span style="font-size:11px;color:#8b93a7;background:rgba(255,255,255,.05);padding:1px 7px;border-radius:6px">4</span></div>
+            <sc-for list="{{ memoryItems }}" as="m" hint-placeholder-count="4">
+              <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span style="width:15px;height:15px;display:inline-flex;color:#a78bfa;margin-top:1px" dangerouslySetInnerHTML="{{ icSparkle }}"></span><div style="flex:1"><div style="font-size:12.5px;line-height:1.45">{{ m.t }}</div><div style="font-size:10.5px;color:#6b7488;margin-top:2px">{{ m.time }}</div></div></div>
+            </sc-for>
+            <div style="font-size:11px;color:#6b7488;margin-top:12px;line-height:1.5">Memory is written to .sovereign/decisions.md and travels with the project.</div>
+            </sc-if>
+
+            <sc-if value="{{ ctSettings }}" hint-placeholder-val="{{ false }}">
+            <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c;margin-bottom:11px">AGENT BEHAVIOR</div>
+            <sc-for list="{{ agentSettings }}" as="r" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+                <div style="flex:1"><div style="font-size:12.5px;font-weight:600">{{ r.label }}</div><div style="font-size:11px;color:#8b93a7;margin-top:2px">{{ r.desc }}</div></div>
+                <sc-if value="{{ r.val }}" hint-placeholder-val="{{ false }}"><span onClick="{{ r.selClick }}" style="font-size:11.5px;color:#c7cddb;border:1px solid rgba(255,255,255,.12);border-radius:7px;padding:5px 9px;cursor:pointer">{{ r.val }} ▾</span></sc-if>
+                <sc-if value="{{ r.isToggle }}" hint-placeholder-val="{{ false }}"><div onClick="{{ r.toggle }}" style="{{ r.toggleStyle }}"><span style="{{ r.knobStyle }}"></span></div></sc-if>
+              </div>
+            </sc-for>
+            </sc-if>
+          </aside>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isIDE }}" hint-placeholder-val="{{ false }}">
+        <div style="height:100%;display:flex;min-height:0;background:#0a0e17">
+          <!-- File tree -->
+          <div style="width:224px;flex:none;border-right:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;min-height:0">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px 8px"><span style="font-size:10.5px;font-weight:700;letter-spacing:.08em;color:#7b859c">PROJECTS</span><span style="width:14px;height:14px;display:inline-flex;color:#5f6980" dangerouslySetInnerHTML="{{ icChev }}"></span></div>
+            <div style="flex:1;overflow:auto;padding:0 6px">
+              <sc-for list="{{ fileTree }}" as="f" hint-placeholder-count="12">
+                <div onClick="{{ f.select }}" style="{{ f.rowStyle }}" style-hover="background:rgba(255,255,255,.03)">
+                  <sc-if value="{{ f.folder }}" hint-placeholder-val="{{ false }}"><span style="{{ f.chevStyle }}" dangerouslySetInnerHTML="{{ icChevR }}"></span></sc-if>
+                  <span style="width:15px;height:15px;display:inline-flex;color:{{ f.color }};flex:none" dangerouslySetInnerHTML="{{ f.icon }}"></span>
+                  <span style="{{ f.labelStyle }}">{{ f.label }}</span>
+                  <sc-if value="{{ f.mod }}" hint-placeholder-val="{{ false }}"><span style="font-size:10px;font-weight:700;color:#f59e0b">{{ f.mod }}</span></sc-if>
+                </div>
+              </sc-for>
+            </div>
+            <div style="border-top:1px solid rgba(255,255,255,.06);padding:9px 14px"><div onClick="{{ outlineT }}" style="display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:600;color:#8b93a7;padding:4px 0;cursor:pointer"><span>OUTLINE</span><span style="width:13px;height:13px;display:inline-flex;color:#5f6980" dangerouslySetInnerHTML="{{ icChev }}"></span></div><div onClick="{{ timelineT }}" style="display:flex;align-items:center;justify-content:space-between;font-size:11px;font-weight:600;color:#8b93a7;padding:4px 0;cursor:pointer"><span>TIMELINE</span><span style="width:13px;height:13px;display:inline-flex;color:#5f6980" dangerouslySetInnerHTML="{{ icChev }}"></span></div></div>
+          </div>
+
+          <!-- Center: editor + bottom panel -->
+          <div style="flex:1;min-width:0;display:flex;flex-direction:column;min-height:0">
+            <!-- tab bar -->
+            <div style="display:flex;align-items:center;height:38px;flex:none;border-bottom:1px solid rgba(255,255,255,.06);padding-right:10px">
+              <div style="display:flex;height:100%">
+                <sc-for list="{{ ideTabs }}" as="t" hint-placeholder-count="4">
+                  <div onClick="{{ t.select }}" style="{{ t.tabStyle }}">
+                    <span style="width:14px;height:14px;display:inline-flex;color:{{ t.color }}" dangerouslySetInnerHTML="{{ icFile }}"></span>{{ t.name }}
+                    <span onClick="{{ closeTab }}" style="color:#5f6980;font-size:14px">✕</span></div>
+                </sc-for>
+              </div>
+              <div style="flex:1"></div>
+              <span onClick="{{ splitEditor }}" style="width:16px;height:16px;display:inline-flex;color:#6b7488;margin:0 6px;cursor:pointer" dangerouslySetInnerHTML="{{ icSplit }}"></span>
+              <span onClick="{{ moreActions }}" style="width:16px;height:16px;display:inline-flex;color:#6b7488;margin:0 6px;cursor:pointer" dangerouslySetInnerHTML="{{ icDots }}"></span>
+            </div>
+            <!-- breadcrumb -->
+            <div style="display:flex;align-items:center;gap:7px;padding:6px 16px;font-size:11.5px;color:#7b859c;flex:none;border-bottom:1px solid rgba(255,255,255,.04)"><span>app</span><span style="color:#4d5670">›</span><span>pages</span><span style="color:#4d5670">›</span><span style="color:#61afef">{{ ideFile }}</span><span style="color:#4d5670">›</span><span>{{ crumbLeaf }}</span></div>
+            <!-- code -->
+            <div style="flex:1;display:flex;min-height:0;position:relative;overflow:hidden;background:#0a0e17">
+              <div style="flex:1;overflow:auto;padding:8px 0;font:400 13px/1.62 'JetBrains Mono',monospace">
+                <sc-for list="{{ codeLines }}" as="l" hint-placeholder-count="20">
+                  <div style="display:flex;align-items:flex-start" style-hover="background:rgba(255,255,255,.02)">
+                    <span style="width:44px;flex:none;text-align:right;padding-right:16px;color:#4d5670;user-select:none">{{ l.n }}</span>
+                    <span style="white-space:pre;color:#c9d1e0" dangerouslySetInnerHTML="{{ l.h }}"></span>
+                  </div>
+                </sc-for>
+              </div>
+              <!-- minimap -->
+              <div style="width:58px;flex:none;background:rgba(255,255,255,.015);border-left:1px solid rgba(255,255,255,.04);padding:8px 6px;overflow:hidden">
+                <sc-for list="{{ codeLines }}" as="l" hint-placeholder-count="20"><div style="height:3px;border-radius:2px;background:rgba(120,140,190,.25);margin-bottom:2px;width:{{ l.n }}0%;max-width:100%"></div></sc-for>
+              </div>
+            </div>
+            <!-- bottom panel -->
+            <div style="height:250px;flex:none;border-top:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;background:#0b0f1a">
+              <div style="display:flex;align-items:center;gap:22px;padding:0 16px;height:36px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">
+                <sc-for list="{{ idePanels }}" as="p" hint-placeholder-count="5"><span onClick="{{ p.select }}" style="{{ p.tabStyle }}">{{ p.label }} <sc-if value="{{ p.extra }}" hint-placeholder-val="{{ false }}"><span style="color:#f59e0b">{{ p.extra }}</span></sc-if></span></sc-for>
+                <div style="flex:1"></div><sc-if value="{{ previewClosed }}" hint-placeholder-val="{{ false }}"><button onClick="{{ openPreview }}" style="display:flex;align-items:center;gap:6px;padding:5px 10px;border:1px solid rgba(97,175,239,.35);border-radius:7px;background:rgba(97,175,239,.08);color:#61afef;font:600 10.5px Inter;cursor:pointer;margin-right:10px"><span style="width:12px;height:12px;display:inline-flex" dangerouslySetInnerHTML="{{ icMonitor }}"></span>Preview</button></sc-if><span onClick="{{ expandView }}" style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer" dangerouslySetInnerHTML="{{ icExpand }}"></span>
+              </div>
+              <sc-if value="{{ ipTerminal }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:1;overflow:auto;padding:12px 16px;font:400 12px 'JetBrains Mono',monospace;line-height:1.8;color:#9aa3b8"><sc-for list="{{ terminalLines }}" as="l" hint-placeholder-count="5"><div>{{ l }}</div></sc-for><div style="color:#34d399">▊</div></div>
+              </sc-if>
+              <sc-if value="{{ ipProblems }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:1;overflow:auto;padding:10px 16px"><sc-for list="{{ problems }}" as="p" hint-placeholder-count="2"><div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:#f59e0b">{{ p.sev }}</span><span style="flex:1">{{ p.msg }}</span><span style="font:400 11px 'JetBrains Mono',monospace;color:#6b7488">{{ p.file }}</span></div></sc-for></div>
+              </sc-if>
+              <sc-if value="{{ ipOutput }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:1;overflow:auto;padding:12px 16px;font:400 12px 'JetBrains Mono',monospace;line-height:1.8;color:#9aa3b8"><sc-for list="{{ outputLines }}" as="l" hint-placeholder-count="4"><div>{{ l }}</div></sc-for></div>
+              </sc-if>
+              <sc-if value="{{ ipGit }}" hint-placeholder-val="{{ false }}">
+                <div style="flex:1;overflow:auto;padding:10px 16px"><div style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#7b859c;margin-bottom:8px">CHANGES · main*</div><sc-for list="{{ gitFiles }}" as="g" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span style="width:13px;height:13px;display:inline-flex;color:#61afef" dangerouslySetInnerHTML="{{ icFile }}"></span><span style="flex:1;font:500 12px 'JetBrains Mono',monospace">{{ g.f }}</span><span style="font-size:11px;color:#34d399;font-weight:600">{{ g.p }}</span><span style="font-size:11px;color:#f87171">{{ g.m }}</span></div></sc-for></div>
+              </sc-if>
+              <sc-if value="{{ ipWorkflow }}" hint-placeholder-val="{{ true }}">
+              <div style="flex:1;display:grid;grid-template-columns:1fr 1.2fr 190px;gap:1px;background:rgba(255,255,255,.05);min-height:0">
+                <!-- plan -->
+                <div style="background:#0b0f1a;padding:12px 14px;overflow:auto">
+                  <div style="display:flex;justify-content:space-between;font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#7b859c;margin-bottom:11px"><span>MULTI-AGENT PLAN</span><span style="color:#8b93a7">4/6 completed ↗</span></div>
+                  <sc-for list="{{ workflowPlan }}" as="w" hint-placeholder-count="6">
+                    <div style="display:flex;align-items:center;gap:10px;padding:6px 0">
+                      <span style="{{ w.dotStyle }}"><span style="width:12px;height:12px;display:inline-flex" dangerouslySetInnerHTML="{{ w.icon }}"></span></span>
+                      <span style="{{ w.nameStyle }}">{{ w.name }}</span>
+                      <span style="font-size:11px;color:#7b859c;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ w.desc }}</span>
+                      <sc-if value="{{ w.done }}" hint-placeholder-val="{{ false }}"><span style="width:14px;height:14px;display:inline-flex;color:#34d399" dangerouslySetInnerHTML="{{ icCheckC }}"></span></sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+                <!-- coder -->
+                <div style="background:#0b0f1a;padding:12px 14px;overflow:auto;display:flex;flex-direction:column">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#7b859c">CODER AGENT</span><span style="font-size:10px;font-weight:600;color:#a78bfa;background:rgba(124,91,214,.16);padding:2px 8px;border-radius:6px">⚙ Working</span></div>
+                  <div style="font-size:12px;color:#8b93a7;margin-bottom:10px">Building responsive dashboard components…</div>
+                  <sc-for list="{{ coderChecklist }}" as="c" hint-placeholder-count="5">
+                    <div style="{{ c.rowStyle }}"><span style="{{ c.iconStyle }}" dangerouslySetInnerHTML="{{ icCheckC }}"></span>{{ c.t }}</div>
+                  </sc-for>
+                  <div style="flex:1"></div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid rgba(255,255,255,.06);padding-top:10px;margin-top:8px"><span style="font-size:11.5px;color:#a78bfa;display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:14px;display:inline-flex;animation:csPulse 1.4s infinite" dangerouslySetInnerHTML="{{ icSparkle }}"></span>Agent is coding…</span><button onClick="{{ openStudio }}" style="padding:6px 12px;border:1px solid rgba(255,255,255,.12);border-radius:7px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 11px Inter;cursor:pointer">Open in Studio</button></div>
+                </div>
+                <!-- context -->
+                <div style="background:#0b0f1a;padding:12px 14px;overflow:auto">
+                  <div style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#7b859c;margin-bottom:9px">CONTEXT</div>
+                  <sc-for list="{{ ideCtxFiles }}" as="f" hint-placeholder-count="5"><div style="display:flex;align-items:center;gap:7px;font:500 11.5px 'JetBrains Mono',monospace;color:#b6bdcc;padding:3px 0"><span style="width:12px;height:12px;display:inline-flex;color:#61afef" dangerouslySetInnerHTML="{{ icFile }}"></span>{{ f }}</div></sc-for>
+                  <div style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#7b859c;margin:14px 0 9px">DEPENDENCIES</div>
+                  <sc-for list="{{ ideDeps }}" as="d" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:7px;font:500 11.5px 'JetBrains Mono',monospace;color:#b6bdcc;padding:3px 0"><span style="width:12px;height:12px;display:inline-flex;color:#98c379" dangerouslySetInnerHTML="{{ icBox }}"></span>{{ d }}</div></sc-for>
+                </div>
+              </div>
+              </sc-if>
+            </div>
+          </div>
+
+          <!-- Live preview -->
+          <sc-if value="{{ previewOpen }}" hint-placeholder-val="{{ true }}">
+          <div style="width:436px;flex:none;border-left:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;min-height:0;background:#0a0e17">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 14px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">
+              <span style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#7b859c">LIVE PREVIEW</span>
+              <div style="display:flex;align-items:center;gap:4px">
+                <sc-for list="{{ deviceBtns }}" as="d" hint-placeholder-count="3"><span onClick="{{ d.select }}" style="{{ d.btnStyle }}"><span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ d.icon }}"></span></span></sc-for>
+                <span onClick="{{ closePreview }}" style="color:#5f6980;margin-left:6px;font-size:15px;cursor:pointer">✕</span>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">
+              <span onClick="{{ pvBack }}" style="width:15px;height:15px;display:inline-flex;color:#6b7488;cursor:pointer" dangerouslySetInnerHTML="{{ icBack }}"></span>
+              <div style="flex:1;display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:7px;padding:5px 10px;font-size:11.5px;color:#8b93a7">http://localhost:5173</div>
+              <span onClick="{{ pvRefresh }}" style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer" dangerouslySetInnerHTML="{{ icRefresh }}"></span>
+              <span onClick="{{ pvExt }}" style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer" dangerouslySetInnerHTML="{{ icExt }}"></span>
+            </div>
+            <!-- mini app -->
+            <sc-if value="{{ pvLogs }}" hint-placeholder-val="{{ false }}">
+              <div style="flex:1;overflow:auto;padding:12px 16px;font:400 11.5px 'JetBrains Mono',monospace;line-height:1.9;color:#9aa3b8;background:#0c1018"><sc-for list="{{ pvLogLines }}" as="l" hint-placeholder-count="4"><div>{{ l }}</div></sc-for></div>
+            </sc-if>
+            <sc-if value="{{ pvHistory }}" hint-placeholder-val="{{ false }}">
+              <div style="flex:1;overflow:auto;padding:12px 16px;background:#0c1018"><sc-for list="{{ pvHistoryItems }}" as="h" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span style="width:13px;height:13px;display:inline-flex;color:#7b859c" dangerouslySetInnerHTML="{{ icClock2 }}"></span><span style="flex:1;font:500 12px 'JetBrains Mono',monospace">{{ h.t }}</span><span style="font-size:10.5px;color:#6b7488">{{ h.time }}</span></div></sc-for></div>
+            </sc-if>
+            <sc-if value="{{ pvScreen }}" hint-placeholder-val="{{ true }}">
+            <div style="{{ previewShellStyle }}">
+              <div style="{{ previewInnerStyle }}">
+              <div style="width:110px;flex:none;border-right:1px solid rgba(255,255,255,.05);padding:12px 8px">
+                <div style="display:flex;align-items:center;gap:6px;padding:0 4px 12px"><span style="width:16px;height:16px;display:inline-flex;color:#a78bfa" dangerouslySetInnerHTML="{{ icWave }}"></span><span style="font-size:12px;font-weight:700">BeatShore</span></div>
+                <sc-for list="{{ previewNav }}" as="n" hint-placeholder-count="6"><div style="{{ n.navStyle }}"><span style="{{ n.iconStyle }}" dangerouslySetInnerHTML="{{ n.icon }}"></span>{{ n.name }}</div></sc-for>
+              </div>
+              <div style="flex:1;min-width:0;padding:14px 14px 18px">
+                <div style="display:flex;align-items:center;justify-content:space-between"><div><div style="font-size:16px;font-weight:700">Welcome back, <span style="color:#a78bfa">Krish</span></div><div style="font-size:11px;color:#8b93a7">Create. Produce. Publish.</div></div><div style="display:flex;gap:8px"><span style="width:22px;height:22px;display:inline-flex;color:#8b93a7" dangerouslySetInnerHTML="{{ icBell2 }}"></span><span style="width:22px;height:22px;border-radius:50%;background:linear-gradient(135deg,#6d5dfc,#a855f7);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;color:#fff">K</span></div></div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:13px 0">
+                  <div style="border-radius:9px;background:linear-gradient(135deg,rgba(47,123,255,.25),rgba(124,91,214,.2));border:1px solid rgba(109,93,252,.3);padding:11px;display:flex;align-items:center;justify-content:space-between"><span style="font-size:12px;font-weight:600">New Project</span><span style="width:22px;height:22px;border-radius:6px;background:#6d5dfc;display:flex;align-items:center;justify-content:center;color:#fff"><span style="width:13px;height:13px;display:inline-flex" dangerouslySetInnerHTML="{{ icPlus2 }}"></span></span></div>
+                  <div style="border-radius:9px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);padding:11px"><div style="font-size:12px;font-weight:600">AI Mastering</div><div style="font-size:10px;color:#8b93a7">Enhance your sound</div></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px">
+                  <sc-for list="{{ previewStats }}" as="s" hint-placeholder-count="4">
+                    <div style="border-radius:9px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);padding:9px 8px">
+                      <div style="font-size:9.5px;color:#8b93a7">{{ s.label }}</div><div style="font-size:15px;font-weight:700;margin:2px 0">{{ s.value }}</div><div style="font-size:9px;color:#34d399">{{ s.delta }}</div>
+                      <svg viewBox="0 0 60 14" preserveAspectRatio="none" style="width:100%;height:14px;margin-top:3px;display:block"><polyline points="{{ s.spark }}" fill="none" stroke="{{ s.color }}" stroke-width="1.4" opacity=".7"/></svg>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px"><span style="font-size:12px;font-weight:600">Recent Projects</span><span style="font-size:10px;color:#8b93f8">View all</span></div>
+                <sc-for list="{{ recentProjects }}" as="p" hint-placeholder-count="3"><div style="display:flex;align-items:center;gap:9px;padding:6px 0"><span style="width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#3b2f6e,#7c4dcf);display:flex;align-items:center;justify-content:center;color:#fff"><span style="width:13px;height:13px;display:inline-flex" dangerouslySetInnerHTML="{{ icWave }}"></span></span><div style="flex:1"><div style="font-size:11.5px;font-weight:600">{{ p.name }}</div><div style="font-size:9.5px;color:#8b93a7">{{ p.time }}</div></div><span style="width:20px;height:20px;border-radius:50%;background:rgba(124,91,214,.2);display:flex;align-items:center;justify-content:center;color:#a78bfa"><span style="width:11px;height:11px;display:inline-flex" dangerouslySetInnerHTML="{{ icPlay }}"></span></span></div></sc-for>
+                <div style="font-size:12px;font-weight:600;margin:14px 0 8px">Waveform Overview</div>
+                <div style="display:flex;align-items:flex-end;gap:2px;height:52px;padding:8px;border-radius:9px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06)">
+                  <sc-for list="{{ codeLines }}" as="l" hint-placeholder-count="20"><div style="flex:1;border-radius:2px;background:linear-gradient(180deg,#a855f7,#6d5dfc);height:{{ l.n }}0%;max-height:100%;min-height:12%"></div></sc-for>
+                </div>
+              </div>
+              </div>
+            </div>
+            </sc-if>
+            <div style="display:flex;align-items:center;gap:18px;padding:0 14px;height:34px;flex:none;border-top:1px solid rgba(255,255,255,.06)">
+              <sc-for list="{{ pvTabs }}" as="t" hint-placeholder-count="3"><span onClick="{{ t.select }}" style="{{ t.tabStyle }}">{{ t.label }}</span></sc-for>
+              <div style="flex:1"></div>
+              <span style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;color:#34d399"><span style="width:6px;height:6px;border-radius:50%;background:#34d399"></span>Live</span>
+              <span style="font-size:10.5px;color:#8b93a7">Port 5173</span><span style="font-size:10.5px;color:#34d399">Ready</span><span style="font-size:10.5px;color:#8b93a7">1.2s</span>
+            </div>
+          </div>
+          </sc-if>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isWelcome }}" hint-placeholder-val="{{ false }}">
+        <div style="height:100%;overflow:auto">
+          <div style="max-width:1080px;margin:0 auto;padding:52px 32px 60px">
+            <div style="display:flex;align-items:center;gap:10px;font-size:12.5px;color:#8b93a7;margin-bottom:10px"><span style="display:inline-flex;align-items:center;gap:6px;color:#34d399"><span style="width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 8px #34d399"></span>LM Studio connected</span><span style="color:#3a4256">•</span><span>codesovereign-1.5 loaded · 128K ctx</span></div>
+            <h1 style="font-size:36px;font-weight:700;margin:0 0 6px;letter-spacing:-.02em">Welcome back, Krish</h1>
+            <p style="font-size:16px;color:#8b93a7;margin:0 0 28px">What are we building today?</p>
+
+            <!-- Composer -->
+            <div style="border:1px solid rgba(109,93,252,.35);border-radius:16px;background:linear-gradient(180deg,rgba(124,91,214,.08),rgba(13,17,28,.6));padding:20px;margin-bottom:14px;box-shadow:0 0 0 4px rgba(109,93,252,.06),0 20px 60px -30px rgba(109,93,252,.6)">
+              <textarea value="{{ prompt }}" onChange="{{ setPrompt }}" onKeyDown="{{ keyGen }}" placeholder="Describe the app you want to build — e.g. “A local-first note app with markdown editing, tag search, and offline sync.” Press Enter to generate." style="width:100%;min-height:70px;font:400 15px Inter,sans-serif;color:#e6e9f2;line-height:1.5;background:transparent;border:none;outline:none;resize:none;padding:0"></textarea>
+              <div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:16px 0">
+                <span style="font-size:11.5px;color:#7b859c;margin-right:2px">Target</span>
+                <sc-for list="{{ platChips }}" as="p" hint-placeholder-count="6">
+                  <div onClick="{{ p.toggle }}" style="{{ p.chipStyle }}"><span style="{{ p.iconStyle }}" dangerouslySetInnerHTML="{{ p.icon }}"></span>{{ p.label }}<sc-if value="{{ p.check }}" hint-placeholder-val="{{ false }}"><span style="width:13px;height:13px;display:inline-flex;color:#34d399" dangerouslySetInnerHTML="{{ icCheck }}"></span></sc-if></div>
+                </sc-for>
+              </div>
+              <div style="display:flex;align-items:center;gap:12px;border-top:1px solid rgba(255,255,255,.06);padding-top:14px">
+                <span onClick="{{ cycleModel }}" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:#c7cddb;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:7px 11px;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex;color:#a78bfa" dangerouslySetInnerHTML="{{ icSparkle }}"></span>{{ model }} <span style="width:12px;height:12px;display:inline-flex" dangerouslySetInnerHTML="{{ icChev }}"></span></span>
+                <span onClick="{{ attachSpec }}" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:#8b93a7;cursor:pointer"><span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ icClip }}"></span>Attach spec</span>
+                <div style="flex:1"></div>
+                <button onClick="{{ genApp }}" style="display:flex;align-items:center;gap:9px;padding:12px 20px;border:none;border-radius:11px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 14px Inter;cursor:pointer;box-shadow:0 6px 20px rgba(109,93,252,.4)"><span style="width:16px;height:16px;display:inline-flex" dangerouslySetInnerHTML="{{ icSparkle }}"></span>Generate App</button>
+              </div>
+            </div>
+            <div style="display:flex;gap:8px;margin-bottom:40px;flex-wrap:wrap"><span style="font-size:11.5px;color:#6b7488;margin-right:4px">Try:</span>
+              <sc-for list="{{ tryPrompts }}" as="t" hint-placeholder-count="3"><span onClick="{{ t.set }}" style="font-size:12px;color:#a9b0ff;border:1px solid rgba(109,93,252,.25);background:rgba(109,93,252,.06);border-radius:20px;padding:5px 12px;cursor:pointer">{{ t.t }}</span></sc-for>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h2 style="font-size:17px;font-weight:700;margin:0">Start from a template</h2><span onClick="{{ browseAll }}" style="font-size:12.5px;color:#8b93f8;cursor:pointer">Browse all →</span></div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:44px">
+              <sc-for list="{{ quickStart }}" as="q" hint-placeholder-count="6">
+                <div onClick="{{ q.go }}" style="border:1px solid rgba(255,255,255,.08);border-radius:13px;background:rgba(255,255,255,.02);padding:17px;cursor:pointer" style-hover="border-color:rgba(109,93,252,.4);background:rgba(109,93,252,.05);transform:translateY(-2px)">
+                  <div style="width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:{{ q.bg }};color:{{ q.color }};margin-bottom:14px"><span style="width:20px;height:20px;display:inline-flex" dangerouslySetInnerHTML="{{ q.icon }}"></span></div>
+                  <div style="font-size:14.5px;font-weight:600;margin-bottom:4px">{{ q.name }}</div>
+                  <div style="font-size:12.5px;color:#8b93a7;margin-bottom:12px">{{ q.desc }}</div>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap"><sc-for list="{{ q.tags }}" as="tag" hint-placeholder-count="2"><span style="font-size:10.5px;color:#9aa3b8;background:rgba(255,255,255,.05);border-radius:5px;padding:2px 8px">{{ tag }}</span></sc-for></div>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h2 style="font-size:17px;font-weight:700;margin:0">Recent projects</h2><span onClick="{{ viewProjects }}" style="font-size:12.5px;color:#8b93f8;cursor:pointer">View all</span></div>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+              <sc-for list="{{ welcomeProjects }}" as="p" hint-placeholder-count="3">
+                <div onClick="{{ goFactoryBtn }}" style="border:1px solid rgba(255,255,255,.08);border-radius:13px;background:rgba(255,255,255,.02);padding:17px;cursor:pointer" style-hover="border-color:rgba(255,255,255,.16)">
+                  <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+                    <div style="width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,{{ p.color }},#3b2f6e);display:flex;align-items:center;justify-content:center;color:#fff"><span style="width:20px;height:20px;display:inline-flex" dangerouslySetInnerHTML="{{ icWave }}"></span></div>
+                    <div style="flex:1;min-width:0"><div style="font-size:14.5px;font-weight:600">{{ p.name }}</div><div style="font-size:11.5px;color:#8b93a7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.desc }}</div></div>
+                  </div>
+                  <div style="display:flex;align-items:center;justify-content:space-between">
+                    <div style="display:flex;align-items:center;gap:7px;color:#7b859c"><sc-for list="{{ p.platIcons }}" as="pi" hint-placeholder-count="2"><span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ pi.icon }}"></span></sc-for></div>
+                    <span style="font-size:10.5px;font-weight:600;color:{{ p.stColor }};background:{{ p.stBg }};padding:2px 9px;border-radius:6px">{{ p.status }}</span>
+                  </div>
+                  <div style="font-size:11px;color:#6b7488;margin-top:11px;padding-top:11px;border-top:1px solid rgba(255,255,255,.05)">Updated {{ p.updated }}</div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ false }}">
+        <div style="height:100%;display:flex;min-height:0">
+          <div style="width:246px;flex:none;border-right:1px solid rgba(255,255,255,.06);padding:22px 14px;overflow:auto">
+            <div style="font-size:11px;font-weight:700;letter-spacing:.07em;color:#7b859c;padding:0 8px 12px">SETTINGS</div>
+            <sc-for list="{{ settingsNav }}" as="s" hint-placeholder-count="5">
+              <div onClick="{{ s.go }}" style="{{ s.rowStyle }}"><span style="{{ s.iconStyle }}" dangerouslySetInnerHTML="{{ s.icon }}"></span>{{ s.label }}</div>
+            </sc-for>
+          </div>
+          <div style="flex:1;min-width:0;overflow:auto;padding:28px 34px 50px">
+            <div style="max-width:760px">
+
+              <!-- Models & AI -->
+              <sc-if value="{{ stModels }}" hint-placeholder-val="{{ false }}">
+                <h1 style="font-size:24px;font-weight:700;margin:0 0 5px">Models &amp; AI</h1>
+                <p style="font-size:13.5px;color:#8b93a7;margin:0 0 26px">Connect cloud and local providers, then route each agent to the model you prefer.</p>
+                <div style="font-size:12px;font-weight:700;letter-spacing:.04em;color:#7b859c;margin-bottom:12px">PROVIDERS</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:30px">
+                  <sc-for list="{{ providers }}" as="p" hint-placeholder-count="4">
+                    <div style="{{ p.cardStyle }}">
+                      <div style="display:flex;align-items:flex-start;gap:12px">
+                        <span style="width:38px;height:38px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;background:{{ p.bg }};color:{{ p.color }}"><span style="width:20px;height:20px;display:inline-flex" dangerouslySetInnerHTML="{{ p.icon }}"></span></span>
+                        <div style="flex:1;min-width:0"><div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:14px;font-weight:600">{{ p.name }}</span><span style="{{ p.badgeStyle }}">{{ p.status }}</span></div>
+                          <div style="font-size:12px;color:#8b93a7;margin-top:3px">{{ p.desc }}</div>
+                          <div style="font-size:11px;color:#6b7488;font-family:'JetBrains Mono',monospace;margin-top:9px">{{ p.meta }}</div></div>
+                      </div>
+                    </div>
+                  </sc-for>
+                </div>
+                <div style="font-size:12px;font-weight:700;letter-spacing:.04em;color:#7b859c;margin-bottom:12px">AGENT MODEL ROUTING</div>
+                <div style="border:1px solid rgba(255,255,255,.08);border-radius:12px;background:rgba(255,255,255,.02);overflow:hidden">
+                  <sc-for list="{{ routing }}" as="r" hint-placeholder-count="5">
+                    <div style="display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid rgba(255,255,255,.05)">
+                      <span style="width:28px;height:28px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;background:{{ r.color }}1e;color:{{ r.color }}"><span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ r.icon }}"></span></span>
+                      <span style="font-size:13px;font-weight:600;width:90px">{{ r.agent }}</span>
+                      <span style="flex:1;font-size:12.5px;color:#b6bdcc;font-family:'JetBrains Mono',monospace">{{ r.model }}</span>
+                      <span onClick="{{ r.change }}" style="font-size:11.5px;color:#8b93f8;cursor:pointer">Change ▾</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+              <!-- Local LLM -->
+              <sc-if value="{{ stLocal }}" hint-placeholder-val="{{ false }}">
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:5px"><h1 style="font-size:24px;font-weight:700;margin:0">Local LLM · LM Studio</h1><span style="display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;color:#34d399;background:rgba(52,211,153,.14);border:1px solid rgba(52,211,153,.25);padding:3px 10px;border-radius:7px"><span style="width:6px;height:6px;border-radius:50%;background:#34d399;animation:csPulse 1.6s infinite"></span>Connected</span></div>
+                <p style="font-size:13.5px;color:#8b93a7;margin:0 0 26px">Run models fully offline through LM Studio's OpenAI-compatible server.</p>
+                <div style="border:1px solid rgba(255,255,255,.08);border-radius:13px;background:rgba(255,255,255,.02);padding:20px;margin-bottom:20px">
+                  <div style="display:flex;align-items:center;gap:14px;margin-bottom:18px">
+                    <span style="width:44px;height:44px;border-radius:11px;background:rgba(34,211,238,.14);color:#22d3ee;display:flex;align-items:center;justify-content:center"><span style="width:24px;height:24px;display:inline-flex" dangerouslySetInnerHTML="{{ icCpu }}"></span></span>
+                    <div style="flex:1"><div style="font-size:15px;font-weight:600">Local inference server</div><div style="font-size:12px;color:#8b93a7;font-family:'JetBrains Mono',monospace">http://localhost:1234/v1</div></div>
+                    <button onClick="{{ testConn }}" style="display:flex;align-items:center;gap:7px;padding:9px 14px;border:1px solid rgba(255,255,255,.12);border-radius:9px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 12.5px Inter;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex" dangerouslySetInnerHTML="{{ icZap }}"></span>Test connection</button>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 30px">
+                    <sc-for list="{{ lmMetrics }}" as="m" hint-placeholder-count="6"><div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:#8b93a7">{{ m.k }}</span><span style="font-weight:600;font-family:'JetBrains Mono',monospace;font-size:12px">{{ m.v }}</span></div></sc-for>
+                  </div>
+                </div>
+                <div style="border:1px solid rgba(255,255,255,.08);border-radius:13px;background:rgba(255,255,255,.02);padding:20px">
+                  <div style="font-size:13px;font-weight:600;margin-bottom:16px">Inference parameters</div>
+                  <div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span style="color:#8b93a7">GPU offload</span><span style="font-weight:600">{{ lmGpu }} / 99 layers</span></div><input type="range" min="0" max="99" step="1" value="{{ lmGpu }}" onChange="{{ setLmGpu }}" style="width:100%;accent-color:#22d3ee;height:16px;cursor:pointer"></div>
+                  <div style="margin-bottom:16px"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span style="color:#8b93a7">Context length</span><span style="font-weight:600">{{ lmCtxStr }}</span></div><input type="range" min="4096" max="65536" step="4096" value="{{ lmCtx }}" onChange="{{ setLmCtx }}" style="width:100%;accent-color:#6d5dfc;height:16px;cursor:pointer"></div>
+                  <div><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span style="color:#8b93a7">Temperature</span><span style="font-weight:600">{{ lmTemp }}</span></div><input type="range" min="0" max="1" step="0.1" value="{{ lmTemp }}" onChange="{{ setLmTemp }}" style="width:100%;accent-color:#6d5dfc;height:16px;cursor:pointer"></div>
+                </div>
+              </sc-if>
+
+              <!-- Generic (General / Appearance / Security) -->
+              <sc-if value="{{ stGeneric }}" hint-placeholder-val="{{ false }}">
+                <h1 style="font-size:24px;font-weight:700;margin:0 0 22px">{{ settingsTitle }}</h1>
+                <div style="border:1px solid rgba(255,255,255,.08);border-radius:13px;background:rgba(255,255,255,.02);overflow:hidden">
+                  <sc-for list="{{ settingsRows }}" as="r" hint-placeholder-count="5">
+                    <div style="display:flex;align-items:center;gap:16px;padding:15px 18px;border-bottom:1px solid rgba(255,255,255,.05)">
+                      <div style="flex:1"><div style="font-size:13.5px;font-weight:600">{{ r.label }}</div><div style="font-size:12px;color:#8b93a7;margin-top:2px">{{ r.desc }}</div></div>
+                      <sc-if value="{{ r.type }}" hint-placeholder-val="toggle"></sc-if>
+                      <sc-if value="{{ r.val }}" hint-placeholder-val="{{ false }}"><span onClick="{{ r.selClick }}" style="font-size:12.5px;color:#c7cddb;border:1px solid rgba(255,255,255,.12);border-radius:8px;padding:7px 12px;cursor:pointer">{{ r.val }} ▾</span></sc-if>
+                      <sc-if value="{{ r.isToggle }}" hint-placeholder-val="{{ false }}"><div onClick="{{ r.toggle }}" style="{{ r.toggleStyle }}"><span style="{{ r.knobStyle }}"></span></div></sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </sc-if>
+
+            </div>
+          </div>
+        </div>
+      </sc-if>
+      <sc-if value="{{ isRecovery }}" hint-placeholder-val="{{ false }}">
+        <div style="height:100%;display:flex;flex-direction:column;min-height:0">
+          <!-- Banner -->
+          <div style="flex:none;display:flex;align-items:center;gap:16px;padding:14px 22px;background:linear-gradient(90deg,rgba(239,68,68,.14),rgba(239,68,68,.03));border-bottom:1px solid rgba(239,68,68,.22)">
+            <div style="width:38px;height:38px;border-radius:10px;background:rgba(239,68,68,.16);color:#f87171;display:flex;align-items:center;justify-content:center;flex:none"><span style="width:21px;height:21px;display:inline-flex" dangerouslySetInnerHTML="{{ icLifebuoy }}"></span></div>
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:9px"><span style="font-size:11px;font-weight:700;letter-spacing:.08em;color:#f87171">RECOVERY MODE ACTIVE</span><span style="{{ bannerDotStyle }}"></span></div>
+              <div style="font-size:14.5px;font-weight:600;margin-top:2px">{{ activeIssue.verb }}: {{ activeIssue.title }} <span style="color:#8b93a7;font-weight:400">— {{ activeIssue.sub }}</span></div>
+            </div>
+            <span style="display:inline-flex;align-items:center;gap:7px;font-size:11.5px;color:#34d399;border:1px solid rgba(52,211,153,.28);background:rgba(52,211,153,.08);border-radius:8px;padding:7px 11px"><span style="width:14px;height:14px;display:inline-flex" dangerouslySetInnerHTML="{{ icShield2 }}"></span>Anti-loop guard: On</span>
+            <button onClick="{{ restoreCheckpoint }}" style="display:flex;align-items:center;gap:7px;padding:8px 13px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 12px Inter;cursor:pointer"><span style="width:13px;height:13px;display:inline-flex" dangerouslySetInnerHTML="{{ icRefresh2 }}"></span>Restore checkpoint</button>
+            <button onClick="{{ togglePauseBtn }}" style="display:flex;align-items:center;gap:7px;padding:8px 14px;border:none;border-radius:8px;background:rgba(239,68,68,.16);color:#f87171;font:600 12px Inter;cursor:pointer"><span style="width:12px;height:12px;display:inline-flex" dangerouslySetInnerHTML="{{ icPause }}"></span>{{ pauseLabel }}</button>
+          </div>
+
+          <div style="flex:1;display:flex;min-height:0">
+            <!-- Left: issues -->
+            <div style="width:308px;flex:none;border-right:1px solid rgba(255,255,255,.06);overflow:auto;padding:16px 15px">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:13px"><span style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#7b859c">DETECTED ISSUES</span><span style="font-size:10.5px;font-weight:600;color:#f87171;background:rgba(239,68,68,.16);padding:1px 7px;border-radius:6px">5</span></div>
+              <sc-for list="{{ recIssues }}" as="i" hint-placeholder-count="5">
+                <div onClick="{{ i.select }}" style="{{ i.cardStyle }}">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px"><span style="width:8px;height:8px;border-radius:50%;background:{{ i.dot }};flex:none"></span><span style="font-size:13px;font-weight:600;flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ i.title }}</span><span style="font-size:9.5px;font-weight:600;color:{{ i.statusColor }};background:{{ i.statusBg }};padding:2px 7px;border-radius:5px">{{ i.status }}</span></div>
+                  <div style="font-size:11px;color:#8b93a7;margin-bottom:5px">{{ i.cls }}</div>
+                  <div style="font-size:10.5px;color:#6b7488;font-family:'JetBrains Mono',monospace">{{ i.files }}</div>
+                </div>
+              </sc-for>
+              <div style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#7b859c;margin:20px 0 11px">RECOVERY MODES</div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+                <sc-for list="{{ recoveryModes }}" as="m" hint-placeholder-count="6">
+                  <div onClick="{{ m.select }}" style="{{ m.chipStyle }}"><span style="{{ m.iconStyle }}" dangerouslySetInnerHTML="{{ m.icon }}"></span>{{ m.label }}</div>
+                </sc-for>
+              </div>
+            </div>
+
+            <!-- Center: pipeline -->
+            <div style="flex:1;min-width:0;overflow:auto;padding:20px 24px 40px">
+              <div style="border:1px solid rgba(255,255,255,.08);border-radius:13px;background:rgba(13,17,28,.5);padding:16px 18px;margin-bottom:20px">
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:11px"><span style="width:26px;height:26px;border-radius:7px;background:{{ activeIssue.sevColor }}22;color:{{ activeIssue.sevColor }};display:flex;align-items:center;justify-content:center"><span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ icBug }}"></span></span><span style="font-size:14px;font-weight:600">{{ activeIssue.title }}</span><span style="font-size:10.5px;font-weight:600;color:{{ activeIssue.sevColor }};background:{{ activeIssue.sevColor }}22;padding:2px 9px;border-radius:6px">{{ activeIssue.sevLabel }}</span></div>
+                <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#8b93a7;background:rgba(0,0,0,.3);border-radius:8px;padding:9px 12px;margin-bottom:12px">signature: {{ activeIssue.signature }}</div>
+                <div style="display:flex;gap:9px;flex-wrap:wrap"><sc-for list="{{ activeIssue.tags }}" as="t" hint-placeholder-count="3"><span style="font-size:11px;color:{{ t.color }};background:{{ t.bg }};padding:3px 9px;border-radius:6px">{{ t.t }}</span></sc-for></div>
+              </div>
+
+              <div style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#7b859c;margin-bottom:14px">UNIVERSAL DIAGNOSTIC PROCEDURE</div>
+              <div style="margin-bottom:22px">
+                <sc-for list="{{ diagSteps }}" as="d" hint-placeholder-count="9">
+                  <div style="display:flex;gap:14px">
+                    <div style="display:flex;flex-direction:column;align-items:center;flex:none">
+                      <div style="{{ d.badgeStyle }}"><sc-if value="{{ d.done }}" hint-placeholder-val="{{ false }}"><span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ icCheck }}"></span></sc-if><sc-if value="{{ d.active }}" hint-placeholder-val="{{ false }}">{{ d.n }}</sc-if></div>
+                      <div style="{{ d.lineStyle }}"></div>
+                    </div>
+                    <div style="flex:1;padding-bottom:14px">
+                      <div style="{{ d.nameStyle }}">{{ d.name }}</div>
+                      <div style="font-size:12px;color:#7b859c;margin-top:3px">{{ d.detail }}</div>
+                      <sc-if value="{{ d.active }}" hint-placeholder-val="{{ false }}">
+                        <div style="margin-top:10px;border:1px solid rgba(124,91,214,.3);border-radius:9px;background:rgba(0,0,0,.35);padding:11px 13px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.7">
+                          <sc-for list="{{ evidence }}" as="e" hint-placeholder-count="7"><div style="color:#8b93a7;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ e }}</div></sc-for>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+
+              <div style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#7b859c;margin-bottom:13px">ROOT-CAUSE HYPOTHESES <span style="color:#5f6980;font-weight:500">· ranked by evidence</span></div>
+              <div style="display:flex;flex-direction:column;gap:11px">
+                <sc-for list="{{ hypotheses }}" as="h" hint-placeholder-count="3">
+                  <div style="{{ h.cardStyle }}">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+                      <span style="width:22px;height:22px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;font:600 11px Inter;background:{{ h.color }}22;color:{{ h.color }}">H{{ h.rank }}</span>
+                      <span style="flex:1;font-size:13px;font-weight:500;line-height:1.4">{{ h.text }}</span>
+                      <sc-if value="{{ h.top }}" hint-placeholder-val="{{ false }}"><span style="font-size:9.5px;font-weight:700;color:#a78bfa;background:rgba(124,91,214,.16);padding:2px 7px;border-radius:5px;flex:none">TESTING</span></sc-if>
+                    </div>
+                    <div style="font-size:11.5px;color:#8b93a7;margin:0 0 10px 32px">{{ h.ev }}</div>
+                    <div style="display:flex;align-items:center;gap:10px;margin-left:32px"><div style="flex:1;height:5px;border-radius:3px;background:rgba(255,255,255,.08);overflow:hidden"><div style="width:{{ h.confW }};height:100%;background:{{ h.color }}"></div></div><span style="font-size:11.5px;font-weight:600;color:{{ h.color }};width:34px;text-align:right">{{ h.conf }}</span></div>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <!-- Right: validation + report -->
+            <aside style="width:340px;flex:none;border-left:1px solid rgba(255,255,255,.06);background:#0a0e1a;overflow:auto;padding:18px">
+              <div style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#7b859c;margin-bottom:13px">REPAIR VALIDATION</div>
+              <sc-for list="{{ validationRows }}" as="v" hint-placeholder-count="6">
+                <div style="display:flex;align-items:center;gap:11px;padding:10px 0;border-bottom:1px solid rgba(255,255,255,.05)">
+                  <span style="width:18px;height:18px;border-radius:50%;flex:none;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;background:{{ v.color }}22;color:{{ v.color }}">{{ v.mark }}</span>
+                  <div style="flex:1"><div style="font-size:12.5px;font-weight:600">{{ v.check }}</div><div style="font-size:10.5px;color:#6b7488;font-family:'JetBrains Mono',monospace">{{ v.cmd }}</div></div>
+                  <span style="font-size:10.5px;font-weight:600;color:{{ v.color }}">{{ v.status }}</span>
+                </div>
+              </sc-for>
+
+              <div style="margin-top:18px;border:1px solid {{ recStatus.border }};border-radius:11px;background:{{ recStatus.bg }};padding:13px 14px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:5px"><span style="width:16px;height:16px;display:inline-flex;color:{{ recStatus.color }}" dangerouslySetInnerHTML="{{ icAlert }}"></span><span style="font-size:12.5px;font-weight:700;color:{{ recStatus.color }}">{{ recStatus.title }}</span></div>
+                <div style="font-size:11.5px;color:#9aa3b8;line-height:1.5">{{ recStatus.desc }}</div>
+              </div>
+
+              <div style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#7b859c;margin:22px 0 11px">REMAINING REQUIREMENTS</div>
+              <sc-for list="{{ remaining }}" as="r" hint-placeholder-count="2">
+                <div style="display:flex;align-items:flex-start;gap:10px;padding:9px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span style="width:15px;height:15px;display:inline-flex;color:#7b859c;margin-top:1px" dangerouslySetInnerHTML="{{ icTarget }}"></span><div style="flex:1"><div style="font-size:12.5px;font-weight:600">{{ r.t }}</div><div style="font-size:10.5px;color:#8b93a7">Needs: {{ r.need }}</div></div></div>
+              </sc-for>
+
+              <button onClick="{{ applyRepairBtn }}" style="width:100%;margin-top:18px;padding:12px;border:none;border-radius:10px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 13px Inter;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;box-shadow:0 6px 18px rgba(109,93,252,.35)"><span style="width:15px;height:15px;display:inline-flex" dangerouslySetInnerHTML="{{ icWrench }}"></span>{{ applyLabel }}</button>
+              <button onClick="{{ exportReport }}" style="width:100%;margin-top:9px;padding:10px;border:1px solid rgba(255,255,255,.12);border-radius:10px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 12.5px Inter;cursor:pointer">Export repair report</button>
+            </aside>
+          </div>
+        </div>
+      </sc-if>
+
+    </main>
+  </div>
+
+  <!-- ============ STATUS BAR ============ -->
+  <footer style="height:32px;flex:none;display:flex;align-items:center;gap:16px;padding:0 16px;background:#0a0e1a;border-top:1px solid rgba(255,255,255,.06);font-size:11.5px;color:#8b93a7">
+    <span style="display:inline-flex;align-items:center;gap:5px;color:#c7cddb"><span style="width:12px;height:12px;display:inline-flex" dangerouslySetInnerHTML="{{ icBranch }}"></span>main*</span>
+    <span style="display:inline-flex;gap:9px;color:#5f6980">⊕ ↻ ⚠ 0</span>
+    <div style="flex:1"></div>
+    <span>Ln 24, Col 1</span><span>Spaces: 2</span><span>UTF-8</span><span>LF</span>
+    <span style="display:inline-flex;align-items:center;gap:5px">TypeScript React</span>
+    <span style="display:inline-flex;align-items:center;gap:5px">✓ Prettier</span>
+    <span style="display:inline-flex;align-items:center;gap:5px;color:#34d399"><span style="width:7px;height:7px;border-radius:50%;background:#34d399"></span>Live</span>
+    <span>Port: 5173</span><span style="color:#34d399">Ready</span><span>1.2s</span>
+    <span style="width:13px;height:13px;display:inline-flex" dangerouslySetInnerHTML="{{ icBell }}"></span>
+  </footer>
+  <div style="position:fixed;right:18px;bottom:44px;display:flex;flex-direction:column-reverse;gap:9px;z-index:99;pointer-events:none">
+    <sc-for list="{{ toasts }}" as="t" hint-placeholder-count="0">
+      <div style="{{ t.style }}"><span style="width:8px;height:8px;border-radius:50%;background:{{ t.color }};flex:none;box-shadow:0 0 8px {{ t.color }}"></span>{{ t.msg }}</div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+const I={
+run:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z"/></svg>',
+deploy:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v14M6 8l6-6 6 6M5 20h14"/></svg>',
+gear:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+home:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L12 3l9 6.5V21H3z"/><path d="M9 21v-7h6v7"/></svg>',
+agent:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4L4.2 7.7l5.4-.8z"/></svg>',
+ide:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M8 9l-2 3 2 3M16 9l2 3-2 3M13 8l-2 8"/></svg>',
+factory:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21V9l6 4V9l6 4V6l6 3v12z"/></svg>',
+wave:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 12h2M6 12h1M9 6v12M12 3v18M15 8v8M18 5v14M21 10v4"/></svg>',
+branch:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="8" r="2.5"/><path d="M6 8.5v7M18 10.5c0 4-6 1.5-6 5.5"/></svg>',
+plus:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+dl:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></svg>',
+check:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
+checkc:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M8.5 12l2.3 2.3 4.7-4.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+shield:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6z"/><path d="M9 12l2 2 4-4"/></svg>',
+edit:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
+bell:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+play:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>',
+clock:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+box:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8l-9-5-9 5 9 5 9-5zM3 8v8l9 5 9-5V8M12 13v8"/></svg>',
+rocket:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 15c-1 1-1.5 4-1.5 4s3-.5 4-1.5M9 11a10 10 0 0 1 8-6c1 4-1 7-6 8M9 11l4 4M9 11l-4 1 2 3 3 2 1-4"/><circle cx="15" cy="9" r="1.2"/></svg>',
+web:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg>',
+android:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M7 9h10v8a1 1 0 0 1-1 1h-1v3h-2v-3h-2v3H8v-3H7a1 1 0 0 1-1-1zM5 9.5A1.5 1.5 0 0 1 6.5 11v4A1.5 1.5 0 0 1 3.5 15v-4A1.5 1.5 0 0 1 5 9.5zM19 9.5a1.5 1.5 0 0 1 1.5 1.5v4a1.5 1.5 0 0 1-3 0v-4A1.5 1.5 0 0 1 19 9.5zM8 8a4 4 0 0 1 8 0zM9.5 5.5l-1-1.5M14.5 5.5l1-1.5" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>',
+apple:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M16 3c-1 .1-2.2.8-2.9 1.6-.6.7-1.2 1.9-1 3 1.1.1 2.3-.6 3-1.4.6-.8 1.1-1.9.9-3.2zM19 17c-.5 1.2-.8 1.7-1.5 2.7-1 1.4-2.3 3.2-4 3.2s-2-1.1-3.7-1.1-2.2 1.1-3.7 1.1-2.9-1.6-3.9-3C-.3 16.5-.6 11 2.3 8.6c1-.8 2.3-1.3 3.5-1.3 1.5 0 2.4 1.1 3.7 1.1s2-1.1 3.9-1.1c1.4 0 2.9.8 3.9 2-3.4 1.9-2.8 6.7 1.8 7.7z"/></svg>',
+windows:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><path d="M3 5.5l7.5-1v7H3zM11.5 4.3L21 3v8.5h-9.5zM3 12.5h7.5v6.9L3 18.5zM11.5 12.5H21V21l-9.5-1.3z"/></svg>',
+linux:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3c-1.2 1-1.5 2.6-1.3 4.2.2 1.4-.4 2.3-1.2 3.6C5.3 12.5 5 14 6 15.5c.6.9.4 1.8 0 2.8-.4 1 .3 1.7 1.4 1.7h9.2c1.1 0 1.8-.7 1.4-1.7-.4-1-.6-1.9 0-2.8 1-1.5.7-3-.5-4.7-.8-1.3-1.4-2.2-1.2-3.6C16.5 5.6 16.2 4 15 3c-1-.8-2.2-.9-3-.9s-2 .1-3 .9z"/><circle cx="10" cy="8" r="1"/><circle cx="14" cy="8" r="1"/><path d="M11 10.5c.6.5 1.4.5 2 0"/></svg>',
+auth:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>',
+dash:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="5" rx="1.5"/><rect x="13" y="10" width="8" height="11" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/></svg>',
+pay:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg>',
+notif:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+api:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 11l7.6-4M8.2 13l7.6 4"/></svg>',
+db:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>',
+chart:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+};
+Object.assign(I,{
+sparkle:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6zM19 15l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7z"/></svg>',
+clip:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>',
+at:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>',
+expand:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>',
+chev:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
+eye:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="2.6"/></svg>',
+code:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8 8l-4 4 4 4M16 8l4 4-4 4"/></svg>',
+flask:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-5 8.5A2 2 0 0 0 6.7 21h10.6a2 2 0 0 0 1.7-3.5L14 9V3"/><path d="M7.5 15h9"/></svg>',
+folder:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+term:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M13 15h4"/></svg>',
+search:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>',
+git:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><circle cx="18" cy="12" r="2.5"/><path d="M6 8.5v7M8.5 6H13a2.5 2.5 0 0 1 2.5 2.5V10"/></svg>',
+globe:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18"/></svg>',
+file:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+stop:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>',
+chevR:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg>',
+cpu:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/><path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2"/></svg>',
+palette:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a9 9 0 1 0 0 18c1.4 0 2-1 2-2 0-1.5 1-2 2.5-2H18a3 3 0 0 0 3-3c0-5-4-9-9-9z"/><circle cx="7.5" cy="10.5" r="1"/><circle cx="12" cy="7.5" r="1"/><circle cx="16.5" cy="10.5" r="1"/></svg>',
+sliders:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h8M16 18h4"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="14" cy="18" r="2"/></svg>',
+plug:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v6M15 2v6M7 8h10v3a5 5 0 0 1-10 0zM12 16v6"/></svg>',
+server:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg>',
+zap:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>',
+wrench:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8 6.2 21l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.6 2.6-2.3-.4-.4-2.3z"/></svg>',
+alert:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>',
+bug:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="6" width="8" height="12" rx="4"/><path d="M12 6V3.5M9 6l-2-2M15 6l2-2M8 10H4M8 14H3.5M8 17l-3 2M16 10h4M16 14h4.5M16 17l3 2"/></svg>',
+magnify:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4M11 8v6M8 11h6"/></svg>',
+list:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>',
+save:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8 3v5h7M8 21v-6h8v6"/></svg>',
+pause:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5v14M16 5v14"/></svg>',
+flag:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg>',
+lifebuoy:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3.5"/><path d="M5 5l4.5 4.5M14.5 14.5L19 19M19 5l-4.5 4.5M9.5 14.5L5 19"/></svg>',
+target:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></svg>',
+route:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="19" r="2.5"/><circle cx="18" cy="5" r="2.5"/><path d="M6 16.5V11a4 4 0 0 1 4-4h4a4 4 0 0 0 4-4"/></svg>',
+book:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h12v16H6a2 2 0 0 0-2 2zM4 19a2 2 0 0 0 2 2h12"/></svg>',
+users:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5.5a3 3 0 0 1 0 5M21 20a6 6 0 0 0-4-5.6"/></svg>',
+monitor:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg>',
+tablet:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M12 17h.01"/></svg>',
+phone:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="3" width="10" height="18" rx="2"/><path d="M11 18h2"/></svg>',
+refresh:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/></svg>',
+ext:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6M21 3l-9 9M10 5H5a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-5"/></svg>',
+bolt:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg>',
+back:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg>',
+split:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>',
+dots:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>',
+});
+for(const k in I){I[k]={__html:I[k]};}
+function spark(seed){let s=seed*9301%233280,p=[];for(let i=0;i<20;i++){s=(s*9301+49297)%233280;p.push((i/19*120).toFixed(0)+','+(20-((s/233280)*16)).toFixed(1));}return p.join(' ');}
+class Component extends DCLogic {
+  state = { screen:'factory', env:'Prod', tools:{fs:true,term:true,search:true,git:true,web:true,db:true}, stream:true, plat:{web:true,ios:true,android:false,windows:false,macos:false,linux:false}, settingsTab:'models', selIssue:0, setToggles:{},
+    model:'Codesovereign-1.5', toasts:[], prompt:'', agentPrompt:'', planApproved:false, agentStopped:false, agentRuns:[],
+    buildRunning:false, buildPct:68, buildDone:false, factoryTab:'env', ctxTab:'context',
+    ideFile:'Dashboard.tsx', idePanel:'workflow', ideDevice:'desktop',
+    temp:0.3, maxTok:8192, lmCtx:32768, lmGpu:99, lmTemp:0.2,
+    recPaused:false, recSteps:{0:5,1:4,2:4,3:4,4:9}, recMode:0, routeOv:{}, railCollapsed:false, artTab:'artifacts', previewOpen:true, pvTab:'screen', deploying:false };
+  _tid=0;
+  toast(msg,color){ const id=++this._tid; this.setState({toasts:[...this.state.toasts,{id,msg,color:color||'#a78bfa'}]}); setTimeout(()=>this.setState({toasts:this.state.toasts.filter(t=>t.id!==id)}),2800); }
+  mkToast(msg,color){ return ()=>this.toast(msg,color); }
+  startBuild(){ if(this.state.buildRunning){this.toast('Build already in progress — duplicate action blocked','#f59e0b');return;} this.toast('Build started for all targets','#60a5fa'); this.setState({buildRunning:true,buildDone:false,buildPct:0}); this._bt=setInterval(()=>{const p=this.state.buildPct+3; if(p>=100){clearInterval(this._bt); this.setState({buildPct:100,buildRunning:false,buildDone:true}); this.toast('All targets built successfully','#34d399');} else this.setState({buildPct:p});},140); }
+  componentWillUnmount(){ clearInterval(this._bt); clearTimeout(this._dt); }
+  _persistKeys=['env','tools','stream','plat','settingsTab','setToggles','model','planApproved','agentRuns','factoryTab','ctxTab','ideFile','idePanel','ideDevice','temp','maxTok','lmCtx','lmGpu','lmTemp','recSteps','recMode','routeOv','railCollapsed','artTab','pvTab','selIssue','screen','buildDone','previewOpen'];
+  componentDidMount(){ try{const s=JSON.parse(localStorage.getItem('cs_app_state_v1')||'null'); if(s&&typeof s==='object') this.setState(s);}catch(e){} }
+  componentDidUpdate(){ try{const o={}; this._persistKeys.forEach(k=>o[k]=this.state[k]); const j=JSON.stringify(o); if(j!==this._lastSave){this._lastSave=j; localStorage.setItem('cs_app_state_v1',j);} }catch(e){} }
+  deploy(){ if(this.state.deploying){this.toast('Deploy already running — duplicate action blocked','#f59e0b');return;} this.setState({deploying:true}); this.toast('Deploying v1.3.0 to '+(this.state.env==='Prod'?'Production':'Dev')+'…','#a78bfa'); this._dt=setTimeout(()=>{this.setState({deploying:false}); this.toast('Deployed · https://app.beatshore.com is live','#34d399');},1800); }
+  genApp(){ const p=this.state.prompt.trim(); if(!p){this.toast('Describe the app first — or pick a “Try” prompt','#f59e0b');return;} this.setState({agentRuns:[...this.state.agentRuns,p],prompt:'',agentStopped:false,screen:'agent'}); this.toast('Spec captured — Planner is analyzing your build','#a78bfa'); }
+  cycleModel(){ const m=this.state.model==='Codesovereign-1.5'?'qwen2.5-coder-32b':'Codesovereign-1.5'; this.setState({model:m}); this.toast('Model switched to '+m+(m==='qwen2.5-coder-32b'?' (LM Studio, local)':' (cloud)'),'#22d3ee'); }
+  runAgent(){ const p=this.state.agentPrompt.trim(); if(!p){this.toast('Describe what you want to build first','#f59e0b');return;} this.setState({agentRuns:[...this.state.agentRuns,p],agentPrompt:'',agentStopped:false}); this.toast('Run started — Planner is analyzing the request','#a78bfa'); }
+  approvePlan(){ if(this.state.planApproved){this.toast('Plan already approved','#f59e0b');return;} this.setState({planApproved:true}); this.toast('Plan approved — API Integration marked complete, Testing started','#34d399'); }
+  stopRun(){ const s=!this.state.agentStopped; this.setState({agentStopped:s}); this.toast(s?'Run stopped — all agents paused safely':'Run resumed — agents picking up where they left off',s?'#ef4444':'#34d399'); }
+  applyRepair(){ const i=this.state.selIssue; const steps={...this.state.recSteps}; const s=steps[i]??4; if(s>=9){this.toast('Repair already recorded in the ledger for this issue','#34d399');return;} if(this.state.recPaused){this.toast('Recovery is paused — resume to continue','#f59e0b');return;} const msgs={4:'Forming ranked root-cause hypotheses…',5:'Top hypothesis confirmed — applying smallest safe repair',6:'Repair applied · running narrow-then-broad validation',7:'Validation passing — checking for regressions',8:'No regressions — recording repair to the ledger'}; steps[i]=s+1; this.setState({recSteps:steps}); this.toast(msgs[s]||'Repair recorded to .sovereign/changes.md','#a78bfa'); if(s+1===9) setTimeout(()=>this.toast('Issue resolved and recorded — status updated to Fixed','#34d399'),900); }
+  togglePause(){ const p=!this.state.recPaused; this.setState({recPaused:p}); this.toast(p?'Recovery paused — checkpoint preserved':'Recovery resumed','#f59e0b'); }
+  setVal(k,num){ return (e)=>this.setState({[k]:num?parseFloat(e.target.value):e.target.value}); }
+  setK(k,v){ return ()=>this.setState({[k]:v}); }
+  cycleRoute(agent,models){ return ()=>{const cur=this.state.routeOv[agent]||0; const nv=(cur+1)%2; this.setState({routeOv:{...this.state.routeOv,[agent]:nv}}); this.toast(agent+' now routed to '+models[nv],'#22d3ee');}; }
+  go(s){ return ()=>this.setState({screen:s}); }
+  toggleTool(k){ return ()=>this.setState({tools:{...this.state.tools,[k]:!this.state.tools[k]}}); }
+  togglePlat(k){ return ()=>this.setState({plat:{...this.state.plat,[k]:!this.state.plat[k]}}); }
+  setST(k){ return ()=>this.setState({settingsTab:k}); }
+  selectIssue(i){ return ()=>this.setState({selIssue:i}); }
+  toggleStream(){ this.setState({stream:!this.state.stream}); }
+  toggleSetting(label,def){ return ()=>{const cur=this.state.setToggles[label]; const now=(cur===undefined?def:cur); this.setState({setToggles:{...this.state.setToggles,[label]:!now}});}; }
+  renderVals(){
+    const scr=this.state.screen, I2=I;
+    const tabDef=[['welcome','Welcome',I.home],['agent','Agent',I.agent],['ide','IDE',I.ide],['factory','Factory',I.factory]];
+    const tabStyle=(k)=>{const on=scr===k;return `position:relative;height:100%;border:none;background:transparent;color:${on?'#e6e9f2':'#8b93a7'};font:600 13.5px Inter,sans-serif;cursor:pointer;border-bottom:2px solid ${on?'#22d3ee':'transparent'}`;};
+    const tabs=tabDef.map(([k,label,icon])=>({label,icon,style:tabStyle(k),go:this.go(k)}));
+    const railDef=[['welcome','Welcome',I.home,false],['agent','Agent',I.agent,false],['ide','IDE',I.ide,false],['factory','Factory',I.factory,false],['recovery','Recovery',I.lifebuoy,true]];
+    const railStyle=(k)=>{const on=scr===k;return `position:relative;width:52px;height:54px;border-radius:11px;border:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;background:${on?'rgba(109,93,252,.16)':'transparent'};color:${on?'#a9b0ff':'#6b7488'};box-shadow:${on?'inset 0 0 0 1px rgba(109,93,252,.35)':'none'}`;};
+    const rail=railDef.map(([k,label,icon,badge])=>({label,icon,style:railStyle(k),go:this.go(k),badge}));
+    const btn=(grad,shadow)=>`display:flex;align-items:center;gap:10px;padding:12px 15px;border:${grad?'none':'1px solid rgba(255,255,255,.1)'};border-radius:11px;color:#fff;cursor:pointer;background:${grad||'rgba(255,255,255,.03)'};${shadow?'box-shadow:'+shadow:''}`;
+    const bR=this.state.buildRunning, bP=this.state.buildPct, bD=this.state.buildDone;
+    const factoryActions=[
+      {title:bR?'Building… '+bP+'%':'Start Build',sub:bR?'In progress':'Build all targets',icon:I.play,style:btn('linear-gradient(135deg,#2f7bff,#2159d6)','0 4px 14px rgba(47,123,255,.35)'),go:()=>this.startBuild()},
+      {title:'Queue Build',sub:'Schedule & queue',icon:I.clock,style:btn('linear-gradient(135deg,#7c5bd6,#5b3fb0)','0 4px 14px rgba(124,91,214,.3)'),go:this.mkToast('Build queued behind 2 jobs · starts ~10:40 AM','#a78bfa')},
+      {title:'Export',sub:'Export source/artefacts',icon:I.dl,style:btn(null),go:this.mkToast('Exporting source + artifacts → BeatShore-v1.3.0.zip','#22d3ee')},
+      {title:'Release',sub:'Create new release',icon:I.rocket,style:btn('linear-gradient(135deg,#9b5de5,#6d3fc0)','0 4px 14px rgba(155,93,229,.3)'),go:this.mkToast('Release draft v1.3.1 created on Stable channel','#34d399')},
+    ];
+    const pStep=(n,name,sub,icon,state)=>{
+      const c={done:['rgba(52,211,153,.3)','rgba(52,211,153,.08)','rgba(52,211,153,.16)','#34d399','#e6e9f2'],
+        active:['rgba(34,211,238,.5)','rgba(34,211,238,.1)','rgba(34,211,238,.18)','#22d3ee','#e6e9f2'],
+        idle:['rgba(255,255,255,.08)','rgba(255,255,255,.02)','rgba(255,255,255,.05)','#6b7488','#9aa3b8']}[state];
+      return {n,name,sub,icon,border:c[0],bg:c[1],iconBg:c[2],iconColor:c[3],titleColor:c[4],arrow:'❯'};};
+    const pipeline=[pStep('1','Plan','Analysis & plan',I.dash,'done'),pStep('2','Generate','AI code generation',I.agent,'done'),pStep('3','Assemble','Integrate modules',I.box,'done'),pStep('4','Test','Quality & security',I.shield,bD?'done':'active'),pStep('5','Package','Bundle & sign',I.box,bD?'done':(bR&&bP>60?'active':'idle')),pStep('6','Deploy','Deliver everywhere',I.rocket,bD?'active':'idle')];
+    pipeline[5].arrow='';
+    const pipe=bD?{label:'Ready',color:'#34d399',name:'Complete',desc:'All targets built, signed and packaged.',pct:'100%'}
+      :bR?{label:'Building',color:'#60a5fa',name:'Assemble + Test',desc:'Compiling targets and running checks…',pct:bP+'%'}
+      :{label:'In Progress',color:'#34d399',name:'Testing',desc:'Running integration tests and security scans…',pct:'62%'};
+    const tCard=(active)=>`border:1px solid ${active?'rgba(34,211,238,.35)':'rgba(255,255,255,.08)'};border-radius:12px;background:${active?'rgba(34,211,238,.05)':'rgba(255,255,255,.02)'};padding:13px`;
+    const stBg={green:'rgba(52,211,153,.14)',blue:'rgba(59,130,246,.16)',purple:'rgba(124,91,214,.16)',red:'rgba(239,68,68,.14)'};
+    const stCol={green:'#34d399',blue:'#60a5fa',purple:'#a78bfa',red:'#f87171'};
+    const targets=[
+      {name:'Web',sub:'SPA / PWA',icon:I.web,iconColor:'#34d399',status:'Passed',statusColor:stCol.green,statusBg:stBg.green,statusIcon:I.check,meta:'4m 21s',cardStyle:tCard(false),spark:spark(3)},
+      {name:'Android APK',sub:'Android 8.0+',icon:I.android,iconColor:bD?'#34d399':'#60a5fa',status:bD?'Passed':'Building',statusColor:bD?stCol.green:stCol.blue,statusBg:bD?stBg.green:stBg.blue,statusIcon:bD?I.check:I.box,meta:bD?'2m 04s':(bR?bP:'68')+'%',cardStyle:tCard(!bD),building:!bD,progress:(bR?bP:(bD?100:68))+'%',spark:spark(7)},
+      {name:'iOS',sub:'iOS 13.0+',icon:I.apple,iconColor:'#a78bfa',status:'Queued',statusColor:stCol.purple,statusBg:stBg.purple,statusIcon:I.clock,meta:'In queue (2)',cardStyle:tCard(false),spark:spark(11)},
+      {name:'Windows',sub:'Windows 10+',icon:I.windows,iconColor:'#38bdf8',status:'Ready',statusColor:stCol.green,statusBg:stBg.green,statusIcon:I.check,meta:'Est. 6m 10s',cardStyle:tCard(false),spark:spark(5)},
+      {name:'macOS',sub:'macOS 11+',icon:I.apple,iconColor:'#c7cddb',status:'Ready',statusColor:stCol.green,statusBg:stBg.green,statusIcon:I.check,meta:'Est. 5m 20s',cardStyle:tCard(false),spark:spark(2)},
+      {name:'Linux',sub:'Ubuntu 20.04+',icon:I.linux,iconColor:'#f59e0b',status:'Failed',statusColor:stCol.red,statusBg:stBg.red,statusIcon:I.plus,meta:'View logs',cardStyle:tCard(false),spark:spark(9)},
+    ];
+    const modulesRaw=[
+      {name:'Auth',ver:'v2.1.0',active:'Active',icon:I.auth,color:'#34d399',bg:'rgba(52,211,153,.12)'},
+      {name:'Dashboard',ver:'v1.4.2',active:'Active',icon:I.dash,color:'#60a5fa',bg:'rgba(59,130,246,.12)'},
+      {name:'Payments',ver:'v2.0.1',active:'Active',icon:I.pay,color:'#a78bfa',bg:'rgba(124,91,214,.14)'},
+      {name:'Notifications',ver:'v1.2.5',active:'Active',icon:I.notif,color:'#f59e0b',bg:'rgba(245,158,11,.12)'},
+      {name:'API Gateway',ver:'v1.3.8',active:'Active',icon:I.api,color:'#22d3ee',bg:'rgba(34,211,238,.12)'},
+      {name:'Database',ver:'v3.0.0',active:'Active',icon:I.db,color:'#f472b6',bg:'rgba(244,114,182,.12)'},
+      {name:'Analytics',ver:'v1.2.3',active:'Active',icon:I.chart,color:'#34d399',bg:'rgba(52,211,153,.12)'},
+    ];
+    const modules=modulesRaw.map(m=>({...m,open:this.mkToast(m.name+' '+m.ver+' — settings, changelog & docs','#a78bfa')}));
+    const artifactsRaw=[
+      {name:'BeatShore-Web',file:'web.zip',size:'128.4 MB',built:'Built 10:24 AM',status:'Passed',stColor:'#34d399',icon:I.web,color:'#34d399'},
+      {name:'BeatShore-Android',file:'app-release.apk',size:'54.7 MB',built:'Building 68%',status:'Building',stColor:'#60a5fa',icon:I.android,color:'#60a5fa'},
+      {name:'BeatShore-Windows',file:'setup.exe',size:'92.1 MB',built:'Ready',status:'Ready',stColor:'#34d399',icon:I.windows,color:'#38bdf8'},
+      {name:'BeatShore-macOS',file:'dmg',size:'104.3 MB',built:'Ready',status:'Ready',stColor:'#34d399',icon:I.apple,color:'#c7cddb'},
+    ];
+    const artifacts=artifactsRaw.map(a=>({...a,dl:this.mkToast('Downloading '+a.name+' ('+a.size+')…','#34d399')}));
+    const checks=[{name:'Unit Tests',result:'1,248 passed'},{name:'Integration Tests',result:'312 passed'},{name:'E2E Tests',result:'48 passed'},{name:'Security Scan',result:'No issues'},{name:'Performance',result:'92 / 100'}];
+    const prodTarget=[{k:'Environment',v:'● Production',color:'#34d399'},{k:'Region',v:'US East (N. Virginia)',color:'#e6e9f2'},{k:'URL',v:'app.beatshore.com ↗',color:'#8b93f8'}];
+    const techStack=[{k:'Framework',v:'Next.js 14'},{k:'Runtime',v:'Node.js 20 (LTS)'},{k:'Language',v:'TypeScript 5.x'},{k:'Database',v:'PostgreSQL 15'},{k:'Cache',v:'Redis 7'},{k:'Storage',v:'S3 (Encrypted)'}];
+    const buildRelease=[{k:'Version',v:'1.3.0'},{k:'Build Number',v:'102'},{k:'Git Commit',v:'a3f9c1d ↗',color:'#8b93f8'},{k:'Signing',v:'Valid',color:'#34d399'},{k:'Release Channel',v:'Stable'}];
+    const recentActivity=[
+      {time:'10:24 AM',text:'Web build passed',sub:'v1.3.0+102',color:'#34d399',icon:I.check},
+      {time:'10:23 AM',text:'Android build started',sub:'v1.3.0+102',color:'#60a5fa',icon:I.play},
+      {time:'10:22 AM',text:'Tests passed',sub:'1,248 tests',color:'#34d399',icon:I.check},
+      {time:'10:18 AM',text:'Security scan passed',sub:'No vulnerabilities',color:'#34d399',icon:I.shield},
+    ];
+    // ===== AGENT =====
+    const chip=(t,c)=>({t,color:c,bg:c.replace('#','rgba(').length?`${c}22`:c});
+    const mkChip=(t,c)=>({t,color:c,bg:c+'22'});
+    const planStep=(n,title,desc,st)=>{
+      const m={Complete:['#34d399','rgba(52,211,153,.14)','rgba(52,211,153,.4)'],Active:['#a78bfa','rgba(124,91,214,.18)','rgba(124,91,214,.5)'],Waiting:['#7b859c','rgba(255,255,255,.05)','rgba(255,255,255,.12)']}[st];
+      const on=st!=='Waiting';
+      return {n,title,desc,st,stColor:m[0],stBg:m[1],badgeStyle:`width:26px;height:26px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;font:600 12px Inter;background:${st==='Complete'?'rgba(52,211,153,.16)':st==='Active'?'rgba(124,91,214,.2)':'rgba(255,255,255,.05)'};color:${m[0]};box-shadow:inset 0 0 0 1px ${m[2]}`,
+        cardStyle:`display:flex;gap:12px;padding:13px 12px;border-radius:11px;border:1px solid ${st==='Active'?'rgba(124,91,214,.35)':'rgba(255,255,255,.06)'};background:${st==='Active'?'rgba(124,91,214,.07)':'rgba(255,255,255,.015)'};margin-bottom:9px`,
+        titleColor:on?'#e6e9f2':'#8b93a7'};};
+    const pa=this.state.planApproved;
+    const planSteps=[planStep('1','Requirements','Analyze the request and define project requirements.','Complete'),planStep('2','Architecture','Design system architecture and data flow.','Complete'),planStep('3','UI Build','Build responsive React UI with components.','Complete'),planStep('4','API Integration','Implement API routes and integrate services.',pa?'Complete':'Active'),planStep('5','Testing','Write and run tests, ensure quality.',pa?'Active':'Waiting'),planStep('6','Deployment','Build and deploy to production environment.','Waiting')];
+    const planDone=pa?'4 / 6':'3 / 6', planPct=pa?'67%':'50%';
+    const aRow=(name,ik,color,st,stC,desc,time,badges,file)=>({name,icon:I[ik],color,st,stColor:stC,stBg:stC+'20',desc,time,badges:badges||[],file});
+    const activityRows=[
+      ...this.state.agentRuns.slice().reverse().map(p=>aRow('Planner','clip','#22d3ee','Planning','#22d3ee','Planning: “'+p+'”','now')),
+      aRow('Planner','clip','#22d3ee','Planning','#22d3ee','Analyzing requirements and creating execution plan…','10:24:31 AM'),
+      aRow('Coder','code','#60a5fa','Coding','#60a5fa','Building dashboard components and state management…',null,[],{name:'Dashboard.tsx',d:'+142'}),
+      aRow('Reviewer','eye','#a78bfa','Reviewing','#a78bfa','Reviewing code changes for quality and best practices…',null,[mkChip('3 Issues','#f59e0b'),mkChip('1 Suggestion','#a78bfa')],null,true),
+      aRow('Coder','code','#60a5fa','Coding','#60a5fa','Applying review feedback and optimizing performance…',null,[],{name:'useDashboard.ts',d:'+68'}),
+      aRow('Tester','flask','#34d399','Testing','#34d399','Running unit tests and integration tests…',null,[mkChip('24 Passed','#34d399'),mkChip('2 Skipped','#7b859c')]),
+      aRow('Deployer','rocket','#7b859c','Waiting','#7b859c','Waiting for all checks to complete…',null),
+    ];
+    const spec=(name,ik,color,st)=>({name,icon:I[ik],color,st,stColor:st==='Active'?'#34d399':'#7b859c',spark:spark(name.length*7)});
+    const specialists=[spec('Planner','clip','#22d3ee','Active'),spec('Coder','code','#60a5fa','Active'),spec('Reviewer','eye','#a78bfa','Active'),spec('Tester','flask','#34d399','Active'),spec('Deployer','rocket','#7b859c','Waiting')];
+    const aArt=(name,type,plus,minus,color)=>({name,type,plus,minus,color});
+    const agentArtifacts=[aArt('Dashboard.tsx','React Component','+142','-8','#60a5fa'),aArt('dashboard.css','Stylesheet','+86','-2','#f472b6'),aArt('types.ts','TypeScript','+24','-1','#22d3ee'),aArt('useDashboard.ts','Custom Hook','+68','-3','#a78bfa'),aArt('api/dashboard.ts','API Route','+102','-12','#34d399'),aArt('dashboard.test.tsx','Test File','+91','-5','#f59e0b')];
+    const cf=(ext,name,path,color)=>({ext,name,path,color});
+    const contextFiles=[cf('TSX','Dashboard.tsx','src/components','#60a5fa'),cf('TS','useDashboard.ts','src/hooks','#22d3ee'),cf('TS','dashboard.ts','src/api','#22d3ee'),cf('TS','types.ts','src/types','#22d3ee'),cf('CSS','dashboard.css','src/styles','#f472b6')];
+    const T=this.state.tools;
+    const tool=(k,name,desc,ik)=>({k,name,desc,icon:I[ik],on:T[k],toggle:this.toggleTool(k),trackStyle:`width:34px;height:19px;border-radius:11px;flex:none;cursor:pointer;position:relative;transition:.15s;background:${T[k]?'#34d399':'rgba(255,255,255,.14)'}`,knobStyle:`position:absolute;top:2px;left:${T[k]?'17px':'2px'};width:15px;height:15px;border-radius:50%;background:#fff;transition:.15s`});
+    const tools=[tool('fs','File System','Read, write, edit files','folder'),tool('term','Terminal','Run commands','term'),tool('search','Search','Find code, files, symbols','search'),tool('git','Git','Version control','git'),tool('web','Web Fetch','Fetch web resources','globe'),tool('db','Database','Query database','db')];
+
+    // ===== IDE =====
+    const K='#c678dd',S='#98c379',F='#61afef',C='#e5c07b',TG='#e06c75',AT='#d19a66',PU='#6b7488',B='#c9d1e0';
+    const tf=(label,indent,type,mod,active)=>{
+      const iconMap={folderOpen:['folder','#e5c07b'],folder:['folder','#8b93a7'],react:['ide','#61afef'],ts:['file','#3b82f6'],tsx:['ide','#61afef'],html:['ext','#e06c75'],cfg:['gear','#8b93a7'],pkg:['box','#98c379'],md:['file','#8b93a7'],env:['gear','#d19a66'],css:['file','#f472b6']}[type]||['file','#8b93a7'];
+      const folder=type==='folder'||type==='folderOpen';
+      const isActive=!folder&&label===this.state.ideFile;
+      const tabNames=['Dashboard.tsx','Studio.tsx','routes.ts','styles.css'];
+      const select=folder?this.mkToast(label+'/ expanded','#7b859c'):(tabNames.includes(label)?this.setK('ideFile',label):this.mkToast('Opened '+label+' (read-only preview)','#22d3ee'));
+      return {label,icon:I[iconMap[0]],color:iconMap[1],mod,folder,select,
+        rowStyle:`display:flex;align-items:center;gap:7px;padding:4px 8px;border-radius:6px;cursor:pointer;padding-left:${indent*15+10}px;background:${isActive?'rgba(97,175,239,.12)':'transparent'}`,
+        labelStyle:`font-size:12.5px;flex:1;white-space:nowrap;color:${isActive?'#e6e9f2':'#b6bdcc'}`,
+        chevStyle:`width:12px;height:12px;display:inline-flex;color:#6b7488;transform:rotate(${type==='folderOpen'?'90deg':'0deg'})`};};
+    const fileTree=[
+      tf('BeatShore',0,'folderOpen',null,false),
+      tf('app',1,'folderOpen',null,false),
+      tf('components',2,'folder',null,false),
+      tf('pages',2,'folderOpen',null,false),
+      tf('Dashboard.tsx',3,'react','M',true),
+      tf('Studio.tsx',3,'react',null,false),
+      tf('Library.tsx',3,'react',null,false),
+      tf('hooks',2,'folder',null,false),
+      tf('utils',2,'folder',null,false),
+      tf('styles',2,'folder',null,false),
+      tf('services',2,'folder',null,false),
+      tf('App.tsx',1,'ts',null,false),
+      tf('main.tsx',1,'react',null,false),
+      tf('index.html',1,'html',null,false),
+      tf('vite.config.ts',1,'cfg',null,false),
+      tf('package.json',1,'pkg',null,false),
+      tf('tsconfig.json',1,'cfg',null,false),
+      tf('README.md',1,'md',null,false),
+      tf('.env.local',1,'env',null,false),
+    ];
+    const curFile=this.state.ideFile;
+    const ideTab=(name,color)=>{const active=name===curFile;return {name,active,color,select:this.setK('ideFile',name),tabStyle:`display:flex;align-items:center;gap:8px;padding:0 14px;height:100%;border-right:1px solid rgba(255,255,255,.05);cursor:pointer;font-size:12.5px;background:${active?'#0a0e17':'transparent'};border-top:2px solid ${active?'#61afef':'transparent'};color:${active?'#e6e9f2':'#8b93a7'}`};};
+    const ideTabs=[ideTab('Dashboard.tsx','#61afef'),ideTab('Studio.tsx','#61afef'),ideTab('routes.ts','#3b82f6'),ideTab('styles.css','#f472b6')];
+    const cl=(n,h)=>({n,h:{__html:h}});
+    const dashLines=[
+      cl(1,`<span style="color:${K}">import</span> { useState, useEffect } <span style="color:${K}">from</span> <span style="color:${S}">'react'</span>`),
+      cl(2,`<span style="color:${K}">import</span> { Play, Waves, Music, Clock, TrendingUp } <span style="color:${K}">from</span> <span style="color:${S}">'lucide-react'</span>`),
+      cl(3,`<span style="color:${K}">import</span> { useProjects } <span style="color:${K}">from</span> <span style="color:${S}">'../hooks/useProjects'</span>`),
+      cl(4,''),
+      cl(5,`<span style="color:${K}">export</span> <span style="color:${K}">default</span> <span style="color:${K}">function</span> <span style="color:${F}">Dashboard</span>() {`),
+      cl(6,`  <span style="color:${K}">const</span> { projects, loading } = <span style="color:${F}">useProjects</span>()`),
+      cl(7,`  <span style="color:${K}">const</span> [activeProject, setActiveProject] = <span style="color:${F}">useState</span>(projects[<span style="color:${AT}">0</span>])`),
+      cl(8,''),
+      cl(9,`  <span style="color:${K}">return</span> (`),
+      cl(10,`    <span style="color:${PU}">&lt;</span><span style="color:${TG}">div</span> <span style="color:${C}">className</span>=<span style="color:${S}">"dashboard"</span><span style="color:${PU}">&gt;</span>`),
+      cl(11,`      <span style="color:${PU}">&lt;</span><span style="color:${TG}">header</span> <span style="color:${C}">className</span>=<span style="color:${S}">"dashboard-header"</span><span style="color:${PU}">&gt;</span>`),
+      cl(12,`        <span style="color:${PU}">&lt;</span><span style="color:${TG}">div</span><span style="color:${PU}">&gt;</span>`),
+      cl(13,`          <span style="color:${PU}">&lt;</span><span style="color:${TG}">h1</span><span style="color:${PU}">&gt;</span><span style="color:${B}">Welcome back, Krish</span><span style="color:${PU}">&lt;/</span><span style="color:${TG}">h1</span><span style="color:${PU}">&gt;</span>`),
+      cl(14,`          <span style="color:${PU}">&lt;</span><span style="color:${TG}">p</span><span style="color:${PU}">&gt;</span><span style="color:${B}">Create. Produce. Publish.</span><span style="color:${PU}">&lt;/</span><span style="color:${TG}">p</span><span style="color:${PU}">&gt;</span>`),
+      cl(15,`        <span style="color:${PU}">&lt;/</span><span style="color:${TG}">div</span><span style="color:${PU}">&gt;</span>`),
+      cl(16,`        <span style="color:${PU}">&lt;</span><span style="color:${TG}">a</span> <span style="color:${C}">className</span>=<span style="color:${S}">"btn-primary"</span> <span style="color:${C}">href</span>=<span style="color:${S}">"/studio/new"</span><span style="color:${PU}">&gt;</span>`),
+      cl(17,`          <span style="color:${PU}">&lt;</span><span style="color:${C}">Play</span> <span style="color:${C}">size</span>=<span style="color:${AT}">{16}</span> <span style="color:${PU}">/&gt;</span> <span style="color:${B}">New Project</span>`),
+      cl(18,`        <span style="color:${PU}">&lt;/</span><span style="color:${TG}">a</span><span style="color:${PU}">&gt;</span>`),
+      cl(19,`      <span style="color:${PU}">&lt;/</span><span style="color:${TG}">header</span><span style="color:${PU}">&gt;</span>`),
+      cl(20,`      <span style="color:${PU}">&lt;</span><span style="color:${TG}">div</span> <span style="color:${C}">className</span>=<span style="color:${S}">"stats-grid"</span><span style="color:${PU}">&gt;</span>`),
+      cl(21,`        <span style="color:${PU}">&lt;</span><span style="color:${C}">StatCard</span> <span style="color:${C}">icon</span>=<span style="color:${AT}">{Music}</span> <span style="color:${C}">label</span>=<span style="color:${S}">"Projects"</span> <span style="color:${C}">value</span>=<span style="color:${AT}">{projects.length}</span> <span style="color:${PU}">/&gt;</span>`),
+      cl(22,`        <span style="color:${PU}">&lt;</span><span style="color:${C}">StatCard</span> <span style="color:${C}">icon</span>=<span style="color:${AT}">{Waves}</span> <span style="color:${C}">label</span>=<span style="color:${S}">"Tracks"</span> <span style="color:${C}">value</span>=<span style="color:${S}">"128"</span> <span style="color:${PU}">/&gt;</span>`),
+      cl(23,`        <span style="color:${PU}">&lt;</span><span style="color:${C}">StatCard</span> <span style="color:${C}">icon</span>=<span style="color:${AT}">{Clock}</span> <span style="color:${C}">label</span>=<span style="color:${S}">"Hours"</span> <span style="color:${C}">value</span>=<span style="color:${S}">"42.7"</span> <span style="color:${PU}">/&gt;</span>`),
+      cl(24,`        <span style="color:${PU}">&lt;</span><span style="color:${C}">StatCard</span> <span style="color:${C}">icon</span>=<span style="color:${AT}">{TrendingUp}</span> <span style="color:${C}">label</span>=<span style="color:${S}">"Streams"</span> <span style="color:${C}">value</span>=<span style="color:${S}">"12.4K"</span> <span style="color:${PU}">/&gt;</span>`),
+      cl(25,`      <span style="color:${PU}">&lt;/</span><span style="color:${TG}">div</span><span style="color:${PU}">&gt;</span>`),
+      cl(26,`    <span style="color:${PU}">&lt;/</span><span style="color:${TG}">div</span><span style="color:${PU}">&gt;</span>`),
+      cl(27,`  )`),
+      cl(28,`}`),
+    ];
+    const studioLines=[
+      cl(1,`<span style="color:${K}">import</span> { useRef, useState } <span style="color:${K}">from</span> <span style="color:${S}">'react'</span>`),
+      cl(2,`<span style="color:${K}">import</span> { WaveformCanvas } <span style="color:${K}">from</span> <span style="color:${S}">'../components/WaveformCanvas'</span>`),
+      cl(3,''),
+      cl(4,`<span style="color:${K}">export default function</span> <span style="color:${F}">Studio</span>() {`),
+      cl(5,`  <span style="color:${K}">const</span> [playing, setPlaying] = <span style="color:${F}">useState</span>(<span style="color:${AT}">false</span>)`),
+      cl(6,`  <span style="color:${K}">const</span> engine = <span style="color:${F}">useRef</span>(<span style="color:${K}">new</span> <span style="color:${C}">AudioEngine</span>())`),
+      cl(7,''),
+      cl(8,`  <span style="color:${K}">return</span> (`),
+      cl(9,`    <span style="color:${PU}">&lt;</span><span style="color:${C}">WaveformCanvas</span> <span style="color:${C}">engine</span>=<span style="color:${AT}">{engine}</span> <span style="color:${C}">playing</span>=<span style="color:${AT}">{playing}</span> <span style="color:${PU}">/&gt;</span>`),
+      cl(10,`  )`),
+      cl(11,`}`),
+    ];
+    const routesLines=[
+      cl(1,`<span style="color:${K}">import</span> { createBrowserRouter } <span style="color:${K}">from</span> <span style="color:${S}">'react-router-dom'</span>`),
+      cl(2,''),
+      cl(3,`<span style="color:${K}">export const</span> router = <span style="color:${F}">createBrowserRouter</span>([`),
+      cl(4,`  { <span style="color:${C}">path</span>: <span style="color:${S}">'/'</span>, <span style="color:${C}">element</span>: <span style="color:${PU}">&lt;</span><span style="color:${C}">Dashboard</span> <span style="color:${PU}">/&gt;</span> },`),
+      cl(5,`  { <span style="color:${C}">path</span>: <span style="color:${S}">'/studio/:id'</span>, <span style="color:${C}">element</span>: <span style="color:${PU}">&lt;</span><span style="color:${C}">Studio</span> <span style="color:${PU}">/&gt;</span> },`),
+      cl(6,`  { <span style="color:${C}">path</span>: <span style="color:${S}">'/library'</span>, <span style="color:${C}">element</span>: <span style="color:${PU}">&lt;</span><span style="color:${C}">Library</span> <span style="color:${PU}">/&gt;</span> },`),
+      cl(7,`])`),
+    ];
+    const cssLines=[
+      cl(1,`<span style="color:${C}">.dashboard</span> {`),
+      cl(2,`  <span style="color:${F}">display</span>: <span style="color:${S}">grid</span>;`),
+      cl(3,`  <span style="color:${F}">gap</span>: <span style="color:${AT}">16px</span>;`),
+      cl(4,`}`),
+      cl(5,`<span style="color:${C}">.btn-primary</span> {`),
+      cl(6,`  <span style="color:${F}">background</span>: <span style="color:${S}">linear-gradient(135deg, #7c6ff5, #5b4de8)</span>;`),
+      cl(7,`  <span style="color:${F}">border-radius</span>: <span style="color:${AT}">10px</span>;`),
+      cl(8,`}`),
+    ];
+    const codeByFile={'Dashboard.tsx':dashLines,'Studio.tsx':studioLines,'routes.ts':routesLines,'styles.css':cssLines};
+    const codeLines=codeByFile[curFile]||dashLines;
+    const crumbLeaf={'Dashboard.tsx':'Dashboard','Studio.tsx':'Studio','routes.ts':'router','styles.css':'.dashboard'}[curFile]||'';
+    const panel=(k,label,extra)=>{const on=this.state.idePanel===k;return {label,extra,select:this.setK('idePanel',k),tabStyle:on?'font-size:11.5px;font-weight:700;letter-spacing:.05em;color:#e6e9f2;height:100%;display:flex;align-items:center;gap:5px;border-bottom:2px solid #6d5dfc;cursor:pointer':'font-size:11.5px;font-weight:600;color:#7b859c;cursor:pointer;height:100%;display:flex;align-items:center;gap:5px'};};
+    const idePanels=[panel('workflow','AGENT WORKFLOW'),panel('terminal','TERMINAL'),panel('problems','PROBLEMS','2'),panel('output','OUTPUT'),panel('git','GIT')];
+    const ip=this.state.idePanel;
+    const ipWorkflow=ip==='workflow', ipTerminal=ip==='terminal', ipProblems=ip==='problems', ipOutput=ip==='output', ipGit=ip==='git';
+    const terminalLines=['$ pnpm dev','VITE v5.3  ready in 412 ms','➜  Local:   http://localhost:5173/','[agent] coder → writing src/pages/Dashboard.tsx','[hmr] update /src/pages/Dashboard.tsx'];
+    const problems=[{sev:'⚠',msg:"'loading' is declared but its value is never read",file:'Dashboard.tsx:6'},{sev:'⚠',msg:"React Hook useEffect has a missing dependency: 'projects'",file:'useDashboard.ts:14'}];
+    const outputLines=['[build] transforming 214 modules…','[build] ✓ built in 1.24s','[types] 0 errors','[lint] 0 errors, 2 warnings'];
+    const gitFiles=[{f:'Dashboard.tsx',p:'+142',m:'-8'},{f:'useDashboard.ts',p:'+68',m:'-3'},{f:'dashboard.css',p:'+86',m:'-2'}];
+    const dev=this.state.ideDevice;
+    const devBtn=(k,ik)=>({icon:I[ik],select:this.setK('ideDevice',k),btnStyle:`width:26px;height:24px;display:flex;align-items:center;justify-content:center;border-radius:6px;cursor:pointer;background:${dev===k?'rgba(97,175,239,.14)':'transparent'};color:${dev===k?'#61afef':'#6b7488'}`});
+    const deviceBtns=[devBtn('desktop','monitor'),devBtn('tablet','tablet'),devBtn('phone','phone')];
+    const previewShellStyle=dev==='desktop'?'flex:1;overflow:auto;background:radial-gradient(120% 80% at 100% 0,rgba(124,91,214,.12),transparent 50%),#0c1018;display:flex;min-height:0'
+      :`flex:1;overflow:auto;background:#080b12;display:flex;justify-content:center;padding:10px 0;min-height:0`;
+    const previewInnerStyle=dev==='desktop'?'display:flex;min-height:0;width:100%'
+      :`display:flex;min-height:0;width:${dev==='tablet'?'620px':'375px'};border:1px solid rgba(255,255,255,.1);border-radius:12px;overflow:hidden;background:radial-gradient(120% 80% at 100% 0,rgba(124,91,214,.12),transparent 50%),#0c1018;flex:none;height:fit-content`;
+    const wf=(name,desc,ik,color,state)=>({name,desc,icon:I[ik],color,state,done:state==='done',active:state==='active',
+      nameStyle:`font-size:12px;font-weight:600;width:58px;color:${state==='active'?'#e6e9f2':'#b6bdcc'}`,
+      dotStyle:`width:20px;height:20px;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;background:${state==='done'?'rgba(52,211,153,.16)':state==='active'?'rgba(124,91,214,.2)':'rgba(255,255,255,.05)'};color:${state==='done'?'#34d399':state==='active'?'#a78bfa':'#5f6980'}`});
+    const workflowPlan=[wf('Planner','Analyze requirements','clip','#34d399','done'),wf('Coder','Implement dashboard UI','code','#a78bfa','active'),wf('Reviewer','Review code & design','eye','#7b859c','idle'),wf('Tester','Run tests & validate','flask','#7b859c','idle'),wf('Docs','Update documentation','file','#7b859c','idle'),wf('Deployer','Prepare deployment','rocket','#7b859c','idle')];
+    const coderChecklist=[{t:'Created Dashboard.tsx',done:true},{t:'Implemented stats grid',done:true},{t:'Added charts and animations',done:true},{t:'Making layout responsive',done:false},{t:'Optimizing performance',done:false}].map(c=>({...c,rowStyle:`display:flex;align-items:center;gap:8px;padding:3px 0;font-size:12px;color:${c.done?'#b6bdcc':'#7b859c'}`,iconStyle:`width:13px;height:13px;display:inline-flex;color:${c.done?'#34d399':'#5f6980'}`}));
+    const ideDeps=['react','lucide-react','recharts'];
+    const ideCtxFiles=['Dashboard.tsx','Studio.tsx','useProjects.ts','routes.ts','styles.css'];
+    const pNav=(name,ik,active)=>({name,icon:I[ik],active,navStyle:`display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:7px;font-size:11.5px;color:${active?'#e6e9f2':'#8b93a7'};background:${active?'rgba(124,91,214,.16)':'transparent'}`,iconStyle:`width:14px;height:14px;display:inline-flex;color:${active?'#a78bfa':'#7b859c'}`});
+    const previewNav=[pNav('Dashboard','dash',true),pNav('Studio','wave',false),pNav('Library','book',false),pNav('AI Tools','bolt',false),pNav('Collab','users',false),pNav('Settings','gear',false)];
+    const ps=(label,value,delta,color)=>({label,value,delta,color,spark:spark(label.length*5)});
+    const previewStats=[ps('Projects','24','+12%','#a78bfa'),ps('Tracks','128','+8%','#22d3ee'),ps('Hours','42.7','+15%','#34d399'),ps('Streams','12.4K','+18%','#f472b6')];
+    const recentProjects=[{name:'Midnight Vibes',time:'3h ago'},{name:'Ocean Drive',time:'1d ago'},{name:'Lost in Space',time:'2d ago'}];
+    const activityFeed=[{title:'New track exported',sub:'Midnight Vibes.mp3',time:'2m ago'},{title:'AI mastering complete',sub:'Ocean Drive',time:'1h ago'},{title:'Collab invite',sub:'from Alex',time:'3h ago'}];
+
+    // ===== WELCOME =====
+    const P2=this.state.plat;
+    const platDef=[['web','Web','web','#34d399'],['ios','iOS','apple','#c7cddb'],['android','Android','android','#60a5fa'],['windows','Windows','windows','#38bdf8'],['macos','macOS','apple','#a78bfa'],['linux','Linux','linux','#f59e0b']];
+    const platChips=platDef.map(([k,label,ik,color])=>{const on=P2[k];return {k,label,icon:I[ik],toggle:this.togglePlat(k),chipStyle:`display:flex;align-items:center;gap:8px;padding:8px 13px;border-radius:9px;cursor:pointer;font-size:12.5px;font-weight:600;border:1px solid ${on?color+'66':'rgba(255,255,255,.1)'};background:${on?color+'1e':'rgba(255,255,255,.02)'};color:${on?'#e6e9f2':'#8b93a7'}`,iconStyle:`width:15px;height:15px;display:inline-flex;color:${on?color:'#7b859c'}`,check:on};});
+    const qs=(name,desc,ik,color,tags)=>({name,desc,icon:I[ik],color,bg:color+'1e',tags,go:()=>{this.setState({screen:'factory'});this.toast('Scaffolding “'+name+'” template — opening Factory','#22d3ee');}});
+    const quickStart=[
+      qs('SaaS Dashboard','Auth, billing, analytics','dash','#60a5fa',['Next.js','Postgres']),
+      qs('Mobile App','iOS & Android from one codebase','phone','#34d399',['React Native','Expo']),
+      qs('REST API','Typed endpoints & database','api','#22d3ee',['Node','Prisma']),
+      qs('Desktop App','Native cross-platform build','monitor','#a78bfa',['Tauri','Rust']),
+      qs('AI Chatbot','Local or hosted LLM inference','sparkle','#f472b6',['LM Studio','Ollama']),
+      qs('E-commerce','Catalog, cart & payments','pay','#f59e0b',['Next.js','Stripe']),
+    ];
+    const wp=(name,desc,platforms,status,stColor,updated,color)=>({name,desc,platforms,status,stColor,stBg:stColor+'20',updated,color});
+    const welcomeProjects=[
+      wp('BeatShore','Music experience platform',['web','android','apple'],'Production','#34d399','2h ago','#7c4dcf'),
+      wp('NovaCRM','Sales pipeline & analytics',['web','windows'],'Building','#60a5fa','1d ago','#2f7bff'),
+      wp('Pocketour','Travel companion app',['apple','android'],'Draft','#7b859c','3d ago','#34d399'),
+    ];
+    const platIcon={web:I.web,android:I.android,apple:I.apple,windows:I.windows,macos:I.apple,linux:I.linux};
+    const wpPlat=(arr)=>arr.map(k=>({icon:platIcon[k]}));
+    welcomeProjects.forEach(p=>p.platIcons=wpPlat(p.platforms));
+
+    // ===== SETTINGS =====
+    const stab=this.state.settingsTab;
+    const snav=(k,label,ik)=>{const on=stab===k;return {label,icon:I[ik],go:this.setST(k),rowStyle:`display:flex;align-items:center;gap:11px;padding:9px 12px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:${on?'600':'500'};color:${on?'#e6e9f2':'#8b93a7'};background:${on?'rgba(109,93,252,.14)':'transparent'};box-shadow:${on?'inset 0 0 0 1px rgba(109,93,252,.3)':'none'}`,iconStyle:`width:17px;height:17px;display:inline-flex;color:${on?'#a9b0ff':'#7b859c'}`};};
+    const settingsNav=[snav('general','General','sliders'),snav('models','Models & AI','sparkle'),snav('local','Local LLM · LM Studio','cpu'),snav('appearance','Appearance','palette'),snav('security','Security','shield')];
+    const prov=(name,desc,ik,color,status,stColor,meta,active)=>({name,desc,icon:I[ik],color,bg:color+'1e',status,stColor,stBg:stColor+'20',meta,badgeStyle:`font-size:10.5px;font-weight:600;color:${stColor};background:${stColor+'20'};padding:3px 9px;border-radius:6px`,cardStyle:`border:1px solid ${active?'rgba(109,93,252,.4)':'rgba(255,255,255,.08)'};border-radius:12px;background:${active?'rgba(109,93,252,.05)':'rgba(255,255,255,.02)'};padding:15px`});
+    const providers=[
+      prov('Codesovereign Cloud','Hosted flagship model · 128K context','sparkle','#a78bfa','Active','#34d399','codesovereign-1.5',true),
+      prov('LM Studio','Local inference · OpenAI-compatible','cpu','#22d3ee','Connected','#34d399','localhost:1234',false),
+      prov('Ollama','Local model runner','server','#60a5fa','Available','#8b93a7','localhost:11434',false),
+      prov('OpenAI-compatible','Any custom endpoint','plug','#34d399','Not configured','#7b859c','Add base URL',false),
+    ];
+    const route=(agent,ik,def,alt,color)=>{const models=[def,alt];const idx=this.state.routeOv[agent]||0;return {agent,icon:I[ik],model:models[idx],color,change:this.cycleRoute(agent,models)};};
+    const routing=[route('Planner','clip','codesovereign-1.5','qwen2.5-coder-32b (LM Studio)','#22d3ee'),route('Coder','code','qwen2.5-coder-32b (LM Studio)','codesovereign-1.5','#60a5fa'),route('Reviewer','eye','codesovereign-1.5','qwen2.5-coder-32b (LM Studio)','#a78bfa'),route('Tester','flask','qwen2.5-coder-7b (LM Studio)','codesovereign-1.5','#34d399'),route('Recovery','wrench','codesovereign-1.5','qwen2.5-coder-32b (LM Studio)','#f59e0b')];
+    const lmMetrics=[{k:'Loaded model',v:'qwen2.5-coder-32b-instruct'},{k:'Quantization',v:'Q4_K_M'},{k:'Context window',v:'32,768 tokens'},{k:'GPU offload',v:'99 / 99 layers'},{k:'VRAM in use',v:'21.4 / 24 GB'},{k:'Throughput',v:'48 tok/s'}];
+    const tRow=(type,label,desc,val,dOn)=>{const isT=type==='toggle';const sv=this.state.setToggles[label];const on=isT?(sv===undefined?dOn:sv):false;return {type,label,desc,val,on,isToggle:isT,toggle:isT?this.toggleSetting(label,dOn):null,selClick:this.mkToast(label+' — option list opening','#22d3ee'),toggleStyle:`width:34px;height:19px;border-radius:11px;flex:none;cursor:pointer;position:relative;transition:.15s;background:${on?'#34d399':'rgba(255,255,255,.14)'}`,knobStyle:`position:absolute;top:2px;left:${on?'17px':'2px'};width:15px;height:15px;border-radius:50%;background:#fff;transition:.15s`};};
+    const settingsGroups={
+      general:[tRow('toggle','Autosave','Save changes to disk as you edit',null,true),tRow('toggle','Telemetry','Share anonymous usage to improve models',null,false),tRow('select','Default project location','Where new projects are created','~/CodeSovereign/Projects'),tRow('select','Package manager','Used for new JS projects','pnpm'),tRow('toggle','Confirm before deploy','Ask before pushing to production',null,true)],
+      appearance:[tRow('select','Theme','Interface color scheme','Nocturne (Dark)'),tRow('select','Accent color','Primary highlight','Blurple'),tRow('select','Editor font','Code editor typeface','JetBrains Mono'),tRow('toggle','Reduced motion','Minimize animations',null,false),tRow('toggle','Compact density','Tighter spacing across panels',null,true)],
+      security:[tRow('toggle','Require auth for deploy','2FA before production release',null,true),tRow('toggle','Encrypt local secrets','Vault credentials at rest',null,true),tRow('toggle','Sandbox build workers','Isolate builds in containers',null,true),tRow('select','Secret scanning','Block commits containing secrets','On commit + pre-deploy'),tRow('toggle','TLS verification','Enforce certificate validation',null,true)],
+    };
+    const settingsGeneral=settingsGroups.general, settingsAppearance=settingsGroups.appearance, settingsSecurity=settingsGroups.security;
+    const agentSettings=[tRow('toggle','Auto-approve plans','Skip manual approval for low-risk plans',null,false),tRow('toggle','Parallel agents','Run Coder and Tester concurrently',null,true),tRow('select','Autonomy','How far agents proceed unaided','Ask at milestones')];
+
+    // ===== RECOVERY =====
+    const sevMap={critical:['#ef4444','Critical'],high:['#f59e0b','High'],medium:['#22d3ee','Medium'],low:['#7b859c','Low']};
+    const selI=this.state.selIssue;
+    const tg=(t,c)=>({t,color:c,bg:c+'22'});
+    // Per-issue diagnostic bundles — each Detected Issue drives its OWN full pipeline, evidence, hypotheses and validation.
+    const H=(rank,text,ev,conf,color)=>({rank,text,ev,conf,color});
+    const V=(check,cmd,base)=>({check,cmd,base});
+    const ISSUES=[
+      {title:'Android build failure',cls:'Build error · Packaging',files:'app/build.gradle',sev:'critical',status:'Repairing',
+        signature:'mergeExtDexRelease · Duplicate class kotlinx.coroutines.*',sub:'duplicate class in kotlinx-coroutines',
+        tags:[tg('Dependency conflict','#a78bfa'),tg('Build / Packaging','#60a5fa'),tg('Android','#f59e0b')],
+        repro:'Ran ./gradlew assembleRelease · exit 1',first:'Duplicate class: kotlinx-coroutines',classify:'Dependency conflict → Build / Packaging',
+        repair:'Pinned coroutines 1.8.0 via resolutionStrategy',validate:'Format · lint · build · smoke',regress:'Web / iOS build, auth, tests',
+        evidence:['$ ./gradlew :app:assembleRelease','> Task :app:mergeExtDexRelease FAILED','Duplicate class kotlinx.coroutines.CoroutineScope','  found in modules coroutines-core-1.6.4','  and coroutines-core-1.8.0','FAILURE: Build failed with an exception.','* Exit code 1 · captured 08:41:22'],
+        hyps:[H(1,'Two dependencies pull incompatible kotlinx-coroutines versions','Lockfile shows 1.6.4 and 1.8.0 · duplicate class at merge',86,'#a78bfa'),H(2,'Gradle cache holds a stale artifact','Error persists after clean — weakens this',41,'#22d3ee'),H(3,'AGP / Kotlin plugin version mismatch','Versions are within supported matrix',23,'#7b859c')],
+        val:[V('Formatting','ktlint',7),V('Type / compile','kotlinc',7),V('Unit tests','gradle test',7),V('Debug build','assembleDebug',8),V('Release build','assembleRelease',9),V('APK signing','apksigner',99)],
+        remaining:[{t:'Physical device smoke test',need:'Android hardware'},{t:'Play Store upload key',need:'Signing credentials'}]},
+      {title:'CORS blocked on /api/sync',cls:'Network · CORS',files:'server/cors.ts',sev:'high',status:'Queued',
+        signature:'No Access-Control-Allow-Origin on preflight',sub:'missing CORS headers on the sync endpoint',
+        tags:[tg('Network','#22d3ee'),tg('CORS','#60a5fa'),tg('Server','#a78bfa')],
+        repro:'curl -X OPTIONS /api/sync · 204 without ACAO',first:'Preflight missing Access-Control-Allow-Origin',classify:'CORS / configuration → Server',
+        repair:'Added cors() allowlist for app origin + credentials',validate:'Preflight · request · auth cookie',regress:'Other routes, auth session, rate limit',
+        evidence:['$ curl -i -X OPTIONS https://api/sync','< HTTP/1.1 204 No Content','< vary: Origin','! missing: access-control-allow-origin','fetch blocked by CORS policy','origin https://app.beatshore.com not allowed'],
+        hyps:[H(1,'Allowlist omits the production app origin','Only localhost is registered in cors.ts',88,'#a78bfa'),H(2,'Credentials mode mismatch on the client','Weakened — request uses same-origin cookie',44,'#22d3ee'),H(3,'Proxy strips the ACAO header','No proxy in front of this route',19,'#7b859c')],
+        val:[V('Lint','eslint',6),V('Type / compile','tsc',6),V('Preflight test','vitest cors',7),V('Integration','supertest',8),V('Dev server','vite',9),V('Rate-limit check','k6 smoke',99)],
+        remaining:[{t:'Confirm prod origin list with ops',need:'Infra sign-off'}]},
+      {title:'Type error in useProjects',cls:'Type error',files:'hooks/useProjects.ts',sev:'high',status:'Queued',
+        signature:'Project[] is possibly undefined at projects[0]',sub:'a nullable API response reaching the UI',
+        tags:[tg('Type error','#a78bfa'),tg('Frontend','#60a5fa')],
+        repro:'tsc --noEmit · error TS2532',first:'Object is possibly undefined at projects[0]',classify:'Type / data-contract → Frontend',
+        repair:'Return Project[] fallback + zod-validate response',validate:'Type check · unit · render',regress:'Dashboard render, empty state, loading',
+        evidence:['$ tsc --noEmit','hooks/useProjects.ts:14:10','error TS2532: Object is possibly undefined.','  const active = projects[0]','api returns Project[] | null','no runtime guard before index'],
+        hyps:[H(1,'API can return null but the type claims Project[]','Response schema is Project[] | null',82,'#a78bfa'),H(2,'Missing loading guard before first render','Supported — no isLoading branch',57,'#22d3ee'),H(3,'Stale generated types','Types match the OpenAPI spec',21,'#7b859c')],
+        val:[V('Lint','eslint',6),V('Type check','tsc --noEmit',7),V('Unit tests','vitest hooks',7),V('Component render','testing-library',8),V('Prod build','vite build',9),V('Bundle size','size-limit',99)],
+        remaining:[]},
+      {title:'N+1 query on dashboard',cls:'Performance',files:'api/dashboard.ts',sev:'medium',status:'Queued',
+        signature:'42 sequential queries per dashboard load',sub:'an unbatched query in the dashboard loader',
+        tags:[tg('Performance','#22d3ee'),tg('Database','#f472b6')],
+        repro:'Load /dashboard · 42 queries · 1.8s TTFB',first:'Per-row query inside projects.map()',classify:'Performance → Database',
+        repair:'Replaced loop with a single JOIN + dataloader',validate:'Query count · latency · load test',regress:'Row counts, pagination, cache',
+        evidence:['$ DEBUG=sql pnpm dev','[sql] SELECT * FROM tracks WHERE project=$1','   … repeated 42×','[perf] /dashboard TTFB 1.84s','query plan: sequential scans','N+1 pattern in dashboard.ts:22'],
+        hyps:[H(1,'Track lookup runs once per project row','42 identical queries with different ids',90,'#a78bfa'),H(2,'Missing DB index on tracks.project','Weakened — index exists',38,'#22d3ee'),H(3,'ORM lazy-loading relations','Plausible secondary factor',34,'#7b859c')],
+        val:[V('Lint','eslint',6),V('Type check','tsc',6),V('Query-count test','vitest perf',7),V('Load test','k6 200vu',8),V('Prod build','vite build',9),V('Cache warm','redis smoke',99)],
+        remaining:[]},
+      {title:'Unhandled promise in upload',cls:'Runtime crash',files:'lib/upload.ts',sev:'medium',status:'Fixed',
+        signature:'UnhandledPromiseRejection on aborted upload',sub:'an unguarded await in the upload handler',
+        tags:[tg('Runtime crash','#34d399'),tg('Frontend','#60a5fa')],
+        repro:'Abort mid-upload · unhandled rejection',first:'await xhr.send() rejects on abort',classify:'Runtime crash → Frontend',
+        repair:'Wrapped upload in try/catch + AbortController',validate:'Unit · abort path · E2E',regress:'Happy-path upload, progress UI',
+        evidence:['$ pnpm test upload','UnhandledPromiseRejection: AbortError','  at lib/upload.ts:31','abort() called during in-flight send','no catch on the await','fixed: guarded + surfaced to UI'],
+        hyps:[H(1,'Abort rejects an unguarded await','Stack points to upload.ts:31',91,'#34d399'),H(2,'Missing AbortController wiring','Confirmed — none present',63,'#22d3ee'),H(3,'Progress handler throwing','No throw in handler',17,'#7b859c')],
+        val:[V('Lint','eslint',0),V('Type check','tsc',0),V('Unit tests','vitest upload',0),V('Abort-path E2E','playwright',0),V('Prod build','vite build',0),V('Smoke','manual',0)],
+        remaining:[]},
+    ];
+    const recSteps=this.state.recSteps||{};
+    const defStep={Repairing:5,Queued:4,Fixed:9};
+    const issue=(idx,d)=>{const s=sevMap[d.sev];const step=recSteps[idx]??defStep[d.status];const est=step>=9?'Fixed':(step>4?'Repairing':d.status);const sc={Repairing:'#a78bfa',Queued:'#7b859c',Fixed:'#34d399'}[est];const active=idx===selI;const verb={Repairing:'Repairing',Queued:'Queued',Fixed:'Resolved'}[est];return {title:d.title,cls:d.cls,files:d.files,sevLabel:s[1],sevColor:s[0],status:est,statusColor:sc,statusBg:sc+'20',dot:s[0],signature:d.signature,sub:d.sub,tags:d.tags,verb,select:this.selectIssue(idx),active,cardStyle:`border:1px solid ${active?'rgba(109,93,252,.45)':'rgba(255,255,255,.08)'};border-left:3px solid ${s[0]};border-radius:10px;background:${active?'rgba(109,93,252,.08)':'rgba(255,255,255,.02)'};padding:12px 13px;cursor:pointer;margin-bottom:9px`};};
+    const recIssues=ISSUES.map((d,i)=>issue(i,d));
+    const AI=ISSUES[selI]||ISSUES[0];
+    const activeIssue=recIssues[selI]||recIssues[0];
+    const abColor=activeIssue.status==='Fixed'?'#34d399':activeIssue.status==='Queued'?'#f59e0b':'#f87171';
+    const recModes=[['Full Diagnostic','magnify'],['Build Failure','box'],['Dependency','box'],['Security Audit','shield'],['Performance','zap'],['Data Recovery','db']];
+    const rMode=this.state.recMode;
+    const recoveryModes=recModes.map(([label,ik],mi)=>({label,icon:I[ik],select:()=>{this.setState({recMode:mi});this.toast(label+' mode armed — scope updated','#a78bfa');},
+      chipStyle:`display:flex;align-items:center;gap:8px;border:1px solid ${mi===rMode?'rgba(109,93,252,.5)':'rgba(255,255,255,.08)'};border-radius:9px;background:${mi===rMode?'rgba(109,93,252,.1)':'rgba(255,255,255,.02)'};padding:9px 10px;cursor:pointer;font-size:11.5px;font-weight:500;color:${mi===rMode?'#e6e9f2':'#b6bdcc'}`,
+      iconStyle:`width:15px;height:15px;display:inline-flex;color:${mi===rMode?'#a9b0ff':'#8b93a7'}`}));
+    const dStep=(n,name,detail,state)=>{
+      const m={done:['#34d399','rgba(52,211,153,.16)','rgba(52,211,153,.35)'],active:['#a78bfa','rgba(124,91,214,.2)','rgba(124,91,214,.5)'],pending:['#5f6980','rgba(255,255,255,.04)','rgba(255,255,255,.1)']}[state];
+      return {n,name,detail,state,done:state==='done',active:state==='active',
+        badgeStyle:`width:30px;height:30px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;font:600 13px Inter;background:${m[1]};color:${m[0]};box-shadow:inset 0 0 0 1px ${m[2]}`,
+        nameStyle:`font-size:13.5px;font-weight:600;color:${state==='pending'?'#8b93a7':'#e6e9f2'}`,
+        lineStyle:`width:2px;flex:1;min-height:14px;background:${state==='done'?'#34d399':'rgba(255,255,255,.1)'};margin:3px 0`};};
+    const rs=recSteps[selI]??defStep[AI.status];
+    const stOf=(n)=>n<rs?'done':n===rs?'active':'pending';
+    const dd=(n,pendingD,doneD)=>n<rs?doneD:pendingD;
+    const topConf=AI.hyps[0].conf, topText=AI.hyps[0].text;
+    const diagSteps=[
+      dStep('1','Preserve current state','Checkpoint created · git stash saved',stOf(1)),
+      dStep('2','Reproduce the failure',AI.repro,stOf(2)),
+      dStep('3','Find first meaningful error',AI.first,stOf(3)),
+      dStep('4','Classify the failure',AI.classify,stOf(4)),
+      dStep('5','Form root-cause hypotheses',dd(5,'Ranking '+AI.hyps.length+' candidates by evidence','H1 confirmed at '+topConf+'% — '+topText.toLowerCase()),stOf(5)),
+      dStep('6','Apply smallest safe repair',dd(6,'Pending hypothesis confirmation',AI.repair),stOf(6)),
+      dStep('7','Validate the repair',dd(7,AI.validate,'Checks green'+(AI.remaining.length?' — '+AI.remaining[0].need.toLowerCase()+' still needed':'')),stOf(7)),
+      dStep('8','Check for regressions',dd(8,AI.regress,'No regressions detected'),stOf(8)),
+      dStep('9','Record the repair',dd(9,'Update recovery ledger','Ledger updated · prevention rule added'),rs>=9?'done':stOf(9)),
+    ];
+    const hyp=(h)=>({rank:h.rank,text:h.text,ev:h.ev,conf:h.conf+'%',confW:h.conf+'%',color:h.color,top:h.rank===1,
+      cardStyle:`border:1px solid ${h.rank===1?'rgba(124,91,214,.4)':'rgba(255,255,255,.08)'};border-radius:11px;background:${h.rank===1?'rgba(124,91,214,.06)':'rgba(255,255,255,.02)'};padding:14px`});
+    const hypotheses=AI.hyps.map(hyp);
+    const vStatus=(base)=> base===99 ? (rs>=9?'Blocked':'Pending') : (rs>base?'Passed':rs===base?'Running':'Pending');
+    const vRow=(check,cmd,status)=>{const m={Passed:['#34d399','✓'],Running:['#60a5fa','◐'],Pending:['#7b859c','○'],Blocked:['#f59e0b','!']}[status];return {check,cmd,status,color:m[0],mark:m[1],running:status==='Running'};};
+    const validationRows=AI.val.map(v=>vRow(v.check,v.cmd,vStatus(v.base)));
+    const recDone=rs>=9;
+    const hasExternal=AI.remaining.length>0;
+    const recStatus=recDone
+      ?{border:'rgba(52,211,153,.3)',bg:'rgba(52,211,153,.07)',color:'#34d399',title:'Status: Fixed and validated',desc:hasExternal?('Root cause repaired, no regressions. '+AI.remaining[0].t+' still requires '+AI.remaining[0].need.toLowerCase()+' (external requirement).'):'Root cause repaired and validated with no regressions.'}
+      :{border:'rgba(245,158,11,.25)',bg:'rgba(245,158,11,.06)',color:'#f5c06b',title:'Status: Partially fixed',desc:'Root-cause repair in progress; awaiting validation before this issue is marked fixed.'};
+    const applyLabel=recDone?'Repair recorded ✓':rs>=7?'Continue validation':rs>=6?'Run validation':rs>=5?'Apply repair & re-validate':'Start diagnosis';
+    const recPaused=this.state.recPaused;
+    const evidence=AI.evidence;
+    const remaining=AI.remaining;
+
+    // ===== TABS / TOASTS / MISC =====
+    const fTab=this.state.factoryTab;
+    const subTab=(on)=>on?'font-size:12.5px;font-weight:600;color:#e6e9f2;padding-bottom:11px;border-bottom:2px solid #6d5dfc;cursor:pointer':'font-size:12.5px;color:#6b7488;padding-bottom:11px;cursor:pointer';
+    const factoryTabs=[['env','Environment'],['release','Release Settings'],['activity','Activity']].map(([k,label])=>({label,select:this.setK('factoryTab',k),tabStyle:subTab(k===fTab)}));
+    const ftEnv=fTab==='env', ftRelease=fTab==='release', ftActivity=fTab==='activity';
+    const cTab=this.state.ctxTab;
+    const ctxTabs=[['context','Context'],['memory','Memory'],['settings','Settings']].map(([k,label])=>({label,select:this.setK('ctxTab',k),tabStyle:subTab(k===cTab)}));
+    const ctContext=cTab==='context', ctMemory=cTab==='memory', ctSettings=cTab==='settings';
+    const memoryItems=[{t:'Project uses pnpm + Vite',time:'pinned'},{t:'User prefers dark waveform theme',time:'2d ago'},{t:'API base path is /api/v1',time:'5d ago'},{t:'Avoid class components in this repo',time:'1w ago'}];
+    const stopped=this.state.agentStopped;
+    const toasts=this.state.toasts.map(t=>({...t,style:`display:flex;align-items:center;gap:10px;background:#141a2b;border:1px solid ${t.color}55;border-left:3px solid ${t.color};border-radius:10px;padding:11px 14px;font:500 12.5px Inter,sans-serif;color:#e6e9f2;box-shadow:0 12px 30px rgba(0,0,0,.5);max-width:380px;pointer-events:auto`}));
+    return {
+      toasts, model:this.state.model, cycleModel:()=>this.cycleModel(),
+      deployBtn:()=>this.deploy(), runPreview:()=>{this.setState({screen:'ide'});this.toast('Preview running · http://localhost:5173','#34d399');},
+      factoryTabs, ftEnv, ftRelease, ftActivity, bumpVersion:this.mkToast('Version bumped to 1.3.1 · build 103','#a78bfa'), channelPick:this.mkToast('Release channel: Stable (Beta and Canary available)','#22d3ee'),
+      activityFull:[...recentActivity,{time:'10:12 AM',text:'Version bumped to 1.3.0',sub:'by Krish',color:'#a78bfa',icon:I.edit},{time:'10:05 AM',text:'Module Analytics updated',sub:'v1.2.3',color:'#22d3ee',icon:I.chart},{time:'09:58 AM',text:'Deploy to Dev succeeded',sub:'v1.2.9+98',color:'#34d399',icon:I.rocket}],
+      viewQueue:this.mkToast('Build queue: Android (68%), iOS (2 waiting)','#60a5fa'), addModule:this.mkToast('Module catalog opening — 24 modules available','#a78bfa'),
+      ctxTabs, ctContext, ctMemory, ctSettings, memoryItems, agentSettings,
+      artTabs:[['artifacts','Artifacts'],['patch','Patch Summary'],['actions','Recent Actions']].map(([k,label])=>({label,select:this.setK('artTab',k),tabStyle:subTab(k===this.state.artTab)})),
+      atArtifacts:this.state.artTab==='artifacts', atPatch:this.state.artTab==='patch', atActions:this.state.artTab==='actions',
+      recentActions:[{t:'Coder wrote Dashboard.tsx',d:'+142 −8',time:'2m ago'},{t:'Reviewer flagged 3 issues',d:'quality pass',time:'4m ago'},{t:'Tester ran 26 tests',d:'24 passed · 2 skipped',time:'6m ago'},{t:'Planner locked the execution plan',d:'6 steps',time:'11m ago'}],
+      pvTabs:[['screen','Screen'],['logs','Logs'],['history','History']].map(([k,label])=>({label,select:this.setK('pvTab',k),tabStyle:k===this.state.pvTab?'font-size:11.5px;font-weight:600;color:#e6e9f2;height:100%;display:flex;align-items:center;border-bottom:2px solid #6d5dfc;cursor:pointer':'font-size:11.5px;color:#7b859c;cursor:pointer;height:100%;display:flex;align-items:center'})),
+      pvScreen:this.state.pvTab==='screen', pvLogs:this.state.pvTab==='logs', pvHistory:this.state.pvTab==='history',
+      pvLogLines:['[vite] hmr update /src/pages/Dashboard.tsx','[app] projects loaded: 24','[app] waveform renderer ready','[ws] connected · latency 12ms'],
+      pvHistoryItems:[{t:'/dashboard',time:'now'},{t:'/studio/midnight-vibes',time:'3m ago'},{t:'/library',time:'9m ago'}],
+      icClock2:I.clock,
+      agentPrompt:this.state.agentPrompt, setAgentPrompt:this.setVal('agentPrompt'),
+      runAgent:()=>this.runAgent(), approvePlan:()=>this.approvePlan(), stopRun:()=>this.stopRun(),
+      planDone, planPct, addStep:this.mkToast('Custom step editor — drag to position in the plan','#a78bfa'),
+      liveLabel:stopped?'Paused':'Live', liveColor:stopped?'#f59e0b':'#34d399',
+      liveDotStyle:`width:6px;height:6px;border-radius:50%;background:${stopped?'#f59e0b':'#34d399'}${stopped?'':';animation:csPulse 1.6s infinite'}`,
+      pipeLabel:pipe.label, pipeColor:pipe.color, pipeName:pipe.name, pipeDesc:pipe.desc, pipePct:pipe.pct,
+      pipeDotStyle:`width:7px;height:7px;border-radius:50%;background:${pipe.color};animation:csPulse 1.6s infinite`,
+      temp:this.state.temp, setTemp:this.setVal('temp',1), maxTok:this.state.maxTok, setMaxTok:this.setVal('maxTok',1),
+      lmCtx:this.state.lmCtx, setLmCtx:this.setVal('lmCtx',1), lmCtxStr:this.state.lmCtx.toLocaleString()+' tokens',
+      lmGpu:this.state.lmGpu, setLmGpu:this.setVal('lmGpu',1), lmGpuStr:this.state.lmGpu+' / 99 layers',
+      lmTemp:this.state.lmTemp, setLmTemp:this.setVal('lmTemp',1),
+      testConn:this.mkToast('LM Studio reachable · qwen2.5-coder-32b · 48 tok/s','#34d399'),
+      advSettings:this.mkToast('Advanced settings: sampling, stop sequences, JSON mode','#a78bfa'),
+      crumbLeaf, idePanels, ipWorkflow, ipTerminal, ipProblems, ipOutput, ipGit, terminalLines, problems, outputLines, gitFiles,
+      deviceBtns, previewShellStyle, previewInnerStyle,
+      recStatus, applyLabel, applyRepairBtn:()=>this.applyRepair(), togglePauseBtn:()=>this.togglePause(),
+      pauseLabel:recPaused?'Resume':'Pause',
+      bannerDotStyle:`width:6px;height:6px;border-radius:50%;background:#ef4444${recPaused?'':';animation:csPulse 1.4s infinite'}`,
+      restoreCheckpoint:this.mkToast('Checkpoint restored · working tree back to 08:41','#22d3ee'),
+      exportReport:this.mkToast('Repair report exported → .sovereign/verification-evidence/','#34d399'),
+      viewLog:this.mkToast('Full log opened · 1,204 events captured','#60a5fa'),
+      moreFiles:this.mkToast('3 more files: routes.ts, api.ts, vite-env.d.ts','#22d3ee'),
+      openStudio:this.mkToast('Opening Coder agent in Studio view','#a78bfa'),
+      viewArtifacts:this.mkToast('6 artifacts in this run — opening patch view','#a78bfa'),
+      viewReleases:this.mkToast('Release history: 12 releases on Stable channel','#a78bfa'),
+      browseAll:this.mkToast('Template gallery: 48 templates across 6 stacks','#22d3ee'),
+      viewProjects:this.mkToast('3 projects · sorted by last updated','#22d3ee'),
+      attachSpec:this.mkToast('Attach a PRD, spec, or screenshot to ground the plan','#22d3ee'),
+      autoMode:this.mkToast('Mode: Auto — agents pick tools. Manual mode available','#a78bfa'),
+      closeApp:this.mkToast('Close intercepted — unsaved work is checkpointed first','#f59e0b'),
+      winMin:this.mkToast('Window minimized to taskbar','#7b859c'),
+      winMax:this.mkToast('Window maximized','#7b859c'),
+      winClose:this.mkToast('Close blocked — a build is in progress (finish or pause it first)','#f59e0b'),
+      toggleRail:()=>this.setState({railCollapsed:!this.state.railCollapsed}),
+      railExpanded:!this.state.railCollapsed,
+      railArrow:this.state.railCollapsed?'«':'»',
+      viewProject:this.mkToast('Project menu: Open folder · Rename · Duplicate · Archive','#a78bfa'),
+      mention:this.mkToast('Mention files, agents, or docs with @','#22d3ee'),
+      expandView:this.mkToast('Expanded to full screen — press Esc to exit','#60a5fa'),
+      splitEditor:this.mkToast('Editor split to the right','#60a5fa'),
+      moreActions:this.mkToast('Editor actions: format, rename symbol, organize imports','#a78bfa'),
+      closeTab:this.mkToast('Tab pinned — close is disabled while an agent edits this file','#f59e0b'),
+      outlineT:this.mkToast('Outline: Dashboard → header → stats-grid','#22d3ee'),
+      timelineT:this.mkToast('Timeline: 14 saves today · last 2 min ago','#22d3ee'),
+      pvBack:this.mkToast('Preview: navigated back','#7b859c'),
+      pvRefresh:this.mkToast('Preview reloaded in 0.4s','#34d399'),
+      pvExt:this.mkToast('Opened http://localhost:5173 in your browser','#22d3ee'),
+      closePreview:()=>{this.setState({previewOpen:false});this.toast('Preview hidden — reopen from the editor toolbar','#7b859c');},
+      openPreview:()=>this.setState({previewOpen:true}),
+      previewOpen:this.state.previewOpen,
+      previewClosed:!this.state.previewOpen,
+      tabs, rail, env:this.state.env, envColor:this.state.env==='Prod'?'#34d399':'#f59e0b',
+      toggleEnv:()=>this.setState({env:this.state.env==='Prod'?'Dev':'Prod'}),
+      goSettings:this.go('settings'),
+      railSettingsStyle:(scr==='settings')?'width:52px;height:54px;border-radius:11px;border:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;background:rgba(109,93,252,.16);color:#a9b0ff;box-shadow:inset 0 0 0 1px rgba(109,93,252,.35)':'width:52px;height:54px;border-radius:11px;border:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;background:transparent;color:#6b7488',
+      icRun:I.run, icDeploy:I.deploy, icGear:I.gear, icWave:I.wave, icBranch:I.branch, icPlus:I.plus, icDl:I.dl, icCheck:I.check, icCheckC:I.checkc, icShield:I.shield, icEdit:I.edit, icBell:I.bell,
+      isFactory:scr==='factory', isAgent:scr==='agent', isIDE:scr==='ide', isWelcome:scr==='welcome', isSettings:scr==='settings', isRecovery:scr==='recovery',
+      factoryActions, pipeline, targets, modules, artifacts, checks, prodTarget, techStack, buildRelease, recentActivity,
+      planSteps, activityRows, specialists, agentArtifacts, contextFiles, tools,
+      icSparkle:I.sparkle, icClip:I.clip, icAt:I.at, icExpand:I.expand, icChev:I.chev, icPlay:I.play, icStop:I.stop, icFile:I.file,
+      fileTree, ideTabs, codeLines, workflowPlan, coderChecklist, ideDeps, ideCtxFiles, previewNav, previewStats, recentProjects, activityFeed,
+      platChips, quickStart, welcomeProjects,
+      goAgentBtn:this.go('agent'), goFactoryBtn:this.go('factory'),
+      tryPrompts:['Local-first note app','Realtime chat with presence','CSV → dashboard tool','Markdown blog engine'].map(t=>({t,set:()=>this.setState({prompt:t})})),
+      prompt:this.state.prompt, setPrompt:this.setVal('prompt'),
+      genApp:()=>this.genApp(),
+      keyGen:(e)=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();this.genApp();}},
+      keyRun:(e)=>{if(e.key==='Enter')this.runAgent();},
+      deployLabel:this.state.deploying?'Deploying…':'Deploy',
+      stopLabel:this.state.agentStopped?'Resume':'Stop',
+      stopStyle:this.state.agentStopped
+        ?'display:flex;align-items:center;gap:8px;padding:9px 15px;border:1px solid rgba(52,211,153,.4);border-radius:9px;background:rgba(52,211,153,.08);color:#34d399;font:600 12.5px Inter;cursor:pointer'
+        :'display:flex;align-items:center;gap:8px;padding:9px 15px;border:1px solid rgba(239,68,68,.4);border-radius:9px;background:rgba(239,68,68,.08);color:#f87171;font:600 12.5px Inter;cursor:pointer',
+      settingsNav, providers, routing, lmMetrics, settingsGeneral, settingsAppearance, settingsSecurity,
+      stModels:stab==='models', stLocal:stab==='local',
+      stGeneric:stab==='general'||stab==='appearance'||stab==='security',
+      settingsRows:settingsGroups[stab]||[], settingsTitle:{general:'General',appearance:'Appearance',security:'Security & Privacy'}[stab]||'',
+      icCpu:I.cpu, icZap:I.zap, icRefresh2:I.refresh, icPlug:I.plug, icServer:I.server,
+      recIssues, recoveryModes, diagSteps, hypotheses, validationRows, evidence, remaining, activeIssue, abColor,
+      stream:this.state.stream, toggleStream:()=>this.toggleStream(),
+      streamTrackStyle:`width:34px;height:19px;border-radius:11px;background:${this.state.stream?'#34d399':'rgba(255,255,255,.16)'};position:relative;display:inline-block;cursor:pointer;transition:.15s`,
+      streamKnobStyle:`position:absolute;top:2px;left:${this.state.stream?'17px':'2px'};width:15px;height:15px;border-radius:50%;background:#fff;transition:.15s`,
+      icPause:I.pause, icShield2:I.shield, icWrench:I.wrench, icTarget:I.target, icAlert:I.alert, icRoute:I.route, icBug:I.bug, icLifebuoy:I.lifebuoy,
+      icChevR:I.chevR, icBack:I.back, icSplit:I.split, icDots:I.dots, icBox:I.box, icMonitor:I.monitor, icTablet:I.tablet, icPhone:I.phone, icRefresh:I.refresh, icExt:I.ext, icBell2:I.bell, icPlus2:I.plus,
+    };
+  }
+}
+</script>
+</body>
+</html>
