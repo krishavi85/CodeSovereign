@@ -1,7 +1,7 @@
 name: Release
 
-# Push a tag like v0.1.0-alpha to build the installers and publish a GitHub
-# Release (marked "prerelease" for anything with a - suffix).
+# Push a tag like v0.1.0-alpha.1 to build the installers and publish a GitHub
+# Release (marked "prerelease" for any tag with a - suffix).
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Tag to build (e.g. v0.1.0-alpha)"
+        description: "Tag to build (e.g. v0.1.0-alpha.1)"
         required: true
 
 permissions:
@@ -19,10 +19,10 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: "22"
           cache: npm
       - name: Cache Electron + builder downloads
         uses: actions/cache@v4
@@ -52,8 +52,8 @@ jobs:
           name: CodeSovereign Desktop ${{ steps.tag.outputs.name }}
           prerelease: ${{ contains(steps.tag.outputs.name, '-') }}
           generate_release_notes: true
+          fail_on_unmatched_files: true
           files: |
             release/*.exe
             release/*.blockmap
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            release/latest.yml

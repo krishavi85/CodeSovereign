@@ -18,8 +18,12 @@
     "postinstall": "electron-builder install-app-deps || exit 0"
   },
   "devDependencies": {
-    "electron": "^33.3.1",
-    "electron-builder": "^25.1.8"
+    "electron": "^43.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "overrides": {
+    "tar": "^7.5.1",
+    "extract-zip": "^2.0.1"
   },
   "build": {
     "appId": "io.codesovereign.desktop",

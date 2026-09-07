@@ -6,6 +6,7 @@
  * Everything here maps those onto a real directory on disk and refuses to touch
  * anything outside it.
  */
+const fs = require('fs');
 const fsp = require('fs/promises');
 const path = require('path');
 const os = require('os');
@@ -26,8 +27,24 @@ const BINARY_EXT = new Set([
 let currentRoot = null;
 
 function getRoot() { return currentRoot; }
-function setRoot(dir) { currentRoot = dir ? path.resolve(dir) : null; return currentRoot; }
+
+/** Canonicalize a path (long form, resolved symlinks) when it exists on disk. */
+function canonical(p) {
+  try { return fs.realpathSync.native(p); } catch { return path.resolve(p); }
+}
+
+function setRoot(dir) { currentRoot = dir ? canonical(path.resolve(dir)) : null; return currentRoot; }
 function name() { return currentRoot ? path.basename(currentRoot) : null; }
+
+/**
+ * True when `abs` is `root` itself or lives underneath it. Uses path.relative so
+ * it is immune to 8.3 short names vs long names and other string-level noise
+ * (both sides should already be canonical()).
+ */
+function isInside(root, abs) {
+  const rel = path.relative(root, abs);
+  return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
+}
 
 function defaultProjectsDir() {
   return path.join(os.homedir(), 'CodeSovereign', 'Projects');
@@ -47,13 +64,25 @@ function sanitizeFolderName(input) {
   return out || 'project';
 }
 
+/**
+ * Turn a renderer path into workspace-relative segments. Normalizes BOTH slash
+ * styles (Linux does not treat "\" as a separator, so "..\..\x" would otherwise
+ * sneak through as a filename) and rejects any "." / ".." segment outright.
+ */
+function normalizeVirtual(virtualPath) {
+  const raw = String(virtualPath == null ? '' : virtualPath).replace(/\\/g, '/');
+  const parts = raw.split('/').filter((p) => p !== '' && p !== '.');
+  if (parts.some((p) => p === '..')) {
+    throw new Error('Path contains a ".." segment: ' + virtualPath);
+  }
+  return parts;
+}
+
 /** Map a virtual path ("/a/b.js" or "a/b.js") to a real absolute path inside the workspace. */
 function resolveInside(virtualPath) {
   if (!currentRoot) throw new Error('No workspace is open');
-  const rel = String(virtualPath || '').replace(/^[/\\]+/, '');
-  const abs = path.resolve(currentRoot, rel);
-  const rootWithSep = currentRoot.endsWith(path.sep) ? currentRoot : currentRoot + path.sep;
-  if (abs !== currentRoot && !abs.startsWith(rootWithSep)) {
+  const abs = path.resolve(currentRoot, ...normalizeVirtual(virtualPath));
+  if (!isInside(currentRoot, abs)) {
     throw new Error('Path escapes the workspace: ' + virtualPath);
   }
   return abs;
@@ -66,8 +95,9 @@ function toVirtual(abs) {
 }
 
 function isProtected(virtualPath) {
-  const rel = String(virtualPath || '').replace(/^[/\\]+/, '');
-  const top = rel.split(/[/\\]/)[0];
+  let parts;
+  try { parts = normalizeVirtual(virtualPath); } catch { return true; }
+  const top = parts[0];
   return top === '.git' || IGNORED_DIRS.has(top);
 }
 
@@ -75,22 +105,22 @@ async function pathExists(p) {
   try { await fsp.access(p); return true; } catch { return false; }
 }
 
-function within(abs) {
-  const rootWithSep = currentRoot.endsWith(path.sep) ? currentRoot : currentRoot + path.sep;
-  return abs === currentRoot || abs.startsWith(rootWithSep);
-}
-
 /**
  * Defence in depth against symlinks: resolve the nearest existing ancestor of
  * `abs` through the real filesystem and make sure it still lands inside the
- * workspace. Blocks e.g. a "link -> C:\Windows" checked into the project.
+ * workspace. Both sides are canonicalized (long form) so an 8.3 short path on a
+ * CI runner (C:\Users\RUNNER~1\...) still compares equal to its long form.
+ * Blocks e.g. a "link -> C:\Windows" checked into the project.
  */
 async function assertRealInside(abs) {
+  const rootReal = canonical(currentRoot);
   let probe = abs;
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 60; i++) {
     if (await pathExists(probe)) {
       const real = await fsp.realpath(probe);
-      if (!within(real)) throw new Error('Path resolves outside the workspace (symlink?): ' + abs);
+      if (!isInside(rootReal, real)) {
+        throw new Error('Path resolves outside the workspace (symlink?): ' + abs);
+      }
       return;
     }
     const parent = path.dirname(probe);
@@ -197,10 +227,9 @@ async function renamePath(fromVirtual, toVirtualPath) {
 async function open(dir) {
   const resolved = path.resolve(dir);
   if (!(await pathExists(resolved))) throw new Error('Folder not found: ' + resolved);
-  const real = await fsp.realpath(resolved);
-  const st = await fsp.stat(real);
-  if (!st.isDirectory()) throw new Error('Not a folder: ' + real);
-  setRoot(real);
+  const st = await fsp.stat(resolved);
+  if (!st.isDirectory()) throw new Error('Not a folder: ' + resolved);
+  const real = setRoot(resolved);                 // setRoot canonicalizes
   const tree = await readTree();
   return { root: real, name: path.basename(real), files: tree.files, truncated: tree.truncated };
 }

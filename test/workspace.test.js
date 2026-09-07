@@ -11,7 +11,12 @@ module.exports = async function (t) {
 
   await t.throwsAsync('resolveInside blocks ../ escape', async () => ws.resolveInside('../../etc/passwd'));
   await t.throwsAsync('resolveInside blocks /../ escape', async () => ws.resolveInside('/../../x'));
+  // regression: Linux does not treat "\" as a separator, so this must be
+  // normalized and rejected explicitly (was silently allowed as a filename).
   await t.throwsAsync('resolveInside blocks backslash escape', async () => ws.resolveInside('..\\..\\x'));
+  await t.throwsAsync('resolveInside blocks mixed-slash escape', async () => ws.resolveInside('/src/..\\../x'));
+  await t.throwsAsync('resolveInside blocks a bare ".." segment', async () => ws.resolveInside('/a/../../b'));
+  t.equal('resolveInside collapses "." segments', typeof ws.resolveInside('/./src/./app.js'), 'string');
 
   await ws.writeFile('/src/app.js', 'console.log(1)');
   await ws.writeFile('/index.html', '<h1>hi</h1>');

@@ -11,6 +11,9 @@ concurrency:
   group: desktop-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  NODE_VERSION: "22"
+
 jobs:
   test:
     name: Unit tests (${{ matrix.os }})
@@ -20,23 +23,23 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: Unit / integration tests
+      - name: Unit / integration / security tests
         run: npm test
 
   smoke:
     name: Electron smoke boot
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - name: Cache Electron download
         uses: actions/cache@v4
@@ -54,10 +57,10 @@ jobs:
     runs-on: windows-latest
     needs: [test, smoke]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - name: Cache Electron + builder downloads
         uses: actions/cache@v4
@@ -73,7 +76,6 @@ jobs:
         run: npm run dist:win
         env:
           ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
-          # No signing certificate configured yet — builds are unsigned.
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - name: List artifacts
         shell: bash

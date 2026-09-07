@@ -39,11 +39,19 @@ beyond what the user explicitly enabled.
 - **Symlink escape** — a `link → C:\Windows` checked into a project would let
   `/link/x` resolve back inside root by prefix but write outside.
   **Fixed:** `assertRealInside()` realpaths the nearest existing ancestor before
-  every write/delete/rename/mkdir and re-checks containment; `readTree` skips
-  symlinked entries; `open()` roots on the realpath of the folder.
-- Path containment (`resolveInside`) rejects `..`, absolute, and backslash
-  escapes. `.git/`, `node_modules/`, build dirs are **write-protected** (still
-  readable). Deleting the workspace root is refused.
+  every write/delete/rename/mkdir and checks containment with `path.relative`
+  (not string-prefix — see below); `readTree` skips symlinked entries; the root
+  is canonicalized on open.
+- **Path normalization** (CI-found): `resolveInside` now normalizes both `/` and
+  `\` (Linux does not treat `\` as a separator, so `..\..\x` previously slipped
+  through as a filename) and rejects any `.`/`..` segment outright before
+  resolving.
+- **Containment check** (CI-found): comparisons use `path.relative(root, abs)`
+  rather than `abs.startsWith(root + sep)`, so an 8.3 short path on a CI runner
+  (`C:\Users\RUNNER~1\…`) no longer mismatches its canonical long form. Both
+  sides are `fs.realpathSync.native`-canonicalized.
+- `.git/`, `node_modules/`, build dirs are **write-protected** (still readable).
+  Deleting the workspace root is refused.
 - Non-string arguments are rejected at the IPC boundary.
 - Residual, accepted: within the chosen project folder the renderer has full
   read/write. That is the product ("edit my project"). `readTree` caps at
@@ -106,6 +114,20 @@ beyond what the user explicitly enabled.
 - `app:setTitle` truncates to 120 chars. `app:recents` returns only the user's
   own project paths.
 
+## Supply chain
+
+`npm audit` is **clean (0 vulnerabilities)** as of this review:
+
+- **Runtime:** the only runtime dependency is `electron`. Bumped `33.4.11 → 43.6.0`
+  to clear GHSA-vmqv-hx8q-j7mg (ASAR integrity bypass, patched `< 35.7.5`). The
+  macOS AppleScript advisory does not apply to the Windows target.
+- **Build-time only** (`electron-builder` tree — never shipped, runs on the build
+  machine): bumped `electron-builder 25 → 26.15.3` and added `overrides` for
+  `tar → ^7.5.1` and `extract-zip → ^2.0.1`, which removed the remaining 13
+  advisories (node-tar hardlink traversal, extract-zip symlink traversal,
+  `electron-updater` credential-leak-on-redirect — the latter also unused, as
+  auto-update is an M2 item).
+
 ## Known / accepted risk
 
 - The renderer CSP is `script-src 'self' 'unsafe-inline'` (pre-existing; the app
@@ -117,5 +139,7 @@ beyond what the user explicitly enabled.
 ## Tests
 
 `test/security.test.js` covers the git allowlist (8 reject / 6 allow cases),
-credential key validation, snapshot id validation, and the symlink write/scan
-defence. `test/workspace.test.js` covers path containment and protected dirs.
+credential key validation, snapshot id validation, the 8.3-short-path
+containment regression, and the symlink write/scan defence.
+`test/workspace.test.js` covers path normalization (`/`, `\`, `.`, `..`) and
+protected dirs.

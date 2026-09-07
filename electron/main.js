@@ -61,8 +61,16 @@ function createWindow() {
   win.loadFile(RENDERER);
 
   const rendererErrors = [];
-  win.webContents.on('console-message', (_e, level, message, line, source) => {
-    if (level >= 2) rendererErrors.push(`${message}  (${source}:${line})`);
+  win.webContents.on('console-message', (...a) => {
+    // Electron >= 37 passes a single event object; older passes (e, level, msg, line, source).
+    let level, message, line, source;
+    if (a[0] && typeof a[0] === 'object' && 'message' in a[0]) {
+      ({ level, message, lineNumber: line, sourceId: source } = a[0]);
+    } else {
+      [, level, message, line, source] = a;
+    }
+    const isError = level === 'error' || level === 3;
+    if (isError) rendererErrors.push(`${message}  (${source}:${line})`);
     if (DEV || SMOKE) console.log(`[renderer] ${message}`);
   });
   win.webContents.on('did-fail-load', (_e, code, desc, url) => {

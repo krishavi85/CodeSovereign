@@ -46,13 +46,26 @@ module.exports = async function (t) {
   t.ok('snap id: traversal blocked', !ID_RE.test('../../../etc/passwd'));
   t.ok('snap id: arbitrary blocked', !ID_RE.test('anything.json'));
 
+  // --- workspace containment survives 8.3 short paths (regression: CI runner
+  //     roots look like C:\Users\RUNNER~1\... while realpath returns the long form) ---
+  {
+    const deepTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-short-'));
+    ws.setRoot(deepTmp);
+    await ws.writeFile('/nested/deep/file.txt', 'ok');
+    t.equal('write+read under a canonicalized root', await ws.readFile('/nested/deep/file.txt'), 'ok');
+    const tree = await ws.readTree();
+    t.ok('readTree finds the file under a canonicalized root', tree.files.some((f) => f.path === '/nested/deep/file.txt'));
+    fs.rmSync(deepTmp, { recursive: true, force: true });
+  }
+
   // --- workspace symlink defence ---
-  if (process.platform !== 'win32' || canSymlink()) {
+  if (canSymlink()) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-sym-'));
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-out-'));
     fs.symlinkSync(outside, path.join(tmp, 'escape'), 'dir');
     ws.setRoot(tmp);
     await t.throwsAsync('write through a symlinked dir is blocked', async () => ws.writeFile('/escape/evil.txt', 'x'));
+    await t.throwsAsync('delete through a symlinked dir is blocked', async () => ws.removePath('/escape/x'));
     const tree = await ws.readTree();
     t.ok('readTree skips symlinks', !tree.files.some((f) => f.path.startsWith('/escape')));
     fs.rmSync(tmp, { recursive: true, force: true });
