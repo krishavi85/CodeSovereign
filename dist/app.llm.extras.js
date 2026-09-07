@@ -231,14 +231,15 @@
     const original = window.renderSettings;
     window.renderSettings = function () {
       const out = original.apply(this, arguments);
-      // Insert host right after the Agents card.
-      const host = '<div id="llmSettingsHost"></div>';
-      // Place it after the Agents card by finding the Environment card.
-      // Simpler: append at end of card stack.
-      return out.replace(
-        /<div class="card" style="padding:20px;margin-bottom:18px">\s*<h3 class="cs-h3" style="margin-bottom:14px">\$\{I\.gear\} Environment<\/h3>/,
-        '<div class="card" style="padding:20px;margin-bottom:18px">__LLM_HOST__</div>$&'
-      ).replace("__LLM_HOST__", renderLlmSettingsCard());
+      const card = '<div id="llmSettingsHost">' + renderLlmSettingsCard() + '</div>';
+      // Anchor on card *text* (icons are already interpolated by the time we see
+      // the string). Prefer just before the Integrations card; fall back to the
+      // end of the .screen-inner stack.
+      const anchor = out.match(/<div class="card"[^>]*>\s*<h3[^>]*>[\s\S]*?Integrations<\/h3>/);
+      if (anchor) return out.replace(anchor[0], card + '\n      ' + anchor[0]);
+      const tail = out.lastIndexOf('</div>\n    </div>');
+      if (tail >= 0) return out.slice(0, tail) + card + '\n    ' + out.slice(tail);
+      return out + card;
     };
     renderSettings.__llmInjected = true;
   }
@@ -286,8 +287,9 @@
       try {
         if (window.S && window.S.screen === "settings") {
           const host = document.getElementById("llmSettingsHost");
-          if (host) {
-            host.outerHTML = '<div id="llmSettingsHost">' + renderLlmSettingsCard().replace(/^<div class="card".*?>/, "").replace(/<\/div>$/, "") + '</div>';
+          if (host && !host.__llmBound) {
+            host.innerHTML = renderLlmSettingsCard();
+            host.__llmBound = true;
             bindLlmSettings();
           }
         }
