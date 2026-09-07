@@ -36,8 +36,10 @@
     'known-issues.md':           'Current issues with severity, evidence and repair status',
     'assumptions.md':            'Inferred behavior — each with evidence and confidence',
     // requirements (spec 1)
-    'requirements.json':         'Functional + non-functional requirements, classified',
+    'requirements.json':         'Detected archetypes, domain-pack mandatory checklist, contradictions',
     'requirement-traceability.json': 'requirement -> components -> tests',
+    'product-brief.md':          'Derived brief: archetypes, mandatory checklist, integrations, risks',
+    'risk-register.json':        'Domain risks + detected contradictions',
     // components (spec 2)
     'components.json':           'Layer-classified component inventory with dependencies',
     // architecture / connections (spec 3, 5)
@@ -519,6 +521,14 @@
 
     appendChanges('analysis — health ' + (health ? health.score : '?') + ', ' + errs + ' errors, ' + mockCount + ' mock signals, ' + interactions.total + ' controls');
 
+    // ---- requirements intelligence (archetypes + domain packs + contradictions) ----
+    var reqCtx = {};
+    try {
+      var pj = read('project.json');
+      if (pj) reqCtx = { prompt: pj.prompt || '', offline: pj.constraints && pj.constraints.offline, archetypes: pj.archetypes };
+    } catch (_) {}
+    safe(function () { requirements(reqCtx); });
+
     return {
       ok: true,
       elapsedMs: Date.now() - t0,
@@ -650,6 +660,86 @@
     });
   }
 
+  /* ---------------- requirements intelligence ---------------- */
+  function requirements(ctx) {
+    var R = window.Requirements;
+    if (!R) return { ok: false, reason: 'Engine.Requirements not loaded' };
+    ctx = ctx || {};
+
+    var archetypes = R.detectArchetypes(ctx);
+    var active = R.activate(archetypes);
+
+    // best-effort: which mandatory items does the codebase seem to already cover?
+    var haystack = (Object.keys(FS._data).join(' ') + ' ' +
+      (window.Graph && (window.Graph.routes || []).map(function (r) { return r.path; }).join(' ')) + ' ' +
+      (window.Graph && (window.Graph.services || []).map(function (s) { return s.name; }).join(' '))).toLowerCase();
+    var checklist = active.mandatory.map(function (m) {
+      var kw = m.toLowerCase().split(/[ /]/).filter(function (w) { return w.length > 3; });
+      var covered = kw.some(function (w) { return haystack.indexOf(w) >= 0; });
+      return { requirement: m, status: covered ? 'present-ish' : 'not-found', source: 'domain-pack' };
+    });
+    var missing = checklist.filter(function (c) { return c.status === 'not-found'; });
+
+    var contradictions = R.contradictions(ctx);
+    var classified = R.classify(active.mandatory.concat(ctx.extraRequirements || []), Object.assign({ archetypes: archetypes.map(function (a) { return a.archetype; }) }, ctx));
+
+    var model = {
+      generatedAt: Date.now(),
+      detectedArchetypes: archetypes,
+      activePacks: active.packs,
+      mandatoryChecklist: checklist,
+      missingCount: missing.length,
+      integrations: active.integrations,
+      risks: active.risks,
+      compliance: active.compliance,
+      contradictions: contradictions,
+      classified: classified,
+      openQuestions: R.questions(ctx)
+    };
+    write('requirements.json', model);
+
+    // requirement -> component -> test traceability skeleton
+    var comps = componentInventory();
+    write('requirement-traceability.json', {
+      generatedAt: Date.now(),
+      rows: checklist.map(function (c) {
+        return {
+          requirement: c.requirement,
+          components: comps.components.filter(function (x) {
+            return c.requirement.toLowerCase().split(/[ /]/).some(function (w) { return w.length > 3 && x.id.toLowerCase().indexOf(w) >= 0; });
+          }).map(function (x) { return x.id; }),
+          tests: [],
+          status: c.status
+        };
+      })
+    });
+
+    // human-readable
+    write('product-brief.md',
+      '# Product brief (derived)\n\n_Sovereign requirements analysis ' + new Date().toISOString() + '_\n\n' +
+      '## Detected archetypes\n\n' + (archetypes.length ? archetypes.map(function (a) { return '- **' + a.label + '** (signal score ' + a.score + ')'; }).join('\n') : '- none — provide a product description') + '\n\n' +
+      '## Mandatory for this product type — ' + missing.length + ' not found in the codebase\n\n' +
+      checklist.map(function (c) { return (c.status === 'not-found' ? '- [ ] ' : '- [x] ') + c.requirement; }).join('\n') + '\n\n' +
+      '## Expected integrations\n\n' + (active.integrations.map(function (i) { return '- ' + i; }).join('\n') || '- none') + '\n\n' +
+      '## Domain risks to design against\n\n' + (active.risks.map(function (r) { return '- ' + r; }).join('\n') || '- none') + '\n\n' +
+      '## Compliance prompts\n\n' + (active.compliance.map(function (r) { return '- ' + r; }).join('\n') || '- none') + '\n\n' +
+      (contradictions.length ? '## ⚠️ Contradictions detected\n\n' + contradictions.map(function (c) { return '- **' + c.conflict + '**\n  - ' + c.resolution; }).join('\n') + '\n\n' : '') +
+      (model.openQuestions.length ? '## High-impact open questions\n\n' + model.openQuestions.map(function (q) { return '- ' + q.question; }).join('\n') + '\n' : ''));
+
+    write('risk-register.json', {
+      generatedAt: Date.now(),
+      domainRisks: active.risks.map(function (r) { return { risk: r, source: 'domain-pack', mitigation: null, status: 'open' }; }),
+      contradictions: contradictions
+    });
+
+    var ds = read('decision-state.json') || {};
+    ds.requirements = { at: model.generatedAt, archetypes: archetypes.map(function (a) { return a.archetype; }), missingMandatory: missing.length, contradictions: contradictions.length };
+    write('decision-state.json', ds);
+    appendChanges('requirements — archetypes [' + archetypes.map(function (a) { return a.archetype; }).join(',') + '], ' + missing.length + ' mandatory items not found, ' + contradictions.length + ' contradictions');
+
+    return { ok: true, model: model };
+  }
+
   function snapshot(reason) {
     var stamp = new Date().toISOString().replace(/[:.]/g, '-');
     var dir = 'history/' + stamp;
@@ -677,7 +767,7 @@
   Engine.Sovereign = {
     FILES: FILES, ROOT: ROOT,
     read: read, write: write, list: list, exists: exists,
-    analyze: analyze, runEvidence: runEvidence, observe: observe, snapshot: snapshot, status: status,
+    analyze: analyze, runEvidence: runEvidence, observe: observe, requirements: requirements, snapshot: snapshot, status: status,
     componentInventory: componentInventory,
     interactionInventory: interactionInventory,
     pipelineInventory: pipelineInventory,

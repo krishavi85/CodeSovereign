@@ -2389,6 +2389,7 @@ function renderRecovery(){
           <div style="display:flex;gap:6px">
             <button class="btn" onclick="sovereignSnapshot()">+ Snapshot</button>
             <button class="btn" onclick="runSovereignAnalysis()">${I.run} Analyze</button>
+            <button class="btn" onclick="openSovereignFile('product-brief.md')" title="Detected archetypes, domain-pack mandatory checklist, contradictions">Requirements</button>
             ${(window.desktop && window.desktop.isDesktop) ? `<button class="btn" onclick="runSovereignObserve()" title="Drive the running app and record what every control actually does">${I.eye||I.run} Observe</button><button class="btn primary" onclick="runSovereignEvidence()" title="Run the project's real npm test / build / lint / typecheck">${I.flask||I.run} Analyze + Test</button>` : ''}
           </div>
         </div>
@@ -3679,6 +3680,15 @@ function renderSovereignMemory(){
   ).join('');
 
   const dsFull = S9.read('decision-state.json') || {};
+  let reqLine = '';
+  const reqj = S9.read('requirements.json');
+  if (reqj && reqj.detectedArchetypes && reqj.detectedArchetypes.length) {
+    reqLine = '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">'
+      + 'archetype: ' + reqj.detectedArchetypes.slice(0,2).map(a => '<b style="color:#c7cddb">' + esc(a.label) + '</b>').join(', ')
+      + ' · <span style="color:' + (reqj.missingCount ? 'var(--warn)' : 'var(--good)') + '">' + reqj.missingCount + ' mandatory items not found</span>'
+      + (reqj.contradictions && reqj.contradictions.length ? ' · <span style="color:var(--err)">' + reqj.contradictions.length + ' contradictions</span>' : '')
+      + ' · <span data-sovfile="product-brief.md" style="color:#8b93f8;cursor:pointer">product-brief.md</span></div>';
+  }
   let metaLine = '';
   if (dsFull.graphFingerprint) {
     metaLine = '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">'
@@ -3692,7 +3702,7 @@ function renderSovereignMemory(){
   return ''
     + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">' + loc
     + (st.lastAnalysisAt ? '  ·  last analysis ' + fmtTimeAgo(st.lastAnalysisAt) : '') + '</div>'
-    + metaLine + obsRow + execRow
+    + reqLine + metaLine + obsRow + execRow
     + '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">'
       + stat('Health', st.health, st.health>=75?'var(--good)':st.health>=50?'var(--warn)':'var(--err)')
       + stat('Components', c.components)
