@@ -3678,10 +3678,21 @@ function renderSovereignMemory(){
     + '<span style="font-size:10px;color:var(--muted)">' + esc((Engine.Sovereign.FILES[f]||'').slice(0,42)) + '</span></div>'
   ).join('');
 
+  const dsFull = S9.read('decision-state.json') || {};
+  let metaLine = '';
+  if (dsFull.graphFingerprint) {
+    metaLine = '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">'
+      + (dsFull.diagrams ? dsFull.diagrams.length + ' diagrams · ' : '')
+      + 'graph <span class="cs-mono">' + esc(dsFull.graphFingerprint) + '</span>'
+      + (dsFull.driftDetected ? ' · <span style="color:var(--warn)">⚠ drift — diagrams regenerated</span>' : ' · <span style="color:var(--good)">in sync</span>')
+      + (dsFull.externals && dsFull.externals.length ? ' · externals: ' + dsFull.externals.slice(0,4).map(esc).join(', ') : '')
+      + ' · <span data-sovfile="architecture.md" style="color:#8b93f8;cursor:pointer">open architecture.md</span></div>';
+  }
+
   return ''
     + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">' + loc
     + (st.lastAnalysisAt ? '  ·  last analysis ' + fmtTimeAgo(st.lastAnalysisAt) : '') + '</div>'
-    + obsRow + execRow
+    + metaLine + obsRow + execRow
     + '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">'
       + stat('Health', st.health, st.health>=75?'var(--good)':st.health>=50?'var(--warn)':'var(--err)')
       + stat('Components', c.components)

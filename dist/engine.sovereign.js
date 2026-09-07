@@ -43,7 +43,10 @@
     // architecture / connections (spec 3, 5)
     'connection-graph.json':     'Typed node/edge graph of the real wiring',
     'connection-health.json':    'Per-edge status: valid / broken / missing / circular / unused',
-    'architecture.md':           'Human-readable architecture summary + diagram (mermaid)',
+    'architecture.md':           'Architecture summary + system-context / component / data-flow mermaid',
+    'diagrams/system-context.mmd': 'The app and the external systems it talks to',
+    'diagrams/component.mmd':    'Components grouped by layer, edges = imports',
+    'diagrams/dataflow.mmd':     'Client -> route -> service -> data store',
     // pipelines (spec 4)
     'pipeline-inventory.json':   'Discovered build / test / release / infra pipelines',
     'execution-evidence.json':   'Real npm test / build / lint / typecheck results (desktop)',
@@ -203,20 +206,98 @@
     return { pipelines: found, count: found.length, note: found.length ? undefined : 'No CI/infra/migration files found — pipelines are undiscovered.', generatedAt: Date.now() };
   }
 
-  function mermaidFor(graph) {
-    var lines = ['graph LR'];
-    var seen = {};
-    (graph.edges || []).slice(0, 60).forEach(function (e) {
-      var a = String(e.from).replace(/[^a-z0-9]/gi, '_');
-      var b = String(e.to).replace(/[^a-z0-9]/gi, '_');
-      if (!seen[a]) { seen[a] = 1; lines.push('  ' + a + '["' + shortName(e.from) + '"]'); }
-      if (!seen[b]) { seen[b] = 1; lines.push('  ' + b + '["' + shortName(e.to) + '"]'); }
-      var arrow = e.status === 'CONNECTED' ? '-->' : e.status === 'CIRCULAR' ? '-.->|circular|' : '-.->|' + (e.status || '?').toLowerCase() + '|';
-      lines.push('  ' + a + ' ' + arrow + ' ' + b);
-    });
-    return lines.join('\n');
-  }
   function shortName(p) { return String(p).split('/').slice(-2).join('/').slice(0, 40); }
+  function nid(s) { return 'n_' + String(s).replace(/[^a-z0-9]/gi, '_').slice(0, 48); }
+  function esc9(s) { return String(s).replace(/["\n]/g, ' '); }
+
+  // Well-known external systems inferred from dependencies.
+  var EXTERNAL_PKGS = [
+    [/^@?stripe/, 'Stripe (payments)'], [/^@?supabase/, 'Supabase'], [/^(openai|@ai-sdk)/, 'OpenAI'],
+    [/^@anthropic/, 'Anthropic'], [/^(pg|mysql2?|mongodb|mongoose|redis|ioredis)$/, 'Database/Cache'],
+    [/^(aws-sdk|@aws-sdk)/, 'AWS'], [/^(firebase|@firebase)/, 'Firebase'], [/^(twilio)$/, 'Twilio'],
+    [/^(nodemailer|@sendgrid|resend)$/, 'Email provider'], [/^(axios|node-fetch|got|undici)$/, 'HTTP client'],
+    [/^(socket\.io|ws)$/, 'WebSocket'], [/^(prisma|@prisma|drizzle-orm|typeorm|sequelize|knex)$/, 'ORM']
+  ];
+
+  function detectExternals() {
+    var out = {};
+    var p = safe(function () { return JSON.parse(FS.read('/package.json') || 'null'); }, null);
+    if (p) {
+      var deps = Object.assign({}, p.dependencies || {}, p.devDependencies || {});
+      Object.keys(deps).forEach(function (d) {
+        EXTERNAL_PKGS.forEach(function (rule) { if (rule[0].test(d)) out[rule[1]] = 1; });
+      });
+    }
+    // non-localhost URLs in source
+    Object.keys(FS._data).forEach(function (f) {
+      if (!isProduct(f) || !/\.(js|mjs|cjs|ts|tsx|jsx|json|env)$/.test(f)) return;
+      var c = FS.read(f) || '';
+      (c.match(/https?:\/\/([a-z0-9.-]+)/gi) || []).forEach(function (u) {
+        var host = u.replace(/^https?:\/\//i, '');
+        if (/localhost|127\.0\.0\.1|example\.(com|org)|schemas?\.|w3\.org|json-schema/.test(host)) return;
+        out[host.split('/')[0]] = 1;
+      });
+    });
+    return Object.keys(out);
+  }
+
+  var DIAGRAMS = {
+    // component graph, grouped into layer subgraphs
+    component: function (graph, components) {
+      var lines = ['graph LR'];
+      var byLayer = {};
+      (components.components || []).forEach(function (c) { (byLayer[c.layer] = byLayer[c.layer] || []).push(c); });
+      Object.keys(byLayer).forEach(function (layer) {
+        lines.push('  subgraph ' + layer);
+        byLayer[layer].forEach(function (c) { lines.push('    ' + nid(c.id) + '["' + esc9(shortName(c.id)) + '"]'); });
+        lines.push('  end');
+      });
+      var edgeSeen = {};
+      (graph.edges || []).forEach(function (e) {
+        var k = nid(e.from) + '>' + nid(e.to);
+        if (edgeSeen[k]) return; edgeSeen[k] = 1;
+        var arrow = e.status === 'CONNECTED' ? '-->' : e.status === 'CIRCULAR' ? '-.->|circular|'
+          : '-.->|' + String(e.status || '?').toLowerCase() + '|';
+        lines.push('  ' + nid(e.from) + ' ' + arrow + ' ' + nid(e.to));
+      });
+      return lines.join('\n');
+    },
+    // request path: routes -> services -> data stores
+    dataflow: function (graph) {
+      var G = window.Graph || {};
+      var lines = ['graph LR', '  client([Client])'];
+      (G.routes || []).slice(0, 30).forEach(function (r) {
+        var rn = nid('route' + r.method + r.path);
+        lines.push('  ' + rn + '["' + r.method + ' ' + esc9(r.path) + '"]');
+        lines.push('  client --> ' + rn);
+        (G.services || []).filter(function (s) { return s.file === r.file; }).forEach(function (s) {
+          lines.push('  ' + rn + ' --> ' + nid('svc' + s.name) + '(["' + esc9(s.name) + '"])');
+        });
+      });
+      (G.database || []).slice(0, 20).forEach(function (d) {
+        lines.push('  ' + nid('tbl' + d.table) + '[("' + esc9(d.table) + '")]');
+      });
+      if (!(G.routes || []).length) lines.push('  note["No API routes detected"]');
+      return lines.join('\n');
+    },
+    // the app and the external systems it talks to
+    systemContext: function () {
+      var name = (Engine.Proj.current() && Engine.Proj.current().name) || 'Application';
+      var lines = ['graph LR', '  user([User])', '  app["' + esc9(name) + '"]', '  user --> app'];
+      detectExternals().slice(0, 20).forEach(function (x) {
+        lines.push('  app --> ' + nid('ext' + x) + '{{"' + esc9(x) + '"}}');
+      });
+      return lines.join('\n');
+    }
+  };
+
+  // A stable fingerprint of the wiring, for drift detection.
+  function graphFingerprint(edges) {
+    var s = (edges || []).map(function (e) { return e.from + '>' + e.to + ':' + (e.status || ''); }).sort().join('|');
+    var h = 5381;
+    for (var i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(16) + '.' + (edges || []).length;
+  }
 
   function analyze() {
     var t0 = Date.now();
@@ -282,14 +363,32 @@
       (mockCount === 0 ? 'No simulated controls or mock signals detected.\n'
         : mockCount + ' item(s) still look decorative / simulated — see `simulation-report.json`.\n'));
 
-    // ---- architecture.md with a mermaid diagram ----
+    // ---- diagrams (regenerated from the real graph) ----
+    var graph = { edges: graphHealth.edges };
+    var dg = {
+      component: DIAGRAMS.component(graph, components),
+      dataflow: DIAGRAMS.dataflow(graph),
+      'system-context': DIAGRAMS.systemContext()
+    };
+    Object.keys(dg).forEach(function (k) { write('diagrams/' + k + '.mmd', dg[k]); });
+
+    // ---- drift detection ----
+    var fp = graphFingerprint(graphHealth.edges);
+    var prevState = read('decision-state.json') || {};
+    var drift = !!(prevState.graphFingerprint && prevState.graphFingerprint !== fp);
+
+    // ---- architecture.md — all diagrams inline (GitHub renders mermaid) ----
     write('architecture.md',
       '# Architecture (generated)\n\n_Sovereign analysis ' + new Date().toISOString() + '_\n\n' +
       '- Project type: **' + projectType.kind + '**' + (projectType.signals && projectType.signals.length ? ' (' + projectType.signals.join(', ') + ')' : '') + '\n' +
-      '- Files: ' + (components.components || []).length + '  ·  Edges: ' + (graphHealth.edges || []).length + '\n\n' +
+      '- Files: ' + (components.components || []).length + '  ·  Edges: ' + (graphHealth.edges || []).length +
+      '  ·  Graph fingerprint: `' + fp + '`' + (drift ? '  ·  ⚠️ **drift since last generation**' : '') + '\n\n' +
       '## Component layers\n\n' +
       Object.keys(components.byLayer || {}).map(function (l) { return '- **' + l + '**: ' + components.byLayer[l].length; }).join('\n') + '\n\n' +
-      '## Connection graph\n\n```mermaid\n' + mermaidFor({ edges: graphHealth.edges }) + '\n```\n');
+      '## System context\n\n```mermaid\n' + dg['system-context'] + '\n```\n\n' +
+      '## Components (by layer)\n\n```mermaid\n' + dg.component + '\n```\n\n' +
+      '## Request / data flow\n\n```mermaid\n' + dg.dataflow + '\n```\n\n' +
+      '_Individual diagrams: `.sovereign/diagrams/*.mmd`_\n');
 
     // ---- decision-state.json ----
     var state = {
@@ -297,6 +396,10 @@
       projectType: projectType.kind,
       health: health ? health.score : null,
       recoveryLevel: levels ? levels.level : null,
+      graphFingerprint: fp,
+      driftDetected: drift,
+      externals: detectExternals(),
+      diagrams: Object.keys(dg).map(function (k) { return 'diagrams/' + k + '.mmd'; }),
       counts: {
         files: (components.components || []).length,
         components: (components.components || []).length,
@@ -307,9 +410,12 @@
         interactions: interactions.total,
         pipelines: pipelines.count
       },
-      openDecisions: read('decision-state.json') && read('decision-state.json').openDecisions || []
+      execution: prevState.execution || undefined,
+      runtime: prevState.runtime || undefined,
+      openDecisions: (prevState && prevState.openDecisions) || []
     };
     write('decision-state.json', state);
+    if (drift) appendChanges('DRIFT — connection graph changed (' + prevState.graphFingerprint + ' -> ' + fp + '); diagrams regenerated');
 
     // ---- analysis-summary.md ----
     write('analysis-summary.md',
@@ -323,8 +429,10 @@
       '| Validator | ' + errs + ' errors, ' + warns + ' warnings |\n' +
       '| Mock / simulation signals | ' + mockCount + ' |\n' +
       '| Interactive controls | ' + interactions.total + ' |\n' +
-      '| Pipelines discovered | ' + pipelines.count + ' |\n\n' +
-      'Full evidence in `.sovereign/*.json`. Re-run from the Recovery screen.\n');
+      '| Pipelines discovered | ' + pipelines.count + ' |\n' +
+      '| External systems | ' + (state.externals.length ? state.externals.join(', ') : 'none detected') + ' |\n' +
+      '| Graph fingerprint | `' + fp + '`' + (drift ? ' ⚠️ drift' : '') + ' |\n\n' +
+      'Diagrams: `.sovereign/architecture.md` + `.sovereign/diagrams/`. Full evidence in `.sovereign/*.json`.\n');
 
     // ---- seed the files that need a human / later pass, only once ----
     if (!exists('assumptions.md')) write('assumptions.md', '# Assumptions\n\n_Each inferred behavior below states its evidence and confidence._\n');
@@ -503,7 +611,8 @@
     analyze: analyze, runEvidence: runEvidence, observe: observe, snapshot: snapshot, status: status,
     componentInventory: componentInventory,
     interactionInventory: interactionInventory,
-    pipelineInventory: pipelineInventory
+    pipelineInventory: pipelineInventory,
+    DIAGRAMS: DIAGRAMS, graphFingerprint: graphFingerprint, detectExternals: detectExternals
   };
   window.Sovereign = Engine.Sovereign;
   console.info('[Sovereign] project memory engine ready — Engine.Sovereign');
