@@ -1,0 +1,73 @@
+{
+  "name": "codesovereign-desktop",
+  "productName": "CodeSovereign",
+  "version": "0.1.0-alpha.1",
+  "description": "CodeSovereign — AI App Factory, packaged as a desktop application.",
+  "author": "krishavi85",
+  "license": "MIT",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "smoke": "electron . --smoke",
+    "smoke:observer": "electron . --smoke-observer",
+    "test": "node test/run.js",
+    "web": "npx --yes serve dist -l 4173",
+    "dist:win": "electron-builder --win --publish never",
+    "dist:dir": "electron-builder --dir --publish never",
+    "postinstall": "electron-builder install-app-deps || exit 0"
+  },
+  "devDependencies": {
+    "electron": "^43.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "overrides": {
+    "tar": "^7.5.1",
+    "extract-zip": "^2.0.1"
+  },
+  "build": {
+    "appId": "io.codesovereign.desktop",
+    "productName": "CodeSovereign",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "electron/**/*",
+      "dist/**/*",
+      "package.json",
+      "!**/*.map",
+      "!dist/_init_*.sql"
+    ],
+    "extraMetadata": {
+      "main": "electron/main.js"
+    },
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "CodeSovereign"
+    },
+    "portable": {
+      "artifactName": "${productName}-${version}-portable.${ext}"
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Development"
+    }
+  }
+}

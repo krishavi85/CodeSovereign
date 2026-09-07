@@ -4,6 +4,11 @@ _archive/
 # Dependencies
 node_modules/
 
+# Electron build output
+release/
+dist-electron/
+out/
+
 # OS / editor
 .DS_Store
 Thumbs.db

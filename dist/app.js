@@ -2382,6 +2382,20 @@ function renderRecovery(){
         </div>
       </div>
 
+      <!-- Sovereign project memory (.sovereign/) -->
+      <div class="card" style="padding:20px;margin-top:18px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <h3 class="cs-h3">${I.box} Sovereign Project Memory <span class="cs-mono" style="color:var(--muted);font-weight:400">.sovereign/</span></h3>
+          <div style="display:flex;gap:6px">
+            <button class="btn" onclick="sovereignSnapshot()">+ Snapshot</button>
+            <button class="btn" onclick="runSovereignAnalysis()">${I.run} Analyze</button>
+            <button class="btn" onclick="openSovereignFile('product-brief.md')" title="Detected archetypes, domain-pack mandatory checklist, contradictions">Requirements</button>
+            ${(window.desktop && window.desktop.isDesktop) ? `<button class="btn" onclick="runSovereignObserve()" title="Drive the running app and record what every control actually does">${I.eye||I.run} Observe</button><button class="btn primary" onclick="runSovereignEvidence()" title="Run the project's real npm test / build / lint / typecheck">${I.flask||I.run} Analyze + Test</button>` : ''}
+          </div>
+        </div>
+        ${renderSovereignMemory()}
+      </div>
+
       <div class="card" style="padding:20px;margin-top:18px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <h3 class="cs-h3">Validator Suites</h3>
@@ -2940,6 +2954,9 @@ function _issueRow(issue, sev){
 }
 
 function bindRecovery(){
+  document.querySelectorAll('[data-sovfile]').forEach(function(el){
+    el.onclick = function(){ openSovereignFile(el.dataset.sovfile); };
+  });
   // Only auto-scan on entry if no recent scan exists (fixes render loop / flicker)
   try {
     var _fresh = (S && S.lastScan && S.lastScan.at) ? (Date.now() - S.lastScan.at) : Infinity;
@@ -3603,6 +3620,170 @@ if (typeof globalThis !== 'undefined') {
 
 
 
+/* ==== Sovereign project memory (.sovereign/) ==== */
+function renderSovereignMemory(){
+  if (!window.Engine || !Engine.Sovereign) {
+    return '<div style="color:var(--muted);font-size:13px">Sovereign engine not loaded.</div>';
+  }
+  const S9 = Engine.Sovereign;
+  let st; try { st = S9.status(); } catch (e) { st = { initialized:false, files:[] }; }
+  const desktop = !!(window.desktop && window.desktop.isDesktop);
+  const loc = desktop
+    ? 'Real files under <span class="cs-mono">' + esc((window.CSDesktop && CSDesktop.project && CSDesktop.project.root) || 'the open folder') + '\\.sovereign\\</span>'
+    : 'In-workspace files (browser mode) — export the project to keep them';
+
+  if (!st.initialized) {
+    return '<div style="font-size:13px;color:var(--muted);line-height:1.6">'
+      + 'No <span class="cs-mono">.sovereign/</span> memory yet. Run the analysis to inventory this workspace’s '
+      + 'components, connection graph, simulated controls and pipelines, and write the evidence that every Sovereign engine resumes from.<br>'
+      + '<span style="font-size:11.5px">' + loc + '</span></div>';
+  }
+
+  const c = st.counts || {};
+  const stat = (label, val, color) => '<div style="text-align:center;padding:10px;border:1px solid var(--line);border-radius:9px">'
+    + '<div style="font:700 18px \'JetBrains Mono\',monospace;color:' + (color||'#e6e9f2') + '">' + (val==null?'–':val) + '</div>'
+    + '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">' + label + '</div></div>';
+
+  let obsRow = '';
+  const rt = S9.read('runtime-trace.json');
+  if (rt && rt.byStatus) {
+    const chip = (k, col) => rt.byStatus[k] ? '<span style="font-size:11px;padding:3px 9px;border-radius:20px;margin-right:6px;background:'
+      + col + '22;color:' + col + '">' + k + ': ' + rt.byStatus[k] + '</span>' : '';
+    obsRow = '<div style="margin:12px 0;padding:10px;border:1px solid var(--line);border-radius:9px">'
+      + '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Runtime crawl · '
+      + esc(rt.url || '') + ' · ' + fmtTimeAgo(rt.at) + '</div>'
+      + chip('REAL', '#34d399') + chip('MOCK', '#f59e0b') + chip('BROKEN', '#ef4444')
+      + chip('HIDDEN', '#8b93a7') + chip('DISABLED', '#8b93a7')
+      + ((rt.consoleErrors && rt.consoleErrors.length) ? '<span style="font-size:11px;color:var(--err);margin-left:6px">' + rt.consoleErrors.length + ' console errors</span>' : '')
+      + '</div>';
+  }
+
+  let execRow = '';
+  const evd = S9.read('execution-evidence.json');
+  if (evd && evd.gates) {
+    const g = evd.gates;
+    const pill = (k, v) => '<span style="font-size:11px;padding:3px 9px;border-radius:20px;margin-right:6px;background:'
+      + (v===null?'rgba(255,255,255,.06)':v?'rgba(52,211,153,.14)':'rgba(239,68,68,.16)') + ';color:'
+      + (v===null?'var(--muted)':v?'var(--good)':'var(--err)') + '">' + k + ': ' + (v===null?'—':v?'pass':'FAIL') + '</span>';
+    execRow = '<div style="margin:12px 0;padding:10px;border:1px solid var(--line);border-radius:9px">'
+      + '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Real execution · ' + fmtTimeAgo(evd.generatedAt) + '</div>'
+      + pill('tests', g.testsPass) + pill('build', g.buildPasses) + pill('lint', g.lintClean) + pill('types', g.typesClean)
+      + '</div>';
+  }
+
+  const fileRows = (st.files || []).filter(f => f.indexOf('history/') !== 0).map(f =>
+    '<div data-sovfile="' + esc(f) + '" style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font:500 12px \'JetBrains Mono\',monospace;color:#c7cddb" '
+    + 'onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\'\'">'
+    + '<span style="color:#6b7488">' + (/\.json$/.test(f) ? '{}' : 'md') + '</span>'
+    + '<span style="flex:1">' + esc(f) + '</span>'
+    + '<span style="font-size:10px;color:var(--muted)">' + esc((Engine.Sovereign.FILES[f]||'').slice(0,42)) + '</span></div>'
+  ).join('');
+
+  const dsFull = S9.read('decision-state.json') || {};
+  let reqLine = '';
+  const reqj = S9.read('requirements.json');
+  if (reqj && reqj.detectedArchetypes && reqj.detectedArchetypes.length) {
+    reqLine = '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">'
+      + 'archetype: ' + reqj.detectedArchetypes.slice(0,2).map(a => '<b style="color:#c7cddb">' + esc(a.label) + '</b>').join(', ')
+      + ' · <span style="color:' + (reqj.missingCount ? 'var(--warn)' : 'var(--good)') + '">' + reqj.missingCount + ' mandatory items not found</span>'
+      + (reqj.contradictions && reqj.contradictions.length ? ' · <span style="color:var(--err)">' + reqj.contradictions.length + ' contradictions</span>' : '')
+      + ' · <span data-sovfile="product-brief.md" style="color:#8b93f8;cursor:pointer">product-brief.md</span></div>';
+  }
+  let metaLine = '';
+  if (dsFull.graphFingerprint) {
+    metaLine = '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">'
+      + (dsFull.diagrams ? dsFull.diagrams.length + ' diagrams · ' : '')
+      + 'graph <span class="cs-mono">' + esc(dsFull.graphFingerprint) + '</span>'
+      + (dsFull.driftDetected ? ' · <span style="color:var(--warn)">⚠ drift — diagrams regenerated</span>' : ' · <span style="color:var(--good)">in sync</span>')
+      + (dsFull.externals && dsFull.externals.length ? ' · externals: ' + dsFull.externals.slice(0,4).map(esc).join(', ') : '')
+      + ' · <span data-sovfile="architecture.md" style="color:#8b93f8;cursor:pointer">open architecture.md</span></div>';
+  }
+
+  return ''
+    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">' + loc
+    + (st.lastAnalysisAt ? '  ·  last analysis ' + fmtTimeAgo(st.lastAnalysisAt) : '') + '</div>'
+    + reqLine + metaLine + obsRow + execRow
+    + '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">'
+      + stat('Health', st.health, st.health>=75?'var(--good)':st.health>=50?'var(--warn)':'var(--err)')
+      + stat('Components', c.components)
+      + stat('Edges', c.edges + (c.brokenEdges?(' / '+c.brokenEdges+'✗'):''), c.brokenEdges?'var(--err)':'#e6e9f2')
+      + stat('Mock signals', c.mockSignals, c.mockSignals?'var(--warn)':'var(--good)')
+      + stat('Controls', c.interactions)
+      + stat('Pipeline gaps', c.pipelineGaps != null ? c.pipelineGaps : c.pipelines, c.pipelineGaps ? 'var(--warn)' : '#e6e9f2')
+    + '</div>'
+    + '<div style="display:flex;flex-direction:column;gap:1px;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:6px">'
+      + (fileRows || '<div style="color:var(--muted);font-size:12px;padding:8px">(no files)</div>')
+    + '</div>';
+}
+
+function runSovereignAnalysis(){
+  if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
+  toast('Running Sovereign analysis…', '#a78bfa');
+  setTimeout(() => {
+    try {
+      const r = Engine.Sovereign.analyze();
+      toast('Analysis complete — ' + r.summary.components + ' components, ' + r.summary.edges + ' edges, '
+        + r.summary.mockSignals + ' mock signals → .sovereign/', '#34d399');
+      if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
+    } catch (e) { toast('Analysis failed: ' + e.message, '#ef4444'); console.error(e); }
+    renderAll();
+  }, 60);
+}
+
+function runSovereignEvidence(){
+  if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
+  if (!(window.CSExec && CSExec.available())) { toast('Open a project folder in the desktop app first', '#f59e0b'); return; }
+  toast('Analyzing + running real test / build / lint…', '#a78bfa');
+  setTimeout(() => {
+    try { Engine.Sovereign.analyze(); } catch (e) { console.error(e); }
+    Engine.Sovereign.runEvidence().then(r => {
+      if (!r.ok) { toast(r.reason || 'evidence run failed', '#f59e0b'); }
+      else if (r.failed.length) { toast('Executed — FAILED: ' + r.failed.join(', ') + ' (see .sovereign/execution-evidence.json)', '#ef4444'); }
+      else { toast('Executed — all gates pass ✓ → .sovereign/execution-evidence.json', '#34d399'); }
+      if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
+      renderAll();
+    }).catch(e => { toast('Evidence run error: ' + e.message, '#ef4444'); console.error(e); });
+  }, 60);
+}
+window.runSovereignEvidence = runSovereignEvidence;
+
+function runSovereignObserve(){
+  if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
+  if (!(window.CSObserve && CSObserve.available())) { toast('Open a project folder in the desktop app first', '#f59e0b'); return; }
+  var url = window.prompt('Runtime URL (blank = detect / start the dev server):', '') || undefined;
+  toast('Observing the running app…', '#a78bfa');
+  Engine.Sovereign.observe(url ? { url: url } : {}).then(function(r){
+    if (!r.ok) { toast(r.reason || 'observation failed', '#f59e0b'); return; }
+    var t = r.trace;
+    toast('Observed ' + t.controlsExercised + ' controls — ' + JSON.stringify(t.byStatus)
+      + (t.consoleErrors && t.consoleErrors.length ? ' · ' + t.consoleErrors.length + ' console errors' : ''), '#34d399');
+    if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
+    renderAll();
+  }).catch(function(e){ toast('Observation error: ' + e.message, '#ef4444'); console.error(e); });
+}
+window.runSovereignObserve = runSovereignObserve;
+
+function sovereignSnapshot(){
+  if (!window.Engine || !Engine.Sovereign) return;
+  try {
+    const r = Engine.Sovereign.snapshot('manual');
+    toast('Snapshot ' + r.id + ' — ' + r.fileCount + ' files', '#34d399');
+    if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
+  } catch (e) { toast('Snapshot failed: ' + e.message, '#ef4444'); }
+  renderAll();
+}
+
+function openSovereignFile(f){
+  const path = (Engine.Sovereign.ROOT + '/' + String(f).replace(/^\/+/, ''));
+  if (!Engine.FS.exists(path)) { toast('Not written yet — run the analysis', '#f59e0b'); return; }
+  openFile(path);
+  S.screen = 'ide';
+  renderAll();
+}
+window.runSovereignAnalysis = runSovereignAnalysis;
+window.sovereignSnapshot = sovereignSnapshot;
+window.openSovereignFile = openSovereignFile;
+
 function renderRecoveryLayers(){
   try {
     if (!window.Engine || !window.Engine.Recovery) return '<div style="color:var(--muted);font-size:13px">Engine.Recovery not loaded</div>';
@@ -4255,11 +4436,37 @@ function repairWorkspace(){
     S.lastScan = null;
     runValidatorScan();
     renderAll();
+    if (!run.rolledBack) desktopVerifyRepair(run);
   } catch (e) {
     console.error(e);
     toast('Repair failed: ' + (e && e.message || e), '#ef4444');
   }
 }
+
+// After an FS-level repair, prove it with the project's REAL test + build
+// (desktop only). The Sovereign specs: never declare success from generation
+// alone. On failure, offer to roll the working tree back via git.
+function desktopVerifyRepair(run){
+  if (!(window.CSExec && CSExec.available())) return;
+  toast('Verifying repair with real test + build…', '#a78bfa');
+  Promise.resolve()
+    .then(() => CSExec.test())
+    .then(t => CSExec.build().then(b => ({ t: t, b: b })))
+    .then(res => {
+      var tOk = res.t.code === 0 || res.t.skipped;
+      var bOk = res.b.code === 0 || res.b.skipped;
+      try { Engine.Sovereign && Engine.Sovereign.runEvidence({ steps: ['test','build'] }); } catch (_) {}
+      if (tOk && bOk) {
+        toast('Repair VERIFIED — real tests + build pass', '#34d399');
+      } else {
+        toast('Repair verification FAILED (test:' + res.t.code + ' build:' + res.b.code + '). Use a Snapshot to roll back.', '#ef4444');
+      }
+      if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
+      renderAll();
+    })
+    .catch(e => { console.error(e); toast('Verification error: ' + e.message, '#f59e0b'); });
+}
+window.desktopVerifyRepair = desktopVerifyRepair;
 
 function repairWorkspaceV3(){
   try {

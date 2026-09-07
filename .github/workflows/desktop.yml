@@ -1,0 +1,93 @@
+name: Desktop
+
+on:
+  push:
+    branches: [main, "desktop/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  test:
+    name: Unit tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Unit / integration / security tests
+        run: npm test
+
+  smoke:
+    name: Electron smoke boot
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Cache Electron download
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.electron-cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
+      - name: Headless boot check (probes renderer, verifies 0 errors + safeStorage)
+        run: npm run smoke
+      - name: Runtime observer integration check (drives a fixture page, classifies controls)
+        run: npm run smoke:observer
+
+  build:
+    name: Windows installer
+    runs-on: windows-latest
+    needs: [test, smoke]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Cache Electron + builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/.electron-cache
+            ~/AppData/Local/electron-builder/Cache
+          key: ebuilder-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
+      - name: Build NSIS installer + portable
+        run: npm run dist:win
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: List artifacts
+        shell: bash
+        run: ls -la release/ || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codesovereign-windows-installer
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: error
+          retention-days: 14

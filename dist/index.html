@@ -172,6 +172,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
   </div>
 </div>
 
+<script src="vendor/acorn.js"></script>
+<script src="vendor/acorn-loose.js"></script>
+<script src="vendor/js-yaml.min.js"></script>
 <script src="engine.js"></script>
 <script src="engine-extras.js"></script>
 <script src="engine-pipeline-builder.js"></script>
@@ -180,6 +183,12 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="engine-universal.js"></script>
 <script src="engine.recovery.js"></script>
 <script src="engine.recovery.v4.js"></script>
+<script src="engine.ast.js"></script>
+<script src="engine.mockscan.js"></script>
+<script src="engine.pipeline-parse.js"></script>
+<script src="engine.requirements.js"></script>
+<script src="engine.adapters.js"></script>
+<script src="engine.sovereign.js"></script>
 <script src="engine.plugins.js"></script>
 <script src="app.plugins.js"></script>
 <script src="app.plugins.extras.js"></script>
@@ -199,5 +208,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="app.actions.js"></script>
 <script src="app.oauth.js"></script>
 <script src="app.js"></script>
+
+<!-- Desktop layer: no-ops in a plain browser, wires real disk/proc/keychain in Electron -->
+<script src="desktop/desktop-fs.js"></script>
+<script src="desktop/desktop-terminal.js"></script>
+<script src="desktop/desktop-git.js"></script>
+<script src="desktop/desktop-exec.js"></script>
+<script src="desktop/desktop-observe.js"></script>
+<script src="desktop/desktop-app.js"></script>
 </body>
 </html>
