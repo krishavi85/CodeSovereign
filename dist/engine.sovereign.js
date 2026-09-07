@@ -68,6 +68,31 @@
 
   function rel(p) { return ROOT + '/' + String(p).replace(/^\/+/, ''); }
 
+  // Scrub token-shaped strings before anything is written to an evidence file.
+  var SECRET_PATTERNS = [
+    /\b(gh[pousr]_[A-Za-z0-9]{20,})\b/g,                       // GitHub tokens
+    /\b(sk-[A-Za-z0-9_-]{20,})\b/g,                            // OpenAI-style
+    /\b(sk-ant-[A-Za-z0-9_-]{20,})\b/g,                        // Anthropic
+    /\b(xox[baprs]-[A-Za-z0-9-]{10,})\b/g,                     // Slack
+    /\b(AKIA[0-9A-Z]{16})\b/g,                                 // AWS access key id
+    /(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g, // JWT
+    /(-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----)/g,
+    /\b([A-Za-z0-9_]*(?:token|secret|password|apikey|api_key)[A-Za-z0-9_]*\s*[=:]\s*)["']?([A-Za-z0-9_\-./+]{12,})["']?/gi
+  ];
+  function redact(s) {
+    var out = String(s == null ? '' : s);
+    SECRET_PATTERNS.forEach(function (re, i) {
+      out = out.replace(re, i === SECRET_PATTERNS.length - 1 ? '$1[REDACTED]' : '[REDACTED]');
+    });
+    return out;
+  }
+  function redactDeep(obj) {
+    if (typeof obj === 'string') return redact(obj);
+    if (Array.isArray(obj)) return obj.map(redactDeep);
+    if (obj && typeof obj === 'object') { var o = {}; for (var k in obj) o[k] = redactDeep(obj[k]); return o; }
+    return obj;
+  }
+
   function read(p) {
     try {
       var raw = FS.read(rel(p));
@@ -77,8 +102,12 @@
     } catch (_) { return null; }
   }
 
+  // Files that can contain build/runtime output -> redact secrets on the way in.
+  var RISKY_RE = /(execution-evidence|runtime-trace|diagnostics\/|known-issues|production-readiness|command-audit)/;
   function write(p, data) {
+    if (RISKY_RE.test(p)) data = (typeof data === 'string') ? redact(data) : redactDeep(data);
     var body = (typeof data === 'string') ? data : JSON.stringify(data, null, 2);
+    if (body.length > 4 * 1024 * 1024) body = body.slice(0, 4 * 1024 * 1024) + '\n…[truncated]…';
     FS.write(rel(p), body);
     return true;
   }
@@ -752,6 +781,19 @@
     return { ok: true, model: model };
   }
 
+  var HISTORY_KEEP = 15;
+  function pruneHistory() {
+    var stamps = {};
+    Object.keys(FS._data).forEach(function (p) {
+      var m = p.indexOf(ROOT + '/history/') === 0 && p.slice((ROOT + '/history/').length).split('/')[0];
+      if (m) stamps[m] = 1;
+    });
+    var all = Object.keys(stamps).sort();
+    all.slice(0, Math.max(0, all.length - HISTORY_KEEP)).forEach(function (old) {
+      try { FS.remove(ROOT + '/history/' + old); } catch (_) {}
+    });
+  }
+
   function snapshot(reason) {
     var stamp = new Date().toISOString().replace(/[:.]/g, '-');
     var dir = 'history/' + stamp;
@@ -761,7 +803,8 @@
       var raw = FS.read(rel(f));
       if (raw != null) { FS.write(rel(dir + '/' + f), raw); n++; }
     });
-    appendChanges('snapshot ' + stamp + ' (' + (reason || 'manual') + ') — ' + n + ' files');
+    pruneHistory();
+    appendChanges('snapshot ' + stamp + ' (' + (reason || 'manual') + ') — ' + n + ' files (keeping last ' + HISTORY_KEEP + ')');
     return { id: stamp, fileCount: n };
   }
 

@@ -89,7 +89,7 @@
     if (!available()) return Promise.resolve({ ok: false, reason: 'open a project folder in the desktop app first' });
     return ensureServer(opts.url).then(function (srv) {
       try { window.toast && window.toast('Observing ' + srv.url + ' …', '#22d3ee'); } catch (_) {}
-      return D.observer.crawl({ max: opts.max || 40 }).then(function (res) {
+      return D.observer.crawl({ max: opts.max || 40, mode: opts.mode || 'observe' }).then(function (res) {
         if (res && res.ok === false) throw new Error(res.error || 'crawl failed');
         var trace = res;
         trace.serverUrl = srv.url;

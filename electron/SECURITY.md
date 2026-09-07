@@ -130,6 +130,57 @@ beyond what the user explicitly enabled.
 - `app:setTitle` truncates to 120 chars. `app:recents` returns only the user's
   own project paths.
 
+## M2 hardening — execution & observation trust boundaries
+
+The automated execution loop and runtime observer are the two biggest new trust
+boundaries. Both were hardened before the M2 merge.
+
+### Project-command execution (`proc:*`)
+
+| Control | State |
+|---|---|
+| Workspace trust | `electron/lib/trust.js` — an untrusted folder's `package.json` cannot run **anything**. First `proc:*` call shows a dialog with the **exact command + folder path**; approval calls `trust.grant()`. Trust lives in `<userData>/trusted-workspaces.json`, never in the project. |
+| No auto-run on open | opening a project runs no commands. `desktopVerifyRepair` (auto after "Repair All") is **suppressed** until the folder is trusted. |
+| Sanitized environment | `proc.sanitizedEnv()` — the child gets an explicit allowlist (`PATH`, `HOME`, `SystemRoot`, `npm_config_*`, …) only. Anything matching `TOKEN\|SECRET\|_KEY$\|PASSWORD\|CREDENTIAL\|SESSION\|AUTH` is dropped; `CI` and `NODE_OPTIONS` are blanked. The interactive shell (user-driven) keeps the real env. |
+| Timeout | every `proc:run` / `proc:spawnAllowed` has a **10-minute hard cap**; the process tree is killed on expiry (exit code `-2`). |
+| Output cap | 5 MB captured per stream, then truncated / terminated. |
+| Process-tree kill | `killTree()` — `taskkill /t` on Windows, `process.kill(-pid)` on a detached process group on Unix (SIGTERM → SIGKILL after 3 s). |
+| Cancellation | `proc:kill(id)`, `proc:killAll()`, `proc:running()`; `CSExec.stop()` in the renderer. |
+| Audit | every command (shell / run / spawn) is appended to `<userData>/command-audit.log` with timestamp, command, cwd, exit code. Viewable from the Sovereign card. |
+| Allowlist | `proc:run` / `proc:spawnAllowed` still enforce the tool allowlist; arbitrary commands only in the user-driven terminal. |
+
+### Runtime observer (`obs:*`)
+
+| Control | State |
+|---|---|
+| Isolated window | separate hidden `BrowserWindow`, **ephemeral** session partition (`observer-ephemeral`, in-memory), its own preload — the app's `window.desktop` bridge and stored credentials are never present. |
+| Third-party requests | `webRequest.onBeforeRequest` on the observer session **cancels every non-loopback request** (blocked count reported); `will-navigate` / `will-redirect` bounce anything that fails `assertAllowedUrl`. |
+| Downloads / popups / permissions | `will-download` prevented; `setWindowOpenHandler` denies; `setPermissionRequestHandler` + `setPermissionCheckHandler` deny all. |
+| Observe vs interactive mode | default **observe**: controls whose label matches the destructive/mutating pattern (`delete\|send\|pay\|submit\|publish\|deploy\|confirm\|…`), `type=submit`, and form-submit buttons are **SKIPPED, never activated**. `interactive` mode requires a confirmation dialog in main and clicks them. |
+| Action log | every activation, skip, blocked request and navigation is recorded in `runtime-trace.json` (`actionLog`). |
+
+## Parser & memory safeguards
+
+- `.sovereign/**` is excluded from every analyzer (`SELF_RE` in mockscan /
+  pipeline-parse / component inventory; explicit skip in the acorn Graph
+  upgrade). `node_modules`, `vendor`, `dist`, `build` too.
+- **Evidence redaction**: `engine.sovereign.write()` scrubs GitHub / OpenAI /
+  Anthropic / Slack / AWS tokens, JWTs, PEM keys and `key=value` secrets from
+  `execution-evidence`, `runtime-trace`, `diagnostics/*`, `known-issues`,
+  `production-readiness`, `command-audit` before writing.
+- **Atomic writes**: `workspace.writeFile`, `store.save`, `creds.saveAll` write a
+  temp file then `rename` over the target; `readTree` skips `.cs-tmp-*`.
+- **History retention**: `.sovereign/history/` keeps the last 15 snapshots;
+  `<userData>/snapshots/` keeps 25.
+- **Parser limits**: acorn skips files > 1.5 MB; js-yaml rejects files > 512 KB
+  and refuses a document with > 200 anchors/aliases or > 50 merge keys before
+  expansion; malformed files return `{ __error }`, never throw. js-yaml `load()`
+  (v4/5) has no code-execution tags.
+- **Vendored libs**: versions + licenses + the applied limits are documented in
+  `dist/vendor/README.md`.
+- **Export**: `ws:exportZip` **excludes `.sovereign/`** by default (opt in with
+  `{ includeSovereign: true }`).
+
 ## Supply chain
 
 `npm audit` is **clean (0 vulnerabilities)** as of this review:

@@ -15,6 +15,7 @@ const fsp = require('fs/promises');
 const workspace = require('./lib/workspace');
 const proc = require('./lib/proc');
 const observer = require('./lib/observer');
+const trust = require('./lib/trust');
 const git = require('./lib/git');
 const creds = require('./lib/creds');
 const zip = require('./lib/zip');
@@ -253,9 +254,10 @@ function registerIpc() {
     } catch (e) { return fail(e); }
   });
 
-  ipcMain.handle('ws:exportZip', async () => {
+  ipcMain.handle('ws:exportZip', async (_e, opts) => {
     const root = workspace.getRoot();
     if (!root) return fail('No workspace');
+    const includeSovereign = !!(opts && opts.includeSovereign);
     const r = await dialog.showSaveDialog(win, {
       title: 'Export project as ZIP',
       defaultPath: path.join(app.getPath('downloads'), workspace.name() + '.zip'),
@@ -265,7 +267,9 @@ function registerIpc() {
     try {
       const tree = await workspace.readTree();
       const entries = [];
+      let excluded = 0;
       for (const f of tree.files) {
+        if (!includeSovereign && f.path.indexOf('/.sovereign/') === 0) { excluded++; continue; }
         const name = f.path.replace(/^\//, '');
         if (f.binary || f.content == null) {
           const abs = workspace.resolveInside(f.path);
@@ -275,7 +279,7 @@ function registerIpc() {
         }
       }
       await fsp.writeFile(r.filePath, zip.build(entries));
-      return ok({ path: r.filePath, fileCount: entries.length });
+      return ok({ path: r.filePath, fileCount: entries.length, sovereignExcluded: excluded });
     } catch (e) { return fail(e); }
   });
 
@@ -301,28 +305,77 @@ function registerIpc() {
      No ARBITRARY programmatic spawn is exposed. The renderer gets:
        proc:shell         -> the OS shell only (the user then types into it)
        proc:run           -> an allowlisted project tool, one-shot, workspace-scoped
-       proc:spawnAllowed  -> same allowlist, but streamed for long jobs (install/build) */
-  ipcMain.handle('proc:shell', (_e, cwd) => {
-    try { return ok(proc.spawnShell(procEvent, typeof cwd === 'string' ? cwd : '.')); } catch (e) { return fail(e); }
+       proc:spawnAllowed  -> same allowlist, but streamed for long jobs (install/build)
+     Nothing runs in a workspace the user has not explicitly trusted. */
+
+  // Ask once per workspace; the exact command + cwd is shown before anything runs.
+  async function ensureTrusted(cmdLabel) {
+    const root = workspace.getRoot();
+    if (!root) throw new Error('No project folder is open');
+    if (trust.isTrusted(root)) return root;
+    const r = await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: 'Run project commands?',
+      message: 'CodeSovereign wants to run a command from this project.',
+      detail:
+        'Folder:  ' + root + '\n' +
+        'Command: ' + cmdLabel + '\n\n' +
+        "A project's package.json scripts run with your account's permissions. " +
+        'Only trust folders whose code you have reviewed.',
+      buttons: ['Trust this folder & run', 'Cancel'],
+      defaultId: 1, cancelId: 1, noLink: true
+    });
+    if (r.response !== 0) { const e = new Error('Command declined — folder not trusted'); e.code = 'EUNTRUSTED'; throw e; }
+    trust.grant(root);
+    rebuildMenu();
+    return root;
+  }
+
+  ipcMain.handle('proc:shell', async (_e, cwd) => {
+    try {
+      await ensureTrusted('interactive shell');
+      const r = proc.spawnShell(procEvent, typeof cwd === 'string' ? cwd : '.');
+      trust.audit({ kind: 'shell', cwd: workspace.getRoot(), pid: r.pid });
+      return ok(r);
+    } catch (e) { return fail(e); }
   });
-  ipcMain.handle('proc:spawnAllowed', (_e, opts) => {
+  ipcMain.handle('proc:spawnAllowed', async (_e, opts) => {
     try {
       const o = opts || {};
       if (typeof o.cmd !== 'string' || !Array.isArray(o.args)) return fail('cmd/args required');
-      return ok(proc.spawnAllowed({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.' }, procEvent));
+      const label = o.cmd + ' ' + o.args.map(String).join(' ');
+      await ensureTrusted(label);
+      const r = proc.spawnAllowed({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.', timeoutMs: o.timeoutMs }, procEvent);
+      trust.audit({ kind: 'spawn', cmd: label, cwd: workspace.getRoot(), pid: r.pid });
+      return ok(r);
     } catch (e) { return fail(e); }
   });
   ipcMain.handle('proc:write', (_e, id, data) => {
     if (typeof id === 'string' && typeof data === 'string') proc.write(id, data.slice(0, 100000));
   });
   ipcMain.handle('proc:kill', (_e, id) => { if (typeof id === 'string') proc.kill(id); });
+  ipcMain.handle('proc:killAll', () => { proc.killAll(); return ok(); });
+  ipcMain.handle('proc:running', () => proc.running());
   ipcMain.handle('proc:run', async (_e, opts) => {
     try {
       const o = opts || {};
       if (typeof o.cmd !== 'string' || !Array.isArray(o.args)) return fail('cmd/args required');
-      return ok(await proc.runManaged({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.' }));
+      const label = o.cmd + ' ' + o.args.map(String).join(' ');
+      await ensureTrusted(label);
+      const res = await proc.runManaged({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.', timeoutMs: o.timeoutMs });
+      trust.audit({ kind: 'run', cmd: label, cwd: workspace.getRoot(), code: res.code });
+      return ok(res);
     } catch (e) { return fail(e); }
   });
+
+  /* ---- workspace trust ---- */
+  ipcMain.handle('trust:status', () => {
+    const root = workspace.getRoot();
+    return { root, trusted: root ? trust.isTrusted(root) : false };
+  });
+  ipcMain.handle('trust:grant', () => { const r = workspace.getRoot(); if (r) { trust.grant(r); rebuildMenu(); } return ok({ trusted: true }); });
+  ipcMain.handle('trust:revoke', () => { const r = workspace.getRoot(); if (r) { trust.revoke(r); rebuildMenu(); } return ok({ trusted: false }); });
+  ipcMain.handle('trust:audit', (_e, limit) => trust.readAudit(typeof limit === 'number' ? limit : 200));
 
   /* ---- runtime observer (hidden BrowserWindow, localhost/workspace only) ---- */
   ipcMain.handle('obs:load', async (_e, target) => {
@@ -332,7 +385,20 @@ function registerIpc() {
     try { return ok(await observer.read()); } catch (e) { return fail(e); }
   });
   ipcMain.handle('obs:crawl', async (_e, opts) => {
-    try { return ok(await observer.crawl(opts || {})); } catch (e) { return fail(e); }
+    try {
+      const o = opts || {};
+      if (o.mode === 'interactive') {
+        const r = await dialog.showMessageBox(win, {
+          type: 'warning', noLink: true,
+          title: 'Interactive observation',
+          message: 'Run the observer in INTERACTIVE mode?',
+          detail: 'It will click controls that look like they submit forms, send messages, or change data. Only do this against a disposable dev environment with test data.',
+          buttons: ['Run interactive', 'Cancel'], defaultId: 1, cancelId: 1
+        });
+        if (r.response !== 0) return fail('interactive observation declined');
+      }
+      return ok(await observer.crawl({ max: o.max, mode: o.mode === 'interactive' ? 'interactive' : 'observe' }));
+    } catch (e) { return fail(e); }
   });
   ipcMain.handle('obs:screenshot', async () => {
     try { return ok({ dataUrl: await observer.screenshot() }); } catch (e) { return fail(e); }
@@ -447,6 +513,8 @@ async function runObserverSmoke() {
     <button id="real" onclick="fetch('/api').then(()=>{document.body.appendChild(document.createElement('p'))})">Load data</button>
     <a id="dead" href="#">Nowhere</a>
     <button id="boom" onclick="throw new Error('kaboom')">Break</button>
+    <button id="danger" onclick="window.__deleted=true">Delete account</button>
+    <img id="ext" src="https://evil.example.com/tracker.gif">
   </body></html>`;
   const server = http.createServer((req, res) => {
     if (req.url === '/api') { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":1}'); return; }
@@ -471,19 +539,23 @@ async function runObserverSmoke() {
     const loaded = await observer.load(base);
     console.log('[obs-smoke] loaded:', JSON.stringify(loaded));
 
-    const trace = await observer.crawl({ max: 10 });
+    const trace = await observer.crawl({ max: 10, mode: 'observe' });
     const byId = {};
     (trace.trace || []).forEach((t) => { byId[t.control.name.toLowerCase()] = t.status; });
     console.log('[obs-smoke] byStatus:', JSON.stringify(trace.byStatus));
     console.log('[obs-smoke] per-control:', JSON.stringify(byId));
     console.log('[obs-smoke] console errors captured:', (trace.consoleErrors || []).length);
     console.log('[obs-smoke] network calls seen:', (trace.network || []).length);
+    console.log('[obs-smoke] blocked requests:', JSON.stringify((trace.blockedRequests || []).map((b) => b.kind)));
+    console.log('[obs-smoke] actionLog kinds:', JSON.stringify((trace.actionLog || []).map((a) => a.kind)));
 
     const pass =
       byId['load data'] === 'REAL' &&
       byId['nowhere'] === 'MOCK' &&
       byId['break'] === 'BROKEN' &&
-      (trace.network || []).some((n) => /\/api$/.test(n.url));
+      byId['delete account'] === 'SKIPPED' &&              // destructive control not activated
+      (trace.network || []).some((n) => /\/api$/.test(n.url)) &&
+      (trace.blockedRequests || []).some((b) => b.kind === 'blocked-request');  // the external <img> was blocked
     console.log('[obs-smoke] ' + (pass ? 'PASS' : 'FAIL'));
     if (!pass) exit = 1;
   } catch (e) {

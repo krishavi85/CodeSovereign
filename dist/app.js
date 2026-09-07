@@ -2957,6 +2957,10 @@ function bindRecovery(){
   document.querySelectorAll('[data-sovfile]').forEach(function(el){
     el.onclick = function(){ openSovereignFile(el.dataset.sovfile); };
   });
+  if (window.desktop && window.desktop.trust && !window.__csTrustChecked) {
+    window.__csTrustChecked = true;
+    csRefreshTrust().then(function(){ if (S.screen === 'recovery') renderAll(); });
+  }
   // Only auto-scan on entry if no recent scan exists (fixes render loop / flicker)
   try {
     var _fresh = (S && S.lastScan && S.lastScan.at) ? (Date.now() - S.lastScan.at) : Infinity;
@@ -3632,6 +3636,23 @@ function renderSovereignMemory(){
     ? 'Real files under <span class="cs-mono">' + esc((window.CSDesktop && CSDesktop.project && CSDesktop.project.root) || 'the open folder') + '\\.sovereign\\</span>'
     : 'In-workspace files (browser mode) — export the project to keep them';
 
+  let trustRow = '';
+  if (desktop) {
+    const tr = window.__csTrust || { trusted: false };
+    trustRow = '<div style="margin-bottom:12px;padding:9px 12px;border:1px solid ' + (tr.trusted ? 'rgba(52,211,153,.3)' : 'rgba(245,158,11,.35)')
+      + ';border-radius:9px;background:' + (tr.trusted ? 'rgba(52,211,153,.06)' : 'rgba(245,158,11,.06)') + ';font-size:12px;display:flex;align-items:center;gap:10px">'
+      + '<span style="color:' + (tr.trusted ? 'var(--good)' : 'var(--warn)') + ';font-weight:600">'
+      + (tr.trusted ? '✓ Trusted folder' : '⚠ Untrusted folder') + '</span>'
+      + '<span style="color:var(--muted);flex:1">' + (tr.trusted
+          ? 'project commands (npm test / build) may run — auto-verification enabled'
+          : 'project commands are blocked until you trust this folder') + '</span>'
+      + (tr.trusted
+          ? '<button class="btn ghost" style="padding:3px 9px;font-size:11px" onclick="csTrustRevoke()">Revoke</button>'
+          : '<button class="btn" style="padding:3px 9px;font-size:11px" onclick="csTrustGrant()">Trust</button>')
+      + '<button class="btn ghost" style="padding:3px 9px;font-size:11px" onclick="csTrustAudit()">Audit log</button>'
+      + '</div>';
+  }
+
   if (!st.initialized) {
     return '<div style="font-size:13px;color:var(--muted);line-height:1.6">'
       + 'No <span class="cs-mono">.sovereign/</span> memory yet. Run the analysis to inventory this workspace’s '
@@ -3702,7 +3723,7 @@ function renderSovereignMemory(){
   return ''
     + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">' + loc
     + (st.lastAnalysisAt ? '  ·  last analysis ' + fmtTimeAgo(st.lastAnalysisAt) : '') + '</div>'
-    + reqLine + metaLine + obsRow + execRow
+    + trustRow + reqLine + metaLine + obsRow + execRow
     + '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">'
       + stat('Health', st.health, st.health>=75?'var(--good)':st.health>=50?'var(--warn)':'var(--err)')
       + stat('Components', c.components)
@@ -3751,8 +3772,11 @@ function runSovereignObserve(){
   if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
   if (!(window.CSObserve && CSObserve.available())) { toast('Open a project folder in the desktop app first', '#f59e0b'); return; }
   var url = window.prompt('Runtime URL (blank = detect / start the dev server):', '') || undefined;
-  toast('Observing the running app…', '#a78bfa');
-  Engine.Sovereign.observe(url ? { url: url } : {}).then(function(r){
+  var interactive = window.confirm('Interactive mode?\n\nOK = also click controls that submit forms / trigger actions (dev env with test data only).\nCancel = observation-only (safe: destructive controls are skipped).');
+  var opts = { mode: interactive ? 'interactive' : 'observe' };
+  if (url) opts.url = url;
+  toast('Observing the running app (' + opts.mode + ')…', '#a78bfa');
+  Engine.Sovereign.observe(opts).then(function(r){
     if (!r.ok) { toast(r.reason || 'observation failed', '#f59e0b'); return; }
     var t = r.trace;
     toast('Observed ' + t.controlsExercised + ' controls — ' + JSON.stringify(t.byStatus)
@@ -3772,6 +3796,28 @@ function sovereignSnapshot(){
   } catch (e) { toast('Snapshot failed: ' + e.message, '#ef4444'); }
   renderAll();
 }
+
+function csRefreshTrust(){
+  if (!(window.desktop && window.desktop.trust)) return Promise.resolve();
+  return window.desktop.trust.status().then(function(s){ window.__csTrust = s || { trusted:false }; });
+}
+function csTrustGrant(){
+  if (!(window.desktop && window.desktop.trust)) return;
+  window.desktop.trust.grant().then(function(){ toast('Folder trusted — project commands enabled', '#34d399'); csRefreshTrust().then(renderAll); });
+}
+function csTrustRevoke(){
+  if (!(window.desktop && window.desktop.trust)) return;
+  window.desktop.trust.revoke().then(function(){ toast('Trust revoked', '#f59e0b'); csRefreshTrust().then(renderAll); });
+}
+function csTrustAudit(){
+  if (!(window.desktop && window.desktop.trust)) return;
+  window.desktop.trust.audit(100).then(function(rows){
+    var body = (rows||[]).slice(-40).reverse().map(function(r){ return r.at + '  ' + (r.kind||'?') + '  ' + (r.cmd || r.pid || '') + (r.code!=null?'  ('+r.code+')':''); }).join('\n');
+    if (window.Engine && Engine.Sovereign) { Engine.Sovereign.write('command-audit.txt', body || '(no commands run yet)'); openSovereignFile('command-audit.txt'); }
+    else alert(body || 'no commands run yet');
+  });
+}
+window.csTrustGrant = csTrustGrant; window.csTrustRevoke = csTrustRevoke; window.csTrustAudit = csTrustAudit;
 
 function openSovereignFile(f){
   const path = (Engine.Sovereign.ROOT + '/' + String(f).replace(/^\/+/, ''));
@@ -4448,6 +4494,13 @@ function repairWorkspace(){
 // alone. On failure, offer to roll the working tree back via git.
 function desktopVerifyRepair(run){
   if (!(window.CSExec && CSExec.available())) return;
+  // Do not run project commands automatically in a folder the user hasn't trusted.
+  CSExec.trusted().then(function(ok){
+    if (!ok) { toast('Repair applied. Trust this folder (Sovereign card) to auto-verify with real test + build.', '#f59e0b'); return; }
+    _desktopVerifyRepairRun(run);
+  });
+}
+function _desktopVerifyRepairRun(run){
   toast('Verifying repair with real test + build…', '#a78bfa');
   Promise.resolve()
     .then(() => CSExec.test())

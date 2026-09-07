@@ -7,12 +7,19 @@
  * URL policy: only http(s)://localhost|127.0.0.1|[::1] and file:// under the
  * open workspace. The renderer cannot point this at an arbitrary site.
  */
-const { BrowserWindow } = require('electron');
+const { BrowserWindow, session } = require('electron');
 const path = require('path');
 const url = require('url');
 const workspace = require('./workspace');
 
 let obsWin = null;
+const OBS_PARTITION = 'observer-ephemeral';   // no `persist:` prefix -> in-memory only
+const actionLog = [];                          // everything the observer did this run
+
+// Controls whose activation could mutate data / spend money / send a message.
+// Skipped in observe mode; require confirmation in interactive mode.
+const DESTRUCTIVE = /\b(delete|remove|destroy|drop|erase|wipe|purge|deactivate|disable|revoke|cancel subscription|unsubscribe|pay|buy|purchase|checkout|order|charge|withdraw|transfer|send|submit|publish|deploy|release|confirm|approve|invite|share|archive)\b/i;
+const MUTATING_TAGS = new Set(['form']);
 
 function assertAllowedUrl(target) {
   let u;
@@ -36,6 +43,23 @@ function assertAllowedUrl(target) {
 
 function ensureWin() {
   if (obsWin && !obsWin.isDestroyed()) return obsWin;
+  const ses = session.fromPartition(OBS_PARTITION);
+  ses.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  ses.setPermissionCheckHandler(() => false);
+  ses.on('will-download', (e) => e.preventDefault());
+  // block ALL third-party requests — the observed app may only talk to loopback
+  ses.webRequest.onBeforeRequest((details, cb) => {
+    try {
+      const u = new url.URL(details.url);
+      const okHost = u.protocol === 'file:' || ['localhost', '127.0.0.1', '::1', '[::1]'].includes(u.hostname);
+      if (!okHost && !/^(devtools|about|blob|data):/.test(details.url)) {
+        actionLog.push({ t: Date.now(), kind: 'blocked-request', url: details.url.slice(0, 200) });
+        return cb({ cancel: true });
+      }
+    } catch { /* fall through */ }
+    cb({ cancel: false });
+  });
+
   obsWin = new BrowserWindow({
     show: false,
     width: 1280, height: 900,
@@ -43,16 +67,25 @@ function ensureWin() {
       preload: path.join(__dirname, '..', 'observer-preload.js'),
       // The instrumentation must wrap the PAGE's own console/fetch, so it runs
       // in the main world. Node stays off; this window only ever loads the
-      // localhost dev content the user is already running.
+      // localhost dev content the user is already running. It uses its OWN
+      // preload and an ephemeral partition — the normal window.desktop bridge
+      // and the app's stored credentials are never present here.
       contextIsolation: false,
       nodeIntegration: false,
       sandbox: false,
       backgroundThrottling: false,
-      partition: 'observer',      // isolate cookies/storage from the app
-      webSecurity: true
+      partition: OBS_PARTITION,
+      webSecurity: true,
+      images: true, webgl: false, plugins: false
     }
   });
   obsWin.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const navGuard = (e, targetUrl) => {
+    try { assertAllowedUrl(targetUrl); }
+    catch { e.preventDefault(); actionLog.push({ t: Date.now(), kind: 'blocked-navigation', url: String(targetUrl).slice(0, 200) }); }
+  };
+  obsWin.webContents.on('will-navigate', navGuard);
+  obsWin.webContents.on('will-redirect', navGuard);
   obsWin.on('closed', () => { obsWin = null; });
   return obsWin;
 }
@@ -61,10 +94,12 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function load(target) {
   assertAllowedUrl(target);
+  actionLog.length = 0;
+  actionLog.push({ t: Date.now(), kind: 'load', url: target });
   const w = ensureWin();
   await w.loadURL(target);
   await wait(600); // let the app boot
-  return { ok: true, url: w.webContents.getURL() };
+  return { ok: true, url: w.webContents.getURL(), blockedDuringLoad: actionLog.filter((a) => /^blocked-/.test(a.kind)).length };
 }
 
 async function read() {
@@ -87,9 +122,13 @@ async function screenshot() {
 }
 
 // Enumerate interactive controls and, for each, click it and record what changed.
+// mode: 'observe' (default) never activates a destructive-looking control or a
+// form; 'interactive' does (the renderer must have confirmed with the user).
 async function crawl(opts = {}) {
   const w = ensureWin();
   const max = Math.min(opts.max || 40, 120);
+  const mode = opts.mode === 'interactive' ? 'interactive' : 'observe';
+  actionLog.push({ t: Date.now(), kind: 'crawl-start', mode, url: w.webContents.getURL() });
 
   const controls = await w.webContents.executeJavaScript(`(() => {
     const sel = 'button, a[href], [role="button"], input[type="submit"], input[type="button"], summary, [data-action], [onclick]';
@@ -98,11 +137,14 @@ async function crawl(opts = {}) {
       el.setAttribute('data-cs-obs', String(i));
       const r = el.getBoundingClientRect();
       const cs = getComputedStyle(el);
+      const form = el.form || el.closest('form');
       return {
         i,
         tag: el.tagName.toLowerCase(),
+        type: (el.getAttribute('type') || '').toLowerCase(),
         name: (el.getAttribute('aria-label') || el.textContent || el.value || el.id || '').trim().slice(0, 60),
         href: el.getAttribute('href') || null,
+        inForm: !!form,
         visible: r.width > 0 && r.height > 0 && cs.visibility !== 'hidden' && cs.display !== 'none',
         disabled: !!(el.disabled || el.getAttribute('aria-disabled') === 'true'),
         pointerEvents: cs.pointerEvents
@@ -118,6 +160,13 @@ async function crawl(opts = {}) {
       trace.push({ control: c, status: c.disabled ? 'DISABLED' : 'HIDDEN', effects: {} });
       continue;
     }
+    const risky = DESTRUCTIVE.test(c.name) || c.type === 'submit' || (c.inForm && c.tag === 'button' && c.type !== 'button');
+    if (risky && mode === 'observe') {
+      actionLog.push({ t: Date.now(), kind: 'skipped-destructive', control: c.name });
+      trace.push({ control: c, status: 'SKIPPED', reason: 'destructive/mutating — not activated in observe mode', effects: {} });
+      continue;
+    }
+    actionLog.push({ t: Date.now(), kind: 'activate', control: c.name, risky });
     await reset();
     const before = await read();
     let threw = null;
@@ -155,14 +204,19 @@ async function crawl(opts = {}) {
   }
 
   const summary = await read();
+  actionLog.push({ t: Date.now(), kind: 'crawl-end' });
   return {
     at: Date.now(),
+    mode,
     url: summary.url, title: summary.title,
     controlsFound: controls.length,
-    controlsExercised: trace.filter((t) => t.status !== 'HIDDEN' && t.status !== 'DISABLED').length,
+    controlsExercised: trace.filter((t) => t.status !== 'HIDDEN' && t.status !== 'DISABLED' && t.status !== 'SKIPPED').length,
+    controlsSkipped: trace.filter((t) => t.status === 'SKIPPED').length,
     byStatus: trace.reduce((m, t) => { m[t.status] = (m[t.status] || 0) + 1; return m; }, {}),
     consoleErrors: allErrors.slice(0, 50),
     network: allNetwork.slice(0, 80),
+    blockedRequests: actionLog.filter((a) => a.kind === 'blocked-request' || a.kind === 'blocked-navigation'),
+    actionLog: actionLog.slice(),
     trace
   };
 }
@@ -172,4 +226,4 @@ function stop() {
   obsWin = null;
 }
 
-module.exports = { load, read, reset, screenshot, crawl, stop, assertAllowedUrl };
+module.exports = { load, read, reset, screenshot, crawl, stop, assertAllowedUrl, DESTRUCTIVE };

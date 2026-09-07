@@ -30,6 +30,12 @@
   function available() {
     return !!(FS && FS.__hasWorkspace && FS.__hasWorkspace());
   }
+  // resolves true only if the open folder has been explicitly trusted — used to
+  // suppress AUTOMATIC runs (repair verification). Explicit button clicks still
+  // go through and will surface the trust prompt in main.
+  function trusted() {
+    return D.trust ? D.trust.status().then(function (s) { return !!(s && s.trusted); }) : Promise.resolve(false);
+  }
 
   function pkg() {
     try {
@@ -217,7 +223,7 @@
   function stop() { if (running) running.kill(); }
 
   window.CSExec = {
-    available: available, detect: detect, run: run, adapter: adapter,
+    available: available, trusted: trusted, detect: detect, run: run, adapter: adapter,
     install: install, test: test, build: build, lint: lint, typecheck: typecheck, package: pkg2,
     checkpoint: checkpoint, restore: restore, stop: stop
   };

@@ -12,6 +12,7 @@ out/
 # OS / editor
 .DS_Store
 Thumbs.db
+*.cs-tmp-*
 *.swp
 .vscode/
 .idea/

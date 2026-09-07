@@ -49,8 +49,17 @@ contextBridge.exposeInMainWorld('desktop', {
     spawnAllowed: (opts) => invoke('proc:spawnAllowed', opts),
     write: (id, data) => invoke('proc:write', id, data),
     kill: (id) => invoke('proc:kill', id),
+    killAll: () => invoke('proc:killAll'),
+    running: () => invoke('proc:running'),
     run: (opts) => invoke('proc:run', opts),
     onData: (cb) => subscribe('proc:data', cb)
+  },
+
+  trust: {
+    status: () => invoke('trust:status'),
+    grant: () => invoke('trust:grant'),
+    revoke: () => invoke('trust:revoke'),
+    audit: (limit) => invoke('trust:audit', limit)
   },
 
   git: {
