@@ -242,6 +242,13 @@ function driverSource() {
 async function run() {
   let exitCode = 1;
   let tmp = null;
+  // Watchdog: never let a hung dev server / crawl wedge the CI job.
+  const watchdog = setTimeout(() => {
+    console.error('[acceptance] FAIL — watchdog: run exceeded 20 minutes');
+    try { observer.stop(); proc.killAll(); } catch (_) {}
+    app.exit(1);
+  }, 20 * 60 * 1000);
+  watchdog.unref && watchdog.unref();
   try {
     tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'cs-accept-'));
     const wsDir = path.join(tmp, 'taskboard');
@@ -371,6 +378,7 @@ async function run() {
     console.error('[acceptance] harness error:', (e && e.stack) || e);
     exitCode = 1;
   } finally {
+    clearTimeout(watchdog);
     try { observer.stop(); } catch (_) {}
     try { proc.killAll(); } catch (_) {}
     if (tmp) { try { await fsp.rm(tmp, { recursive: true, force: true }); } catch (_) {} }
