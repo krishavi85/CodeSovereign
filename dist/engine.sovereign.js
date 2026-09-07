@@ -54,6 +54,7 @@
     'pipeline-graph.json':       'Normalized pipeline job graph (nodes + needs edges)',
     'pipeline-gaps.json':        'Missing trigger / unsafe deploy / migration race / secret exposure / ...',
     'execution-evidence.json':   'Real npm test / build / lint / typecheck results (desktop)',
+    'adapters.json':             'Detected technology adapters + local vs remote build capability',
     // mockups (spec 6)
     'simulation-report.json':    'Mock / stub / fake-data / unwired-control findings',
     'production-readiness.md':   'REAL / PARTIAL / MOCK / BROKEN / UNREACHABLE per interaction',
@@ -327,6 +328,7 @@
     var components = componentInventory();
     var interactions = interactionInventory();
     var pipelines = pipelineInventory();
+    var adapters = safe(function () { return window.Adapters ? window.Adapters.detect() : []; }, []);
 
     var errs = validator.filter(function (i) { return i.severity === 'error'; }).length;
     var warns = validator.filter(function (i) { return i.severity === 'warning'; }).length;
@@ -372,6 +374,14 @@
     write('components.json', components);
     write('interaction-inventory.json', interactions);
     write('pipeline-inventory.json', pipelines);
+    write('adapters.json', {
+      generatedAt: Date.now(),
+      host: (window.desktop && window.desktop.isDesktop) ? 'desktop' : 'browser',
+      detected: adapters,
+      primary: adapters[0] ? adapters[0].id : null,
+      needsRemoteBuild: adapters.filter(function (a) { return !a.canBuildLocally; }).map(function (a) { return { id: a.id, target: a.remoteBuildTarget }; }),
+      remoteBuildContract: (window.Adapters && window.Adapters.remoteBuildContract) || null
+    });
     if (pipelines.parsed) {
       write('pipeline-gaps.json', { generatedAt: Date.now(), gaps: pipelines.gaps || [], byCategory: (pipelines.gaps || []).reduce(function (m, g) { m[g.kind] = (m[g.kind] || 0) + 1; return m; }, {}) });
       // normalized graph (JSON; the specs call it pipeline-graph.yaml — we keep JSON for reliable round-trip)
@@ -502,6 +512,8 @@
       '| Mock / simulation signals | ' + mockCount + ' |\n' +
       '| Interactive controls | ' + interactions.total + ' |\n' +
       '| Pipelines discovered | ' + pipelines.count + ' (' + ((pipelines.parsed && pipelines.parsed.graph.nodes.length) || 0) + ' jobs, ' + (pipelines.gaps || []).length + ' gaps) |\n' +
+      '| Technology adapters | ' + (adapters.map(function (a) { return a.id; }).join(', ') || 'none') +
+        (adapters.some(function (a) { return !a.canBuildLocally; }) ? ' (⚠ some need a remote build worker)' : '') + ' |\n' +
       '| External systems | ' + (state.externals.length ? state.externals.join(', ') : 'none detected') + ' |\n' +
       '| Graph fingerprint | `' + fp + '`' + (drift ? ' ⚠️ drift' : '') + ' |\n\n' +
       'Diagrams: `.sovereign/architecture.md` + `.sovereign/diagrams/`. Full evidence in `.sovereign/*.json`.\n');

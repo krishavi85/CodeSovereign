@@ -144,19 +144,39 @@
     return run(pm, args, { label: pm + ' ' + args.join(' ') });
   }
 
-  function install() { return npmRun(has('/package-lock.json') ? 'ci' : 'install'); }
+  function adapter() {
+    try { var d = window.Engine && window.Engine.Adapters && window.Engine.Adapters.detect(); return (d && d[0]) || null; }
+    catch (_) { return null; }
+  }
+  // adapter command for a step, else null
+  function adapterCmd(step) {
+    var a = adapter();
+    return a && a.commands && a.commands[step] ? a.commands[step] : null;
+  }
+  function runCmdString(cmd, label) {
+    var parts = cmd.split(/\s+/);
+    return run(parts[0], parts.slice(1), { label: label || cmd });
+  }
+
+  function install() {
+    var c = adapterCmd('install');
+    return c ? runCmdString(c, 'install (' + adapter().id + ')') : npmRun(has('/package-lock.json') ? 'ci' : 'install');
+  }
+  function pkg2() {
+    var c = adapterCmd('package');
+    if (c) return runCmdString(c, 'package (' + adapter().id + ')');
+    return Promise.resolve({ code: -3, output: 'no adapter package command', skipped: true });
+  }
   function test() {
     var d = detect();
     if (d.test) return npmRun(d.test === 'test' ? 'test' : d.test);
-    if (d.runtimes.indexOf('rust') >= 0) return run('cargo', ['test'], { label: 'cargo test' });
-    if (d.runtimes.indexOf('go') >= 0) return run('go', ['test', './...'], { label: 'go test ./...' });
+    var c = adapterCmd('test'); if (c) return runCmdString(c, 'test (' + adapter().id + ')');
     return Promise.resolve({ code: -3, output: 'no test script found', ms: 0, skipped: true });
   }
   function build() {
     var d = detect();
     if (d.build) return npmRun(d.build);
-    if (d.runtimes.indexOf('rust') >= 0) return run('cargo', ['build'], { label: 'cargo build' });
-    if (d.runtimes.indexOf('go') >= 0) return run('go', ['build', './...'], { label: 'go build ./...' });
+    var c = adapterCmd('build'); if (c) return runCmdString(c, 'build (' + adapter().id + ')');
     return Promise.resolve({ code: -3, output: 'no build script found', ms: 0, skipped: true });
   }
   function lint() {
@@ -197,8 +217,8 @@
   function stop() { if (running) running.kill(); }
 
   window.CSExec = {
-    available: available, detect: detect, run: run,
-    install: install, test: test, build: build, lint: lint, typecheck: typecheck,
+    available: available, detect: detect, run: run, adapter: adapter,
+    install: install, test: test, build: build, lint: lint, typecheck: typecheck, package: pkg2,
     checkpoint: checkpoint, restore: restore, stop: stop
   };
   console.info('[desktop-exec] real command execution ready — window.CSExec');
