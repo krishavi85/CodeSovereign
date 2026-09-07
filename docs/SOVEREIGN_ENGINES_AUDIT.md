@@ -144,23 +144,51 @@ runtime observation, AST analysis, diagram generation, framework repair
 adapters, or the Figma/screenshot connectors — those remain on the roadmap
 below.
 
-## Roadmap (priority order)
+## Roadmap — M2 (branch `desktop/m2-execution`, one commit each)
 
-1. **Real execution loop** — wire the Recovery repair loop to Electron
-   `proc.run('npm', ['test'])` / `['run','build']` and real `git` worktrees, so
-   "verified" means the project actually built and its tests passed.
-2. **AST analyzer** — swap the regex graph for a real parser (acorn/es-module-lexer
-   for JS/TS; framework-aware route/handler extraction). Feeds specs 2 & 5.
-3. **Runtime observer** — a hidden Electron `BrowserWindow` (or Playwright) that
-   loads the project's dev server, crawls interactive controls, records
-   console/network/state → interaction inventory (specs 5, 6, 7).
-4. **Diagram generation** — emit Mermaid/DOT for system/component/sequence/
-   data-flow from the connection graph; regenerate on change → drift detection.
-5. **Simulation → production** — the full mock-signal table + intent-inference +
-   vertical-slice generator (spec 6).
-6. **Requirement intelligence depth** — adaptive question engine, domain packs,
-   weighted stack scoring, contradiction rules (spec 1).
-7. **Pipeline discovery** — parse real `.github/workflows` / Dockerfile /
-   Terraform / migrations into the pipeline graph (spec 4).
-8. **Technology adapters + packs** — formal `TechnologyAdapter` interface,
-   opt-in SDK packs, remote build workers (spec 3).
+1. ✅ **Real execution loop** — `window.CSExec` + `Engine.Sovereign.runEvidence()`
+   run the project's real `npm test` / `build` / `lint` / `typecheck` through the
+   Electron proc bridge; `.sovereign/execution-evidence.json` with pass/fail
+   gates; "Repair All" verifies with real test+build in desktop mode.
+2. ✅ **AST analyzer** — `Engine.AST` (vendored acorn + acorn-loose) upgrades
+   `Graph.build()` for `.js/.mjs/.cjs`: dynamic `import()`, `export * from`,
+   `export {x} from`, nested route calls. Regex fallback for `.tsx`/`.jsx`.
+3. ✅ **Runtime observer** — a hidden `BrowserWindow` (localhost/workspace only)
+   drives the running app, wraps its console/fetch/XHR/errors/history, crawls
+   every control and classifies it REAL / MOCK / BROKEN / UNREACHABLE by observed
+   effect → `.sovereign/runtime-trace.json`, folded into the interaction inventory.
+4. ✅ **Diagram generation + drift** — `.sovereign/diagrams/{system-context,
+   component,dataflow}.mmd` regenerated from the graph every analysis, embedded
+   in `architecture.md`; an order-independent graph fingerprint drives
+   `driftDetected`.
+5. ✅ **Simulation detection** — `Engine.MockScan` (~20-rule signal table) +
+   intent inference (label + convention → expected behaviour + confidence) +
+   the REAL/PARTIAL/MOCK/BROKEN/UNREACHABLE/UNKNOWN status per control;
+   `production-readiness.md` is the interaction traceability matrix. *(Detection
+   + specification; auto-generating the production code per MOCK item stays
+   agent/human-driven with the matrix as the worklist.)*
+6. ✅ **Requirements depth** — `Engine.Requirements`: 13 domain packs,
+   `detectArchetypes()`, `contradictions()` (the feasibility table + resolutions),
+   `classify()` (Mandatory/…/Excluded), the weighted 12-factor `scoreStack()`,
+   progressive `questions()`. `Engine.Sovereign.requirements()` writes
+   `requirements.json` + a derived `product-brief.md` checklist + `risk-register.json`.
+7. ✅ **Pipeline parsing** — `Engine.PipelineParse` (vendored js-yaml) parses
+   `.github/workflows` / GitLab CI / Dockerfile / compose / Terraform into a
+   normalized job graph + the gap table (missing trigger, unsafe deploy,
+   secret exposure, missing healthcheck, migration race, …).
+8. ✅ **Technology adapters** — the `TechnologyAdapter` interface + 11 local
+   adapters (web/node/electron/tauri/ios/android/python/rust/go/static) wired to
+   the real exec layer; host-aware `canBuildLocally()`; the documented
+   remote-build worker contract. *(SDK packs + an actual remote worker are
+   infrastructure beyond a client session.)*
+
+## Still not built (smaller, lower priority)
+
+- Figma / screenshot / video **input connectors** for Mockup-to-Production.
+- **Framework-specific repair adapters** (the repair engine's patches are still
+  generic file ops, not React/Vue/Svelte-aware).
+- **Sequence diagrams** per route (only system-context / component / data-flow so far).
+- **Auto-generation** of the production vertical slice for each MOCK control
+  (deliberately left to an agent/human with the traceability matrix as input).
+- The **SDK technology packs** (download Android SDK, Xcode integration) and a
+  **running remote build worker** (only the interface + contract exist).
