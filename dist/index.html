@@ -199,5 +199,11 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="app.actions.js"></script>
 <script src="app.oauth.js"></script>
 <script src="app.js"></script>
+
+<!-- Desktop layer: no-ops in a plain browser, wires real disk/proc/keychain in Electron -->
+<script src="desktop/desktop-fs.js"></script>
+<script src="desktop/desktop-terminal.js"></script>
+<script src="desktop/desktop-git.js"></script>
+<script src="desktop/desktop-app.js"></script>
 </body>
 </html>

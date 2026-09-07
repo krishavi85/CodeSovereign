@@ -1,27 +1,45 @@
 # CodeSovereign — AI App Factory
 
-A fully client-side "AI app factory" workspace: describe an app, and the built-in
-engine plans, scaffolds, builds, validates, repairs, packages and documents it —
-all in the browser. State persists to IndexedDB (with a localStorage fallback);
-Supabase sync is optional.
+An "AI app factory" workspace: describe an app, and the built-in engine plans,
+scaffolds, builds, validates, repairs, packages and documents it. Runs two ways:
 
-## Run locally
+- **Desktop app** (primary) — Electron, real folders on disk, real command
+  execution, OS-keychain credentials. See [`electron/README.md`](electron/README.md).
+- **Browser** (secondary) — the same UI as a static site; files live in
+  IndexedDB, Supabase sync is optional.
+
+## Run — desktop
+
+```bash
+npm install
+npm start            # launch the desktop app
+npm run dist:win     # build a Windows installer -> release/
+```
+
+Milestone 1 is in place: install on Windows, create or open a real local
+project, generate / edit / preview files, run commands in a real terminal,
+validate, save straight to disk, and reopen later. Details and roadmap in
+[`electron/README.md`](electron/README.md).
+
+## Run — browser
 
 Any static file server pointed at [`dist/`](dist/) works:
 
 ```bash
-npx serve dist
+npm run web          # or: npx serve dist
 ```
 
-Then open the printed URL. There is no build step — `dist/` is the deployable
-artifact as-is. (`.claude/launch.json` defines a `codesovereign-dist` preview
-server on port 4173.)
+There is no build step for the browser build — `dist/` is the deployable
+artifact as-is. The `dist/desktop/` scripts are inert without Electron.
 
 ## Layout
 
 | Path | What it is |
 |------|------------|
-| `dist/` | The application. `index.html` loads the engine + UI modules in order. |
+| `electron/` | Desktop shell: `main.js`, secure `preload.js`, native menu, and `lib/` (workspace fs, process exec, git, keychain, snapshots, zip). |
+| `dist/` | The renderer / browser app. `index.html` loads the engine + UI modules in order. |
+| `dist/desktop/` | Renderer-side desktop integration (disk-backed FS, real terminal, real git panel). No-ops in a browser. |
+| `package.json` | Electron app manifest + `electron-builder` config. |
 | `dist/oauth-callback.html` | Standalone OAuth redirect handler (used by the OAuth screen). |
 | `dist/_init_marketplace.sql`, `dist/_init_phase8.sql` | Supabase schema for the optional marketplace / workspaces / ratings sync. |
 | `CodeSovereign.dc.html` | Original Claude Design canvas mock-up (design reference only). |
