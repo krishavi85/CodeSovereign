@@ -26,10 +26,11 @@ const { applyMenu } = require('./menu');
 const DEV = process.argv.includes('--dev');
 const SMOKE = process.argv.includes('--smoke');
 const SMOKE_OBSERVER = process.argv.includes('--smoke-observer');
+const ACCEPTANCE = process.argv.includes('--acceptance');
 const RENDERER = path.join(__dirname, '..', 'dist', 'index.html');
 
 // The headless checks run on CI runners with no GPU / no desktop session.
-if (SMOKE || SMOKE_OBSERVER) {
+if (SMOKE || SMOKE_OBSERVER || ACCEPTANCE) {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('in-process-gpu');
@@ -162,7 +163,10 @@ function sendMenu(action, payload) {
   if (win && !win.isDestroyed()) win.webContents.send('menu:action', { action, payload });
 }
 function procEvent(evt) {
-  if (win && !win.isDestroyed()) win.webContents.send('proc:data', evt);
+  // Normally there is exactly one window; during the --acceptance run the harness
+  // owns its own window instead of `win`, so broadcast to whatever is open.
+  if (win && !win.isDestroyed()) { win.webContents.send('proc:data', evt); return; }
+  BrowserWindow.getAllWindows().forEach((w) => { if (!w.isDestroyed()) w.webContents.send('proc:data', evt); });
 }
 
 /* ------------------------------------------------------------ ipc: handlers */
@@ -490,6 +494,7 @@ if (!app.requestSingleInstanceLock()) {
     rebuildMenu();
 
     if (SMOKE_OBSERVER) { runObserverSmoke(); return; }
+    if (ACCEPTANCE) { require('./acceptance').run(); return; }
 
     createWindow();
 
