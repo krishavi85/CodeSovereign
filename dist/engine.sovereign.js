@@ -63,7 +63,13 @@
     'runtime-trace.json':        'Observed console / network / navigation + per-control event->effect (desktop)',
     'repairs/repair-ledger.md':  'Failed contract, root cause, patch, tests, rollback per repair',
     // rollups
-    'analysis-summary.md':       'The latest full analysis in one readable page'
+    'analysis-summary.md':       'The latest full analysis in one readable page',
+    // P0 pipeline (spec §55/§56/§68)
+    'product-contract.json':     'Requirements with machine-checkable acceptance criteria',
+    'evidence-ledger.json':      'Every claim -> evidence -> confidence, with assertion counts',
+    'definition-of-done.json':   'The DoD gate: 8 criteria computed from the evidence',
+    'release-certificate.md':    'Cross-gate SOVEREIGN VERIFIED certificate',
+    'orchestrator-run.json':     'Last GodMode pipeline run (tasks, generators, DoD before/after)'
   };
 
   function rel(p) { return ROOT + '/' + String(p).replace(/^\/+/, ''); }
@@ -569,6 +575,12 @@
       if (pj) reqCtx = { prompt: pj.prompt || '', offline: pj.constraints && pj.constraints.offline, archetypes: pj.archetypes };
     } catch (_) {}
     safe(function () { requirements(reqCtx); });
+
+    // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
+    if (window.Engine.Contract && window.Engine.Contract.load()) {
+      safe(function () { window.Engine.Ledger && window.Engine.Ledger.build(); });
+      safe(function () { window.Engine.DoD && window.Engine.DoD.evaluate(); });
+    }
 
     return {
       ok: true,

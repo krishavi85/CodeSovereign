@@ -2134,9 +2134,14 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
         refs.forEach(r => {
           const m = r.match(/(?:src|href)\s*=\s*"([^"]+)"/);
           if (!m) return;
-          const url = m[1];
-          if (url.startsWith('http') || url.startsWith('data:') || url.startsWith('#') || url.startsWith('mailto:')) return;
-          if (!FS.exists(url)) issues.push({ severity:'warning', faultClass:'html.ref', file:p, message:'Broken reference: ' + url });
+          const url = (m[1] || '').split(/[?#]/)[0];
+          if (!url || url.startsWith('http') || url.startsWith('data:') || url.startsWith('#') || url.startsWith('mailto:')) return;
+          // resolve relative to the referring file's directory
+          const dir = p.slice(0, p.lastIndexOf('/'));
+          let abs = url.startsWith('/') ? url : (dir + '/' + url.replace(/^\.\//, ''));
+          let prev; do { prev = abs; abs = abs.replace(/\/\.\//g, '/').replace(/\/[^/]+\/\.\.\//g, '/'); } while (abs !== prev);
+          abs = abs.replace(/\/{2,}/g, '/');
+          if (!FS.exists(url) && !FS.exists(abs)) issues.push({ severity:'warning', faultClass:'html.ref', file:p, message:'Broken reference: ' + url });
         });
       });
       return issues;

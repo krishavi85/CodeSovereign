@@ -32,9 +32,13 @@ offline, evidence-based verification substrate**.
 3. GodMode Orchestrator — one closed loop: plan → implement → run → observe → repair → re-verify
 4. Definition of Done — block "complete" when code exists but runtime behaviour is absent
 
-Of these, **#2 is ~60% built**; **#1, #3, #4 are the real gap.** The uniqueness play is
-to finish the loop around the proof engine — **not** to chase the 68 framework /
-platform features.
+All four now exist as a first vertical slice — `dist/engine.{contract,ledger,dod,orchestrator}.js`,
+proven end-to-end by the acceptance run (`docs/ACCEPTANCE.md` §8): the DoD gate
+refuses a fixture with planted MOCK/BROKEN controls, the orchestrator generates
+the real slices, and the gate flips to **SOVEREIGN VERIFIED**. What remains is
+breadth — richer generators, an LLM-driven front end, and P1–P3 below. The
+uniqueness play stays the same: deepen the loop around the proof engine, **not**
+chase the 68 framework / platform features.
 
 ---
 
@@ -132,9 +136,9 @@ platform features.
 | 51 | Code-quality governance (max fn size / complexity / no circular / no dead code / no console / no TODO) | 🟨 | Validator finds some; not configurable policy, not a gate. |
 | 52 | License intelligence (deps + models + fonts + assets, conflict with distribution model) | ⬜ | Vendored libs documented manually. |
 | 53 | Existing-app reverse engineering (what is it / how complete / shippable?) | ✅ | This is essentially what `Engine.Sovereign.analyze()` + observe + evidence *is*, for an imported repo. |
-| 54 | Completion auditor (evidence-backed per-dimension %) | 🟧 | `engine-universal.js CompletionScorer` produces a weighted score from the *plan*, not from evidence. Needs to read `.sovereign/*` instead. |
-| 55 | Evidence ledger (CLAIM → EVIDENCE → CONFIDENCE, per claim) | 🟨 | `.sovereign/execution-evidence.json` + `production-readiness.md` + `known-issues.md` + `changes.md` are evidence — but not indexed as **claims with confidence and assertion counts**. |
-| 56 | Definition of Done engine | 🟨 | production-readiness matrix + execution gates are the raw material; no single DoD object that blocks. |
+| 54 | Completion auditor (evidence-backed per-dimension %) | 🟨 | The evidence ledger's per-category pass/fail is the substrate now; a per-dimension % roll-up still reads `engine-universal.js CompletionScorer` (plan-based). |
+| 55 | Evidence ledger (CLAIM → EVIDENCE → CONFIDENCE, per claim) | ✅ | `dist/engine.ledger.js` → `.sovereign/evidence-ledger.json` — every requirement's claim with its evidence rows, assertion count, failure count and confidence. |
+| 56 | Definition of Done engine | ✅ | `dist/engine.dod.js` → `.sovereign/definition-of-done.json` (8 criteria that block) + `release-certificate.md`. |
 | 57 | Sovereign memory (arch decisions / user decisions / rejected approaches / conventions / design language / security rules) | 🟨 | `.sovereign/decision-state.json` + `project.json` + `changes.md` + `assumptions.md`. No ADR ledger, no "rejected approaches", no conventions capture. |
 | 58 | Decision ledger (ADR-style) | ⬜ | `decisions.md` is referenced by the build-flow doc; not produced. |
 
@@ -159,8 +163,8 @@ platform features.
 |---|---|---|
 | 69 | Graduated control levels (Assist / Build / Engineer / Autopilot / GodMode) | ⬜ |
 | 70 | GodMode command (compact BUILD/TARGET/CONSTRAINTS/MODE declaration) | ⬜ |
-| 71 | The GodMode pipeline (one closed loop intent→…→SOVEREIGN VERIFIED) | 🟧 the *stages* exist as separate screens/engines; they are not connected into one loop |
-| 72 | The defining difference (verified outcomes, not files) | 🟨 true for **imported/existing** projects; not yet for **generated** ones |
+| 71 | The GodMode pipeline (one closed loop intent→…→SOVEREIGN VERIFIED) | 🟨 the P0 slice (`engine.orchestrator.js`) closes the loop for a task DAG with generators; the 20-stage `engine-universal.js` front end still feeds it only a plan |
+| 72 | The defining difference (verified outcomes, not files) | 🟨 now demonstrated on **generated** code too (acceptance §8), for template/LLM-task slices; not yet for a full from-scratch product |
 
 ---
 
@@ -195,35 +199,43 @@ platform features.
 Aligned to the blueprint's own P0→P3. Each builds on the proof substrate that
 already exists; none requires new frameworks.
 
-### P0 — close the loop around the proof engine
+### P0 — close the loop around the proof engine  ✅ built · proven by `docs/ACCEPTANCE.md` §8
 
-1. **Product Contract + Requirement DAG** (`.sovereign/product-contract.json`)
-   Merge `engine-universal.js RequirementsEngine` + `engine.requirements.js` into
-   one artefact: every requirement gets `id`, `statement`, `acceptanceCriteria[]`
-   (machine-checkable), `dependsOn[]`, `status`. Replace the keyword normalizer
-   with an LLM pass when a provider is configured; keep rules as the offline
-   fallback.
+1. ✅ **Product Contract** — `dist/engine.contract.js` → `.sovereign/product-contract.json`.
+   Requirements with machine-checkable `acceptanceCriteria` (execution gate,
+   control-observed-REAL, no-mock, file-exists, CI-runs-test+build). Rule-derived
+   offline; `Engine.LLM` enrichment when a provider is configured.
 
-2. **Evidence Ledger** (`.sovereign/evidence-ledger.json`)
-   Index every claim: `{claim, requirementId, evidence:[{kind, ref, result}],
-   assertions, confidence: VERIFIED|PARTIAL|UNVERIFIED}`. Populate it from what
-   already exists — `execution-evidence.json`, `runtime-trace.json`,
-   `interaction-inventory.json`, test output. This is the single highest-leverage
-   piece and it's mostly wiring.
+2. ✅ **Evidence Ledger** — `dist/engine.ledger.js` → `.sovereign/evidence-ledger.json`.
+   Every requirement → `{claim, evidence:[{kind, ref, result}], assertions,
+   failures, confidence}`, checked against the existing `.sovereign/` evidence.
+   A requirement blocks DONE only when **demonstrably failing**; merely-unproven
+   criteria are coverage gaps, not failures.
 
-3. **Definition of Done gate** (`.sovereign/definition-of-done.json`)
-   One object, one boolean per the blueprint's DoD list (implementation +
-   dependencies connected + build + tests + runtime action + no fake impl +
-   security + acceptance criteria). Blocks "complete". The acceptance harness
-   (`electron/acceptance.js`) already computes a 9-criterion gate — generalise it
-   from the fixture to any open project.
+3. ✅ **Definition-of-Done gate** — `dist/engine.dod.js` → `.sovereign/definition-of-done.json`
+   (8 criteria) + `release-certificate.md` (SOVEREIGN VERIFIED). Judges "no fake
+   implementation" from what runtime observation actually *exercised*, not from
+   static guesses. Works on any open project.
 
-4. **GodMode Orchestrator** (`electron/lib/orchestrator.js`)
-   Give `engine-universal.js TaskGraph` an executor: for each ready task, call a
-   generator (LLM or template) scoped to that task's slice, write files, then run
-   the loop already built — `analyze → runEvidence → observe → Recovery.run →
-   re-verify` — against the DoD gate; repeat until DoD passes or a real blocker is
-   proven. This turns 12 disconnected screens into one closed pipeline (§71).
+4. ✅ **GodMode Orchestrator** — `dist/engine.orchestrator.js`. Executes a task
+   DAG: per task, run a generator (built-in template, or `Engine.LLM` prompt),
+   write the slice, then loop `analyze → runEvidence → observe → Recovery →
+   re-verify` until the task's target is met. The acceptance run proves it turns
+   the fixture's 3 planted MOCK/BROKEN controls into REAL ones and flips the DoD
+   gate red → green.
+
+Fixes shipped alongside so the loop is trustworthy: the static validator and the
+recovery graph now resolve HTML `src`/`href` and relative import specifiers
+relative to the referring file (was flagging every co-located `app.js`/`app.css`
+as a broken ref, which recovery then "repaired" into breakage); the runtime
+observer polls for a settled effect and double-resets between controls so an
+effect is attributed to the control that caused it; `observer-preload`
+re-attaches its MutationObserver once `<body>` exists.
+
+**Still open in P0:** the orchestrator's `Engine.Universal.TaskGraph` fallback
+tasks have no generators (only templates + LLM prompts do); the rule-based
+normalizer/classifier is unchanged; the contract's LLM path is untested against a
+live provider.
 
 ### P1 — make the verdicts binding
 

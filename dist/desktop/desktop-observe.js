@@ -89,7 +89,15 @@
     if (!available()) return Promise.resolve({ ok: false, reason: 'open a project folder in the desktop app first' });
     return ensureServer(opts.url).then(function (srv) {
       try { window.toast && window.toast('Observing ' + srv.url + ' …', '#22d3ee'); } catch (_) {}
-      return D.observer.crawl({ max: opts.max || 40, mode: opts.mode || 'observe' }).then(function (res) {
+      // Let a freshly-started server warm up: reload once and settle so the
+      // first API calls a crawled control makes resolve inside the observer's
+      // per-control window (a cold `node` process' first response can be slow).
+      var settle = srv.started
+        ? D.observer.load(srv.url).then(function () { return new Promise(function (r) { setTimeout(r, 2500); }); })
+        : Promise.resolve();
+      return settle.then(function () {
+        return D.observer.crawl({ max: opts.max || 40, mode: opts.mode || 'observe' });
+      }).then(function (res) {
         if (res && res.ok === false) throw new Error(res.error || 'crawl failed');
         var trace = res;
         trace.serverUrl = srv.url;

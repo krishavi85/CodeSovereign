@@ -167,6 +167,11 @@ async function crawl(opts = {}) {
       continue;
     }
     actionLog.push({ t: Date.now(), kind: 'activate', control: c.name, risky });
+    // Let the previous control's in-flight async (a pending fetch, a debounced
+    // render) drain and be discarded before this control's window opens, so an
+    // effect is attributed to the control that actually caused it.
+    await reset();
+    await wait(350);
     await reset();
     const before = await read();
     let threw = null;
@@ -177,11 +182,22 @@ async function crawl(opts = {}) {
         try { el.click(); return 'clicked'; } catch (e) { return 'throw:' + e.message; }
       })()`, true);
     } catch (e) { threw = String(e.message); }
-    await wait(400);
-    const after = await read();
 
     // A change from ".../x" to ".../x#" (bare hash) is a dead link, not navigation.
     const stripBareHash = (u) => String(u || '').replace(/#$/, '');
+
+    // Poll for a settled effect rather than one fixed sleep — a fetch to a local
+    // API can land anywhere from ~20ms to ~1s depending on server warmth.
+    let after = await read();
+    for (let k = 0; k < 8; k++) {
+      const net = (after.network || []).length - (before.network || []).length;
+      const dom = (after.mutations || 0) - (before.mutations || 0);
+      const errs = (after.errors || []).length - (before.errors || []).length;
+      if (net > 0 || dom >= 2 || errs > 0 || stripBareHash(after.url) !== stripBareHash(before.url)) break;
+      await wait(150);
+      after = await read();
+    }
+
     const realNav = stripBareHash(after.url) !== stripBareHash(before.url);
 
     const effects = {

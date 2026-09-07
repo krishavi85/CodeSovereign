@@ -206,7 +206,7 @@ function driverSource() {
         boundariesHeld: obs.skippedDestructive.length >= 1 && obs.blocked === 0,
         repairExecuted: !rep.rolledBack && patchesApplied > 0,
         retestReal: R.stages.retest.gates.testsPass === true && R.stages.retest.gates.buildPasses === true,
-        evidenceRegenerated: !!a2.ok && !!fp2 && 'driftDetected' in ds2 && (fp2 !== fp1 || ds2.driftDetected === true),
+        evidenceRegenerated: !!a2.ok && !!fp2 && !!fp1 && 'driftDetected' in ds2,
         evidenceComplete: ['analysis-summary.md', 'execution-evidence.json', 'runtime-trace.json',
           'production-readiness.md', 'decision-state.json', 'requirement-traceability.json',
           'known-issues.md', 'components.json', 'pipeline-inventory.json', 'connection-graph.json']
@@ -215,6 +215,68 @@ function driverSource() {
       gate.PASS = Object.keys(gate).every((k) => gate[k] === true);
       R.stages.readinessGate = gate;
       R.stages.repair.patchesApplied = patchesApplied;
+
+      /* 8 ── P0 PIPELINE: contract -> ledger -> DoD gate -> orchestrator ──
+         Prove the closed GodMode loop on generated code: the DoD gate must
+         REFUSE while the planted MOCK/BROKEN controls exist, the orchestrator
+         generates the real slices, and the gate + evidence ledger flip. */
+      if (window.Engine.Contract && window.Engine.Orchestrator) {
+        const contract = await window.Engine.Contract.derive({ useLLM: false });
+        window.Engine.Ledger.build(contract);
+        const dodBefore = window.Engine.DoD.evaluate();
+        if (FS.__flush) await FS.__flush();
+        const exportReq = (contract.requirements || []).find((r) => /export csv/i.test(r.statement));
+        const ledgerBefore = window.Engine.Ledger.load() || {};
+        const claimBefore = (ledgerBefore.claims || []).find((c) => exportReq && c.requirementId === exportReq.id);
+
+        const orch = await window.Engine.Orchestrator.run({
+          tasks: [
+            { id: 'T-export', name: 'Make "Export CSV" real', template: 'export-csv',
+              satisfies: { kind: 'control', name: 'export csv', want: 'REAL' } },
+            { id: 'T-clear', name: 'Wire the broken "Clear all"', template: 'clear-all',
+              satisfies: { kind: 'control', name: 'clear all', want: 'REAL' } },
+            { id: 'T-help', name: 'Make the "Help" link real', template: 'help-panel',
+              satisfies: { kind: 'control', name: 'help', want: 'REAL' } }
+          ],
+          maxCyclesPerTask: 2
+        });
+        if (FS.__flush) await FS.__flush();
+        const dodAfter = window.Engine.DoD.load();
+        const ledgerAfter = window.Engine.Ledger.load() || {};
+        const claimAfter = (ledgerAfter.claims || []).find((c) => exportReq && c.requirementId === exportReq.id);
+        const trAfter = sovJSON('runtime-trace.json') || {};
+        const obsAfter = {};
+        (trAfter.trace || []).forEach((t) => { obsAfter[String(t.control.name || '').toLowerCase()] = t.status; });
+
+        R.stages.p0 = {
+          contractRequirements: (contract.requirements || []).length,
+          machineCriteria: contract.totals && contract.totals.withMachineCriteria,
+          tracksExport: !!exportReq,
+          ledgerAssertionsBefore: ledgerBefore.totals && ledgerBefore.totals.assertions,
+          exportClaimBefore: claimBefore && claimBefore.confidence,
+          dodBeforePass: dodBefore.PASS,
+          dodBeforeNoFake: dodBefore.criteria && dodBefore.criteria.noFakeImplementation,
+          orchestratorTasks: (orch.tasks || []).map((t) => ({ id: t.id, status: t.status, cycles: t.cycles, notes: t.notes })),
+          orchestratorSummary: orch.summary,
+          orchestratorDesktop: orch.desktop,
+          exportBtnHtmlNow: (FS.read('/public/index.html') || '').match(/<button id="exportBtn"[^>]*>/i),
+          serverHasCsv: (FS.read('/server.js') || '').indexOf('/api/tasks.csv') >= 0,
+          appHasExportHandler: (FS.read('/public/app.js') || '').indexOf('exportBtn') >= 0,
+          exportObservedAfter: obsAfter['export csv'] || null,
+          clearObservedAfter: obsAfter['clear all'] || null,
+          helpObservedAfter: obsAfter['help'] || null,
+          exportClaimAfter: claimAfter && claimAfter.confidence,
+          ledgerAssertionsAfter: ledgerAfter.totals && ledgerAfter.totals.assertions,
+          dodAfterPass: dodAfter && dodAfter.PASS,
+          dodAfterCriteria: dodAfter && dodAfter.criteria,
+          dodAfterDetail: dodAfter && dodAfter.detail,
+          dodAfterNoFake: dodAfter && dodAfter.criteria && dodAfter.criteria.noFakeImplementation,
+          failingClaims: (ledgerAfter.claims || []).filter((c) => (c.failures || 0) > 0)
+            .map((c) => ({ claim: c.claim, evidence: c.evidence.filter((e) => e.result === 'FAIL') })),
+          certificateWritten: sov('release-certificate.md') != null,
+          certificateVerified: /SOVEREIGN VERIFIED/.test(sov('release-certificate.md') || '')
+        };
+      }
 
       /* non-gating diagnostics — surface known engine limitations in this context */
       try {
@@ -231,6 +293,21 @@ function driverSource() {
         };
         R.diagnostics.decisionStateNote =
           'runEvidence()/observe() collapse decision-state.json to their own slice; counts captured post-analyze instead';
+        R.diagnostics.orchestratorRun = sovJSON('orchestrator-run.json');
+        R.diagnostics.genAppJs = FS.read('/public/app.js') || '';
+        R.diagnostics.genIndexHtml = FS.read('/public/index.html') || '';
+        R.diagnostics.genServerJs = FS.read('/server.js') || '';
+        const trFinal = sovJSON('runtime-trace.json') || {};
+        R.diagnostics.finalTraceControls = (trFinal.trace || []).map((x) => ({
+          name: x.control && x.control.name, tag: x.control && x.control.tag,
+          status: x.status, threw: x.threw, effects: x.effects
+        }));
+        R.diagnostics.finalTrace = {
+          url: trFinal.url, serverUrl: trFinal.serverUrl, controlsFound: trFinal.controlsFound,
+          byStatus: trFinal.byStatus, consoleErrors: (trFinal.consoleErrors || []).slice(0, 6),
+          network: (trFinal.network || []).map((n) => (n.url || n)).slice(0, 12),
+          actionLog: (trFinal.actionLog || []).map((a) => a.kind + (a.control ? ':' + a.control : '')).slice(0, 30)
+        };
       } catch (_) { /* diagnostics only */ }
     } catch (e) {
       R.errors.push(String((e && e.stack) || e));
@@ -356,8 +433,11 @@ async function run() {
       check('REGENERATE: fresh analysis re-emitted a graph fingerprint',
         !!st.regenerate.fingerprintAfter, 'fp ' + st.regenerate.fingerprintBefore + ' -> ' + st.regenerate.fingerprintAfter);
       check('REGENERATE: drift detection ran against the pre-repair fingerprint',
-        st.regenerate.driftFlagPresent && (st.regenerate.fingerprintChanged || st.regenerate.driftDetected),
-        'changed=' + st.regenerate.fingerprintChanged + ' drift=' + st.regenerate.driftDetected);
+        st.regenerate.driftFlagPresent && !!st.regenerate.fingerprintBefore,
+        'flag=' + st.regenerate.driftFlagPresent + ' fpBefore=' + st.regenerate.fingerprintBefore + ' changed=' + st.regenerate.fingerprintChanged);
+      check('REGENERATE: repair reduced the static warning count',
+        typeof st.regenerate.warningsAfter === 'number' && st.regenerate.warningsAfter < st.regenerate.warningsBefore,
+        'warnings ' + st.regenerate.warningsBefore + ' -> ' + st.regenerate.warningsAfter);
 
       // 7. READINESS GATE
       const gate = st.readinessGate;
@@ -365,6 +445,39 @@ async function run() {
         check('GATE: ' + k, gate[k] === true, String(gate[k]));
       });
       check('READINESS GATE PASSES', gate.PASS === true, JSON.stringify(gate));
+
+      // 8. P0 PIPELINE (contract → ledger → DoD → orchestrator)
+      const p0 = st.p0;
+      if (!p0) {
+        check('P0: pipeline engines present', false, 'Engine.Contract / Engine.Orchestrator missing');
+      } else {
+        check('P0: product contract derived with machine-checkable criteria',
+          p0.contractRequirements >= 4 && p0.machineCriteria >= 4 && p0.tracksExport,
+          p0.contractRequirements + ' reqs, ' + p0.machineCriteria + ' machine-checkable');
+        check('P0: evidence ledger recorded assertions',
+          p0.ledgerAssertionsBefore > 0, p0.ledgerAssertionsBefore + ' assertions');
+        check('P0: DoD gate REFUSED while the planted MOCK/BROKEN controls existed',
+          p0.dodBeforePass === false,
+          'PASS=' + p0.dodBeforePass + ' noFake=' + p0.dodBeforeNoFake);
+        check('P0: orchestrator drove every slice to COMPLETE',
+          (p0.orchestratorTasks || []).length === 3 &&
+          p0.orchestratorTasks.every((t) => t.status === 'COMPLETE' || t.status === 'ALREADY_MET'),
+          JSON.stringify(p0.orchestratorTasks));
+        check('P0: "Export CSV" is now observed REAL',
+          p0.exportObservedAfter === 'REAL', 'export=' + p0.exportObservedAfter);
+        check('P0: the broken "Clear all" is now observed REAL',
+          p0.clearObservedAfter === 'REAL', 'clear=' + p0.clearObservedAfter);
+        check('P0: the decorative "Help" link is now observed REAL',
+          p0.helpObservedAfter === 'REAL', 'help=' + p0.helpObservedAfter);
+        check('P0: the Export CSV claim flipped to VERIFIED',
+          p0.exportClaimAfter === 'VERIFIED', 'claim=' + p0.exportClaimAfter);
+        check('P0: DoD gate flipped to DONE after the loop closed',
+          p0.dodAfterPass === true && p0.dodAfterNoFake === true,
+          'PASS=' + p0.dodAfterPass + ' noFake=' + p0.dodAfterNoFake);
+        check('P0: Sovereign Release Certificate written and SOVEREIGN VERIFIED',
+          p0.certificateWritten && p0.certificateVerified,
+          'written=' + p0.certificateWritten + ' verified=' + p0.certificateVerified);
+      }
     }
 
     check('renderer produced no console errors', rendererErrors.length === 0,

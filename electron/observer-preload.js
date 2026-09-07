@@ -77,10 +77,26 @@
   window.addEventListener('popstate', function () { navRec('popstate'); });
   window.addEventListener('hashchange', function () { navRec('hashchange'); });
 
-  try {
-    new MutationObserver(function (list) { buf.mutations += list.length; })
-      .observe(document.documentElement, { childList: true, subtree: true, attributes: true, characterData: true });
-  } catch (e) { /* ignore */ }
+  // The preload runs at document-start, when <html>/<body> may not exist yet —
+  // (re)attach the observer once the document is ready, and again on each SPA
+  // navigation, so DOM effects of a control are actually counted.
+  var mo = new MutationObserver(function (list) {
+    for (var i = 0; i < list.length; i++) {
+      var r = list[i];
+      buf.mutations += 1 + (r.addedNodes ? r.addedNodes.length : 0) + (r.removedNodes ? r.removedNodes.length : 0);
+    }
+  });
+  function attachMO() {
+    var target = document.body || document.documentElement;
+    if (!target) return;
+    try { mo.disconnect(); } catch (e) { /* ignore */ }
+    try { mo.observe(target, { childList: true, subtree: true, attributes: true, characterData: true }); } catch (e) { /* ignore */ }
+  }
+  attachMO();
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attachMO);
+    window.addEventListener('load', attachMO);
+  }
 
   navRec('load');
 

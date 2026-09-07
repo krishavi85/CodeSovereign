@@ -362,18 +362,25 @@
 
   function resolveImport(fromFile, spec){
     if (!spec) return null;
-    if (spec.startsWith('./') || spec.startsWith('../') || spec.startsWith('/')) {
-      const baseDir = fromFile.split('/').slice(0, -1).join('/') || '';
-      let abs;
-      if (spec.startsWith('/')) abs = spec;
-      else abs = (baseDir ? '/' + baseDir : '') + '/' + spec;
-      abs = abs.replace(/\/\.\//g, '/').replace(/[^/]+\/\.\.\//g, '');
-      // try with .js, .mjs, .json
-      const candidates = [abs, abs + '.js', abs + '.mjs', abs + '.json', abs + '/index.js'];
-      for (const c of candidates) if (Object.keys(Engine.FS._data).indexOf(c) >= 0 && Engine.FS.isFile(c)) return c;
-      return abs;
-    }
-    return null;
+    if (/^(https?:|data:|mailto:|#)/.test(spec)) return null;
+    const explicitRel = spec.startsWith('./') || spec.startsWith('../') || spec.startsWith('/');
+    // A bare `foo/bar.ext` in an HTML src/href (or a co-located asset) is relative
+    // to the referring file's directory, not a bare-package import.
+    const bareFile = !explicitRel && /\.[A-Za-z0-9]+$/.test(spec) && !/\s/.test(spec);
+    if (!explicitRel && !bareFile) return null;
+
+    let baseDir = fromFile.split('/').slice(0, -1).join('/');   // e.g. "/public" or ""
+    if (baseDir && !baseDir.startsWith('/')) baseDir = '/' + baseDir;
+    let abs = spec.startsWith('/') ? spec : (baseDir + '/' + spec.replace(/^\.\//, ''));
+    // collapse ./ and x/../
+    let prev;
+    do { prev = abs; abs = abs.replace(/\/\.\//g, '/').replace(/\/[^/]+\/\.\.\//g, '/'); } while (abs !== prev);
+    abs = abs.replace(/\/{2,}/g, '/');
+
+    const files = Engine.FS._data;
+    const candidates = [abs, abs + '.js', abs + '.mjs', abs + '.json', abs + '/index.js'];
+    for (const c of candidates) if (files[c] && Engine.FS.isFile(c)) return c;
+    return abs;
   }
 
   // ---------------- Mock / placeholder detector (V2 Roadmap #10) ----------------

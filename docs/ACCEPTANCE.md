@@ -23,7 +23,34 @@ detect → classify → execute → observe → repair → retest → regenerate
 | **regenerate** | `analyze()` again — new graph fingerprint + drift check vs. the pre-repair fingerprint | `decision-state.json` |
 | **readiness gate** | 9 boolean criteria computed from the artefacts above | `[acceptance] READINESS GATE PASSES` |
 
-## What the gate asserts (27 checks)
+### Stage 8 — the P0 pipeline (closed GodMode loop on generated code)
+
+After the readiness gate, the harness exercises the P0 pipeline
+(`docs/GODMODE_GAP_ANALYSIS.md`):
+
+1. **`Engine.Contract.derive()`** builds `product-contract.json` — requirements
+   with machine-checkable acceptance criteria (execution gates, per-control
+   "observed REAL", no-mock, file-exists, CI-runs-test+build).
+2. **`Engine.Ledger.build()`** checks every criterion against the `.sovereign/`
+   evidence → `evidence-ledger.json` (claim → evidence → confidence + assertion
+   count).
+3. **`Engine.DoD.evaluate()`** → `definition-of-done.json`: 8 criteria. It
+   **refuses** while the fixture's planted MOCK `Export CSV`, MOCK `Help` and
+   BROKEN `Clear all` controls exist.
+4. **`Engine.Orchestrator.run()`** executes a 3-task DAG. Each task's generator
+   (a built-in template here; `Engine.LLM` when a provider is configured) writes
+   the real slice — a `/api/tasks.csv` endpoint + wired button, a `DELETE`
+   endpoint for `Clear all`, a real `Help` panel — then the loop re-runs
+   `analyze → runEvidence → observe → Recovery` until each control is observed
+   **REAL**.
+5. The DoD gate flips to **PASS** and `Engine.DoD.certificate()` writes
+   `release-certificate.md` — **SOVEREIGN VERIFIED**.
+
+This is the proof the eight engines close the loop on *generated* code, not only
+on imported repos: **intent → contract → generate → execute → observe → repair →
+prove → certify**.
+
+## What the gate asserts (38 checks)
 
 Real execution (`npm test`/`build`/`lint` exit 0, twice), a genuine runtime
 classification spread (REAL / MOCK / BROKEN), the broken control caught at
