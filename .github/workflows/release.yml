@@ -1,0 +1,59 @@
+name: Release
+
+# Push a tag like v0.1.0-alpha to build the installers and publish a GitHub
+# Release (marked "prerelease" for anything with a - suffix).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (e.g. v0.1.0-alpha)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Cache Electron + builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/.electron-cache
+            ~/AppData/Local/electron-builder/Cache
+          key: ebuilder-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
+      - run: npm test
+      - run: npm run smoke
+      - name: Build Windows installer + portable
+        run: npm run dist:win
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Determine tag
+        id: tag
+        shell: bash
+        run: echo "name=${{ github.event.inputs.tag || github.ref_name }}" >> "$GITHUB_OUTPUT"
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: CodeSovereign Desktop ${{ steps.tag.outputs.name }}
+          prerelease: ${{ contains(steps.tag.outputs.name, '-') }}
+          generate_release_notes: true
+          files: |
+            release/*.exe
+            release/*.blockmap
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
