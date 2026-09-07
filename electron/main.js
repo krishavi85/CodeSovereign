@@ -25,8 +25,16 @@ const DEV = process.argv.includes('--dev');
 const SMOKE = process.argv.includes('--smoke');
 const RENDERER = path.join(__dirname, '..', 'dist', 'index.html');
 
+// The headless boot check runs on CI runners with no GPU / no desktop session.
+if (SMOKE) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('in-process-gpu');
+}
+
 let win = null;
 let snapshotTimer = null;
+const approvedParents = new Set(); // dirs the user picked via "choose where to create"
 
 /* ------------------------------------------------------------------ window */
 
@@ -80,6 +88,23 @@ function createWindow() {
       } catch (e) { probe = 'probe failed: ' + e.message; }
       console.log('[smoke] renderer probe: ' + probe);
       console.log('[smoke] renderer errors (' + rendererErrors.length + '): ' + JSON.stringify(rendererErrors.slice(0, 10)));
+
+      // credential round-trip (main-process safeStorage)
+      try {
+        await creds.set('smoke.key', 's3cr3t-' + Date.now());
+        const back = await creds.get('smoke.key');
+        await creds.del('smoke.key');
+        const gone = await creds.get('smoke.key');
+        console.log('[smoke] creds roundtrip: ' + JSON.stringify({
+          encrypted: creds.available(),
+          readsBack: /^s3cr3t-/.test(back || ''),
+          deletes: gone === null
+        }));
+      } catch (e) { console.log('[smoke] creds roundtrip failed: ' + e.message); }
+
+      const bad = rendererErrors.length > 0 ? 1 : 0;
+      if (bad) console.log('[smoke] FAIL: renderer produced errors');
+      setTimeout(() => app.exit(bad), 200);
     });
   }
 
@@ -96,8 +121,14 @@ function createWindow() {
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
+  // The renderer may only ever be the app's own index.html. Anything else that
+  // tries to become a top-level navigation is bounced (https -> system browser,
+  // stray file:// -> blocked so it can't be pointed at arbitrary local files).
+  const rendererUrl = require('url').pathToFileURL(RENDERER).href;
   win.webContents.on('will-navigate', (e, url) => {
-    if (!url.startsWith('file://')) { e.preventDefault(); shell.openExternal(url); }
+    if (url === rendererUrl) return;
+    e.preventDefault();
+    if (/^https?:/i.test(url)) shell.openExternal(url);
   });
 
   win.webContents.on('render-process-gone', async (_e, details) => {
@@ -141,8 +172,9 @@ function registerIpc() {
 
   ipcMain.handle('app:recents', () => store.get('recents') || []);
   ipcMain.handle('app:clearRecents', () => { store.set('recents', []); rebuildMenu(); return ok(); });
-  ipcMain.handle('app:setTitle', (_e, t) => { if (win) win.setTitle(t ? 'CodeSovereign — ' + t : 'CodeSovereign'); });
-  ipcMain.handle('app:relaunch', () => { app.relaunch(); app.exit(0); });
+  ipcMain.handle('app:setTitle', (_e, t) => {
+    if (win) win.setTitle(typeof t === 'string' && t ? 'CodeSovereign — ' + t.slice(0, 120) : 'CodeSovereign');
+  });
 
   /* ---- workspace ---- */
   ipcMain.handle('ws:current', () => {
@@ -159,9 +191,15 @@ function registerIpc() {
     return openWorkspace(r.filePaths[0]);
   });
 
+  // A renderer may only re-open a folder the user has already picked through a
+  // dialog (i.e. one that is in the recents list). It can never hand main an
+  // arbitrary path to expose as the workspace.
   ipcMain.handle('ws:open', async (_e, dir) => {
-    if (!dir) return null;
-    return openWorkspace(dir);
+    if (!dir || typeof dir !== 'string') return null;
+    const target = path.resolve(dir);
+    const known = (store.get('recents') || []).some(r => path.resolve(r.path) === target);
+    if (!known) return fail('Folder is not in recent projects — use Open Folder to pick it');
+    return openWorkspace(target);
   });
 
   ipcMain.handle('ws:pickParentDir', async () => {
@@ -170,12 +208,22 @@ function registerIpc() {
       defaultPath: workspace.defaultProjectsDir(),
       properties: ['openDirectory', 'createDirectory']
     });
-    return r.canceled ? null : r.filePaths[0];
+    if (r.canceled || !r.filePaths[0]) return null;
+    approvedParents.add(path.resolve(r.filePaths[0]));
+    return r.filePaths[0];
   });
 
   ipcMain.handle('ws:createProject', async (_e, { parentDir, folderName, files }) => {
     try {
-      const res = await workspace.createProject({ parentDir, folderName, files });
+      // parentDir must be null (-> default projects dir) or a dir the user just
+      // picked in the "choose where to create" dialog this session.
+      let parent = null;
+      if (parentDir != null) {
+        parent = path.resolve(String(parentDir));
+        if (!approvedParents.has(parent)) return fail('Parent folder was not chosen through the dialog');
+      }
+      if (!Array.isArray(files) || files.some(f => typeof f.path !== 'string')) return fail('Invalid file list');
+      const res = await workspace.createProject({ parentDir: parent, folderName, files });
       afterOpen(res.root, res.name);
       return ok(res);
     } catch (e) { return fail(e); }
@@ -221,34 +269,41 @@ function registerIpc() {
     } catch (e) { return fail(e); }
   });
 
-  /* ---- fs ---- */
+  /* ---- fs ---- (every path is validated against the workspace root in workspace.js) */
+  const asPath = (p) => { if (typeof p !== 'string') throw new Error('path must be a string'); return p; };
   ipcMain.handle('fs:read', async (_e, p) => {
-    try { return ok({ content: await workspace.readFile(p) }); } catch (e) { return fail(e); }
+    try { return ok({ content: await workspace.readFile(asPath(p)) }); } catch (e) { return fail(e); }
   });
   ipcMain.handle('fs:write', async (_e, p, content) => {
-    try { return await workspace.writeFile(p, content); } catch (e) { return fail(e); }
+    try { return await workspace.writeFile(asPath(p), typeof content === 'string' ? content : ''); } catch (e) { return fail(e); }
   });
   ipcMain.handle('fs:remove', async (_e, p) => {
-    try { return await workspace.removePath(p); } catch (e) { return fail(e); }
+    try { return await workspace.removePath(asPath(p)); } catch (e) { return fail(e); }
   });
   ipcMain.handle('fs:mkdir', async (_e, p) => {
-    try { return await workspace.mkdirPath(p); } catch (e) { return fail(e); }
+    try { return await workspace.mkdirPath(asPath(p)); } catch (e) { return fail(e); }
   });
   ipcMain.handle('fs:rename', async (_e, from, to) => {
-    try { return await workspace.renamePath(from, to); } catch (e) { return fail(e); }
+    try { return await workspace.renamePath(asPath(from), asPath(to)); } catch (e) { return fail(e); }
   });
 
-  /* ---- processes ---- */
-  ipcMain.handle('proc:spawn', (_e, opts) => {
-    try { return ok(proc.spawnManaged(opts, procEvent)); } catch (e) { return fail(e); }
-  });
+  /* ---- processes ----
+     No arbitrary programmatic spawn is exposed. The renderer gets:
+       proc:shell  -> the OS shell only (the user then types into it)
+       proc:run    -> an allowlisted set of project tools, workspace-scoped     */
   ipcMain.handle('proc:shell', (_e, cwd) => {
-    try { return ok(proc.spawnShell(procEvent, cwd)); } catch (e) { return fail(e); }
+    try { return ok(proc.spawnShell(procEvent, typeof cwd === 'string' ? cwd : '.')); } catch (e) { return fail(e); }
   });
-  ipcMain.handle('proc:write', (_e, id, data) => { proc.write(id, data); });
-  ipcMain.handle('proc:kill', (_e, id) => { proc.kill(id); });
+  ipcMain.handle('proc:write', (_e, id, data) => {
+    if (typeof id === 'string' && typeof data === 'string') proc.write(id, data.slice(0, 100000));
+  });
+  ipcMain.handle('proc:kill', (_e, id) => { if (typeof id === 'string') proc.kill(id); });
   ipcMain.handle('proc:run', async (_e, opts) => {
-    try { return ok(await proc.runManaged(opts)); } catch (e) { return fail(e); }
+    try {
+      const o = opts || {};
+      if (typeof o.cmd !== 'string' || !Array.isArray(o.args)) return fail('cmd/args required');
+      return ok(await proc.runManaged({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.' }));
+    } catch (e) { return fail(e); }
   });
 
   /* ---- git ---- */

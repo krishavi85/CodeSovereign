@@ -22,7 +22,6 @@ contextBridge.exposeInMainWorld('desktop', {
     recents: () => invoke('app:recents'),
     clearRecents: () => invoke('app:clearRecents'),
     setTitle: (t) => invoke('app:setTitle', t),
-    relaunch: () => invoke('app:relaunch'),
     onMenu: (cb) => subscribe('menu:action', cb)
   },
 
@@ -46,7 +45,6 @@ contextBridge.exposeInMainWorld('desktop', {
   },
 
   proc: {
-    spawn: (opts) => invoke('proc:spawn', opts),
     shell: (cwd) => invoke('proc:shell', cwd),
     write: (id, data) => invoke('proc:write', id, data),
     kill: (id) => invoke('proc:kill', id),

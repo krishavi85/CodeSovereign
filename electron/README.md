@@ -11,10 +11,16 @@ browser and only activate when `window.desktop` (the preload bridge) is present.
 npm install
 npm start          # normal
 npm run dev        # + DevTools, --dev flag
-npm run smoke      # headless boot check (creates window, probes renderer, exits 0)
+npm test           # unit / integration + security tests (node, no deps)
+npm run smoke      # headless boot check: probes renderer, verifies 0 errors +
+                   # safeStorage round-trip, exits non-zero on renderer errors
 ```
 
 The browser build still works on its own: `npm run web` (serves `dist/` on :4173).
+
+CI (`.github/workflows/desktop.yml`) runs `npm test` on Linux + Windows,
+`npm run smoke` on Windows, then `npm run dist:win` and uploads the installer +
+portable `.exe` as workflow artifacts.
 
 ## Build a Windows installer
 
@@ -38,9 +44,9 @@ electron/
   preload.js         the ONLY renderer<->OS channel — exposes window.desktop
   menu.js            native menu; menu clicks post {action} to the renderer
   lib/
-    workspace.js     the open folder + path-safe fs ops (rejects anything outside root)
-    proc.js          child_process: managed spawn (streamed), one-shot run (allowlisted), interactive shell
-    git.js           system `git`, scoped to the workspace
+    workspace.js     the open folder + path-safe fs ops (rejects anything outside root, incl. symlinks)
+    proc.js          child_process: allowlisted one-shot run + interactive shell (no arbitrary spawn exposed)
+    git.js           system `git`, workspace-scoped, subcommand-allowlisted
     creds.js         API keys encrypted with safeStorage (OS keychain) -> <userData>/credentials.json
     snapshots.js     automatic crash-recovery snapshots -> <userData>/snapshots/<project>/
     zip.js           dependency-free ZIP writer for "export project"
@@ -63,9 +69,13 @@ dist/desktop/
 - `proc.run()` (the programmatic "run a command" surface) is allowlisted to
   project tooling; arbitrary commands only run in the interactive terminal the
   user drives
-- external links open in the system browser; all permission requests are denied
+- external links open in the system browser; all permission requests are denied;
+  the window can only ever navigate to its own `index.html`
+- `git:exec` is subcommand-allowlisted and blocks config/flag injection
 - API keys never touch `localStorage` in desktop mode — they live in the OS
   keychain via `safeStorage`
+
+Full per-endpoint review, findings, and residual risk: [`SECURITY.md`](SECURITY.md).
 
 ### How the filesystem bridge works
 

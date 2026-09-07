@@ -75,6 +75,30 @@ async function pathExists(p) {
   try { await fsp.access(p); return true; } catch { return false; }
 }
 
+function within(abs) {
+  const rootWithSep = currentRoot.endsWith(path.sep) ? currentRoot : currentRoot + path.sep;
+  return abs === currentRoot || abs.startsWith(rootWithSep);
+}
+
+/**
+ * Defence in depth against symlinks: resolve the nearest existing ancestor of
+ * `abs` through the real filesystem and make sure it still lands inside the
+ * workspace. Blocks e.g. a "link -> C:\Windows" checked into the project.
+ */
+async function assertRealInside(abs) {
+  let probe = abs;
+  for (let i = 0; i < 40; i++) {
+    if (await pathExists(probe)) {
+      const real = await fsp.realpath(probe);
+      if (!within(real)) throw new Error('Path resolves outside the workspace (symlink?): ' + abs);
+      return;
+    }
+    const parent = path.dirname(probe);
+    if (parent === probe) return;
+    probe = parent;
+  }
+}
+
 async function ensureDir(dir) {
   await fsp.mkdir(dir, { recursive: true });
 }
@@ -106,6 +130,7 @@ async function readTree() {
     for (const ent of entries) {
       if (out.length >= TREE_MAX_FILES) { truncated = true; return; }
       if (ent.name.startsWith('.git')) continue;
+      if (ent.isSymbolicLink()) continue;               // never follow links out of the tree
       const abs = path.join(dir, ent.name);
       if (ent.isDirectory()) {
         if (IGNORED_DIRS.has(ent.name)) continue;
@@ -133,6 +158,7 @@ async function readTree() {
 async function writeFile(virtualPath, content) {
   if (isProtected(virtualPath)) throw new Error('Refusing to write inside a protected directory: ' + virtualPath);
   const abs = resolveInside(virtualPath);
+  await assertRealInside(abs);
   await ensureDir(path.dirname(abs));
   await fsp.writeFile(abs, String(content == null ? '' : content), 'utf8');
   return { ok: true, path: toVirtual(abs) };
@@ -142,6 +168,7 @@ async function removePath(virtualPath) {
   if (isProtected(virtualPath)) throw new Error('Refusing to delete a protected directory: ' + virtualPath);
   const abs = resolveInside(virtualPath);
   if (abs === currentRoot) throw new Error('Refusing to delete the workspace root');
+  await assertRealInside(abs);
   await fsp.rm(abs, { recursive: true, force: true });
   return { ok: true };
 }
@@ -149,6 +176,7 @@ async function removePath(virtualPath) {
 async function mkdirPath(virtualPath) {
   if (isProtected(virtualPath)) throw new Error('Refusing to create inside a protected directory: ' + virtualPath);
   const abs = resolveInside(virtualPath);
+  await assertRealInside(abs);
   await ensureDir(abs);
   return { ok: true };
 }
@@ -157,6 +185,8 @@ async function renamePath(fromVirtual, toVirtualPath) {
   if (isProtected(fromVirtual) || isProtected(toVirtualPath)) throw new Error('Refusing to touch a protected directory');
   const a = resolveInside(fromVirtual);
   const b = resolveInside(toVirtualPath);
+  await assertRealInside(a);
+  await assertRealInside(b);
   await ensureDir(path.dirname(b));
   await fsp.rename(a, b);
   return { ok: true };
@@ -167,11 +197,12 @@ async function renamePath(fromVirtual, toVirtualPath) {
 async function open(dir) {
   const resolved = path.resolve(dir);
   if (!(await pathExists(resolved))) throw new Error('Folder not found: ' + resolved);
-  const st = await fsp.stat(resolved);
-  if (!st.isDirectory()) throw new Error('Not a folder: ' + resolved);
-  setRoot(resolved);
+  const real = await fsp.realpath(resolved);
+  const st = await fsp.stat(real);
+  if (!st.isDirectory()) throw new Error('Not a folder: ' + real);
+  setRoot(real);
   const tree = await readTree();
-  return { root: resolved, name: path.basename(resolved), files: tree.files, truncated: tree.truncated };
+  return { root: real, name: path.basename(real), files: tree.files, truncated: tree.truncated };
 }
 
 async function createProject({ parentDir, folderName, files }) {

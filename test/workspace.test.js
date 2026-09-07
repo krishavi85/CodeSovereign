@@ -1,0 +1,44 @@
+'use strict';
+/* Path-safety, tree walking, and mutation tests for electron/lib/workspace.js */
+const os = require('os');
+const fs = require('fs');
+const path = require('path');
+const ws = require('../electron/lib/workspace');
+
+module.exports = async function (t) {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-ws-'));
+  ws.setRoot(tmp);
+
+  await t.throwsAsync('resolveInside blocks ../ escape', async () => ws.resolveInside('../../etc/passwd'));
+  await t.throwsAsync('resolveInside blocks /../ escape', async () => ws.resolveInside('/../../x'));
+  await t.throwsAsync('resolveInside blocks backslash escape', async () => ws.resolveInside('..\\..\\x'));
+
+  await ws.writeFile('/src/app.js', 'console.log(1)');
+  await ws.writeFile('/index.html', '<h1>hi</h1>');
+  t.equal('roundtrip write/read', await ws.readFile('/src/app.js'), 'console.log(1)');
+  t.equal('read of missing file is null', await ws.readFile('/nope.txt'), null);
+
+  const tree = await ws.readTree();
+  t.equal('tree lists both files', tree.files.length, 2);
+  t.ok('tree paths are virtual', tree.files.every((f) => f.path.startsWith('/')));
+
+  await t.throwsAsync('blocks .git write', async () => ws.writeFile('/.git/config', 'x'));
+  await t.throwsAsync('blocks node_modules mkdir', async () => ws.mkdirPath('node_modules'));
+  await t.throwsAsync('blocks workspace-root delete', async () => ws.removePath('/'));
+
+  fs.mkdirSync(path.join(tmp, 'node_modules'));
+  fs.writeFileSync(path.join(tmp, 'node_modules', 'junk.js'), 'x');
+  const tree2 = await ws.readTree();
+  t.ok('readTree ignores node_modules', !tree2.files.some((f) => f.path.includes('node_modules')));
+
+  await ws.renamePath('/index.html', '/home.html');
+  t.ok('rename moves the file', fs.existsSync(path.join(tmp, 'home.html')) && !fs.existsSync(path.join(tmp, 'index.html')));
+
+  await ws.removePath('/src');
+  t.ok('recursive remove', !fs.existsSync(path.join(tmp, 'src')));
+
+  t.deepEqual('sanitizeFolderName', ['My App', '../evil', 'a<b>:c', '   ', 'ok.'].map(ws.sanitizeFolderName),
+    ['My-App', 'evil', 'a-b-c', 'project', 'ok']);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+};

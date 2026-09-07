@@ -12,6 +12,14 @@ const path = require('path');
 
 function file() { return path.join(app.getPath('userData'), 'credentials.json'); }
 
+// Keys are namespaced identifiers, not arbitrary strings — keeps the renderer
+// from using this as a general-purpose secret store.
+const KEY_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/i;
+function assertKey(key) {
+  if (typeof key !== 'string' || !KEY_RE.test(key)) throw new Error('Invalid credential key');
+  return key;
+}
+
 async function loadAll() {
   try {
     const raw = await fsp.readFile(file(), 'utf8');
@@ -28,6 +36,7 @@ function available() {
 }
 
 async function get(key) {
+  assertKey(key);
   const all = await loadAll();
   const enc = all[key];
   if (!enc) return null;
@@ -38,6 +47,9 @@ async function get(key) {
 }
 
 async function set(key, value) {
+  assertKey(key);
+  if (value != null && typeof value !== 'string') throw new Error('Credential value must be a string');
+  if (value && value.length > 8192) throw new Error('Credential value too large');
   const all = await loadAll();
   if (value == null || value === '') { delete all[key]; }
   else if (available()) all[key] = safeStorage.encryptString(String(value)).toString('base64');
@@ -47,6 +59,7 @@ async function set(key, value) {
 }
 
 async function del(key) {
+  assertKey(key);
   const all = await loadAll();
   delete all[key];
   await saveAll(all);
@@ -57,4 +70,4 @@ async function keys() {
   return Object.keys(await loadAll());
 }
 
-module.exports = { available, get, set, del, keys };
+module.exports = { available, get, set, del, keys, KEY_RE };

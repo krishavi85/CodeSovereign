@@ -14,6 +14,8 @@ const crypto = require('crypto');
 const workspace = require('./workspace');
 
 const KEEP = 25;
+// snapshot ids are timestamps: 2026-09-07T12-00-00-000Z
+const ID_RE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9-]{12,16}Z$/;
 
 function slug(root) {
   return crypto.createHash('sha1').update(root).digest('hex').slice(0, 16);
@@ -61,7 +63,7 @@ async function list() {
 
 async function read(id) {
   const root = workspace.getRoot();
-  if (!root) return null;
+  if (!root || typeof id !== 'string' || !ID_RE.test(id)) return null;
   try {
     const raw = await fsp.readFile(path.join(dirFor(root), id + '.json'), 'utf8');
     return JSON.parse(raw);
@@ -79,4 +81,4 @@ async function restore(id) {
   return { ok: true, files: snap.files };
 }
 
-module.exports = { create, list, read, restore };
+module.exports = { create, list, read, restore, ID_RE };
