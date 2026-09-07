@@ -306,6 +306,7 @@
     var validator = safe(function () { return Engine.Validator.runAll(); }, []);
     var graphHealth = safe(function () { return window.GraphValidate.run(); }, { edges: [], broken: [], healthy: false });
     var mocks = safe(function () { return window.MockDetect.run(); }, []);
+    var mockScan = safe(function () { return window.MockScan.run(); }, { signals: [], byKind: {}, total: 0 });
     var build = safe(function () { return window.Verify.build(); }, { ok: false });
     var runtime = safe(function () { return window.Verify.runtime(); }, { ok: false, hazards: [] });
     var interaction = safe(function () { return window.Verify.interaction(); }, { ok: false, issues: [] });
@@ -318,7 +319,30 @@
 
     var errs = validator.filter(function (i) { return i.severity === 'error'; }).length;
     var warns = validator.filter(function (i) { return i.severity === 'warning'; }).length;
-    var mockCount = mocks.length + (interaction.issues || []).length;
+    var highSim = (mockScan.signals || []).filter(function (s) { return s.severity === 'high'; }).length;
+    var mockCount = (mockScan.total || 0) + (interaction.issues || []).length;
+
+    // ---- intent inference + status per control (spec 6/7) ----
+    var runtimeTrace = read('runtime-trace.json');
+    var observedByName = {};
+    if (runtimeTrace && runtimeTrace.trace) {
+      runtimeTrace.trace.forEach(function (o) {
+        var k = String(o.control.name || o.control.tag || '').toLowerCase().slice(0, 40);
+        if (k) observedByName[k] = o.status;
+      });
+    }
+    var MS = window.MockScan;
+    (interactions.interactions || []).forEach(function (it) {
+      if (MS) {
+        var intent = MS.inferIntent(it);
+        it.expectedBehavior = intent.expected;
+        it.confidence = intent.confidence;
+        it.intentBasis = intent.basis;
+        var src = safe(function () { return (FS.read(it.file) || '').slice(0, 20000); }, '');
+        it.status = MS.classify(it, { observed: observedByName[String(it.name || '').toLowerCase().slice(0, 40)], source: src });
+      }
+    });
+    write('interaction-inventory.json', interactions);
 
     // ---- persist structured evidence ----
     write('connection-graph.json', {
@@ -339,9 +363,12 @@
     write('pipeline-inventory.json', pipelines);
     write('simulation-report.json', {
       generatedAt: Date.now(),
-      signals: mocks,
-      unwiredControls: interaction.issues || [],
-      total: mockCount
+      total: mockCount,
+      highSeverity: highSim,
+      byKind: mockScan.byKind || {},
+      signals: (mockScan.signals || []).slice(0, 400),
+      legacySignals: mocks,                       // MockDetect's original 6-pattern set
+      unwiredControls: interaction.issues || []
     });
 
     // ---- known-issues.md ----
@@ -350,18 +377,42 @@
       kiLines.push('- **' + (i.severity || 'info').toUpperCase() + '** ' + (i.file || '') + ' — ' + (i.message || i.msg || 'issue'));
     });
     (graphHealth.broken || []).forEach(function (e) { kiLines.push('- **ERROR** ' + e.from + ' — broken edge to `' + e.to + '`'); });
-    mocks.forEach(function (m) { kiLines.push('- **MOCK** ' + m.file + ' — ' + m.why + ' (`' + (m.sample || '') + '`)'); });
+    (mockScan.signals || []).filter(function (s) { return s.severity !== 'low'; }).slice(0, 120).forEach(function (m) {
+      kiLines.push('- **' + m.severity.toUpperCase() + ' / mock** ' + m.file + ':' + m.line + ' — ' + m.why + ' (`' + (m.sample || '') + '`)');
+    });
     write('known-issues.md', kiLines.join('\n') + '\n');
 
-    // ---- production-readiness.md ----
+    // ---- assumptions.md — inferred control intents (spec 6 §7) ----
+    var med = (interactions.interactions || []).filter(function (it) { return it.confidence && it.confidence !== 'high'; });
+    write('assumptions.md',
+      '# Assumptions\n\n_Inferred behaviour for controls whose intent is not certain. ' +
+      'Confirm against requirements or replace._\n\n_Generated ' + new Date().toISOString() + '_\n\n' +
+      (med.length ? med.slice(0, 120).map(function (it) {
+        return '- `' + it.id + '` (' + it.file + ') — assumed **' + it.expectedBehavior + '** · confidence ' +
+          it.confidence + ' · basis: ' + (it.intentBasis || '?');
+      }).join('\n') : '- (nothing low-confidence)') + '\n');
+
+    // ---- production-readiness.md — the interaction traceability matrix ----
     var prCounts = {};
-    interactions.interactions.forEach(function (it) { prCounts[it.status] = (prCounts[it.status] || 0) + 1; });
+    interactions.interactions.forEach(function (it) { prCounts[it.status || 'UNKNOWN'] = (prCounts[it.status || 'UNKNOWN'] || 0) + 1; });
+    var matrix = interactions.interactions.slice(0, 200).map(function (it) {
+      return '| `' + it.id + '` | ' + esc9(it.file) + ' | ' + esc9((it.expectedBehavior || '').slice(0, 70)) +
+        ' | ' + (it.confidence || '-') + ' | **' + (it.status || 'UNKNOWN') + '** |';
+    }).join('\n');
+    var simByKind = Object.keys(mockScan.byKind || {}).sort().map(function (k) {
+      return '| ' + k + ' | ' + mockScan.byKind[k] + ' |';
+    }).join('\n');
     write('production-readiness.md',
-      '# Production readiness\n\n_Generated ' + new Date().toISOString() + '_\n\n' +
-      '| Status | Count |\n|---|---|\n' +
+      '# Production readiness — interaction traceability\n\n_Generated ' + new Date().toISOString() + '_\n\n' +
+      '## Status roll-up\n\n| Status | Count |\n|---|---|\n' +
       Object.keys(prCounts).map(function (k) { return '| ' + k + ' | ' + prCounts[k] + ' |'; }).join('\n') + '\n\n' +
-      (mockCount === 0 ? 'No simulated controls or mock signals detected.\n'
-        : mockCount + ' item(s) still look decorative / simulated — see `simulation-report.json`.\n'));
+      (mockCount === 0
+        ? 'No simulation signals detected in source.\n\n'
+        : '**' + mockCount + ' simulation signals** (' + highSim + ' high severity) — see `simulation-report.json`.\n\n' +
+          '| Signal kind | Count |\n|---|---|\n' + simByKind + '\n\n') +
+      '## Every interactive control\n\n| id | file | inferred intent | conf | status |\n|---|---|---|---|---|\n' + matrix + '\n\n' +
+      '_REAL = wired + observed effect + error/loading handling · PARTIAL = wired, gaps · ' +
+      'MOCK = decorative/simulated · BROKEN = threw · UNREACHABLE = hidden/disabled · UNKNOWN = not yet observed._\n');
 
     // ---- diagrams (regenerated from the real graph) ----
     var graph = { edges: graphHealth.edges };
@@ -435,7 +486,6 @@
       'Diagrams: `.sovereign/architecture.md` + `.sovereign/diagrams/`. Full evidence in `.sovereign/*.json`.\n');
 
     // ---- seed the files that need a human / later pass, only once ----
-    if (!exists('assumptions.md')) write('assumptions.md', '# Assumptions\n\n_Each inferred behavior below states its evidence and confidence._\n');
     if (!exists('repairs/repair-ledger.md')) write('repairs/repair-ledger.md', '# Repair ledger\n\n_Failed contract · evidence · root cause · patch · tests · rollback._\n');
     if (!exists('project.json')) {
       write('project.json', {
