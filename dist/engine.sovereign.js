@@ -46,6 +46,7 @@
     'architecture.md':           'Human-readable architecture summary + diagram (mermaid)',
     // pipelines (spec 4)
     'pipeline-inventory.json':   'Discovered build / test / release / infra pipelines',
+    'execution-evidence.json':   'Real npm test / build / lint / typecheck results (desktop)',
     // mockups (spec 6)
     'simulation-report.json':    'Mock / stub / fake-data / unwired-control findings',
     'production-readiness.md':   'REAL / PARTIAL / MOCK / BROKEN / UNREACHABLE per interaction',
@@ -348,6 +349,67 @@
     };
   }
 
+  /* ---------------- real execution evidence (desktop) ---------------- */
+  // Runs the project's actual test / build / lint / typecheck via window.CSExec
+  // and records structured evidence. This is what makes "verified" real: the
+  // Sovereign specs demand executable proof, not "it compiled".
+  function runEvidence(opts) {
+    opts = opts || {};
+    var X = window.CSExec;
+    if (!X || !X.available()) {
+      return Promise.resolve({ ok: false, reason: 'real execution needs the desktop app with a project folder open' });
+    }
+    var steps = opts.steps || ['test', 'build', 'lint', 'typecheck'];
+    var results = {};
+    var chain = Promise.resolve();
+    steps.forEach(function (s) {
+      chain = chain.then(function () {
+        return X[s]().then(function (r) {
+          results[s] = {
+            code: r.code, ms: r.ms, timedOut: !!r.timedOut, skipped: !!r.skipped,
+            pass: r.code === 0, tail: String(r.output || '').slice(-1500)
+          };
+        });
+      });
+    });
+
+    return chain.then(function () {
+      var detect = X.detect();
+      var evidence = {
+        generatedAt: Date.now(),
+        packageManager: detect.pm,
+        runtimes: detect.runtimes,
+        steps: results,
+        gates: {
+          testsPass: results.test ? (results.test.pass || results.test.skipped) : null,
+          buildPasses: results.build ? (results.build.pass || results.build.skipped) : null,
+          lintClean: results.lint ? (results.lint.pass || results.lint.skipped) : null,
+          typesClean: results.typecheck ? (results.typecheck.pass || results.typecheck.skipped) : null
+        }
+      };
+      write('execution-evidence.json', evidence);
+
+      // fold real gates into decision-state + production-readiness
+      var ds = read('decision-state.json') || {};
+      ds.execution = { at: evidence.generatedAt, gates: evidence.gates };
+      write('decision-state.json', ds);
+
+      var verdict = Object.keys(evidence.gates).map(function (k) {
+        var v = evidence.gates[k];
+        return '- **' + k + '**: ' + (v === null ? 'not run' : v ? 'PASS' : 'FAIL');
+      }).join('\n');
+      var prev = read('production-readiness.md') || '# Production readiness\n';
+      write('production-readiness.md', prev + '\n## Real execution ' + new Date(evidence.generatedAt).toISOString() + '\n\n' + verdict + '\n');
+
+      var failed = Object.keys(results).filter(function (k) { return results[k] && !results[k].pass && !results[k].skipped; });
+      appendChanges('execution — ' + steps.map(function (s) {
+        var r = results[s]; return s + ':' + (!r ? '?' : r.skipped ? 'skip' : r.pass ? 'pass' : 'FAIL');
+      }).join(' '));
+
+      return { ok: true, evidence: evidence, failed: failed };
+    });
+  }
+
   function snapshot(reason) {
     var stamp = new Date().toISOString().replace(/[:.]/g, '-');
     var dir = 'history/' + stamp;
@@ -375,7 +437,7 @@
   Engine.Sovereign = {
     FILES: FILES, ROOT: ROOT,
     read: read, write: write, list: list, exists: exists,
-    analyze: analyze, snapshot: snapshot, status: status,
+    analyze: analyze, runEvidence: runEvidence, snapshot: snapshot, status: status,
     componentInventory: componentInventory,
     interactionInventory: interactionInventory,
     pipelineInventory: pipelineInventory

@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('desktop', {
 
   proc: {
     shell: (cwd) => invoke('proc:shell', cwd),
+    spawnAllowed: (opts) => invoke('proc:spawnAllowed', opts),
     write: (id, data) => invoke('proc:write', id, data),
     kill: (id) => invoke('proc:kill', id),
     run: (opts) => invoke('proc:run', opts),

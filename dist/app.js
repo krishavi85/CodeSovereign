@@ -2388,7 +2388,8 @@ function renderRecovery(){
           <h3 class="cs-h3">${I.box} Sovereign Project Memory <span class="cs-mono" style="color:var(--muted);font-weight:400">.sovereign/</span></h3>
           <div style="display:flex;gap:6px">
             <button class="btn" onclick="sovereignSnapshot()">+ Snapshot</button>
-            <button class="btn primary" onclick="runSovereignAnalysis()">${I.run} Run Analysis</button>
+            <button class="btn" onclick="runSovereignAnalysis()">${I.run} Analyze</button>
+            ${(window.desktop && window.desktop.isDesktop) ? `<button class="btn primary" onclick="runSovereignEvidence()" title="Run the project's real npm test / build / lint / typecheck">${I.flask||I.run} Analyze + Test</button>` : ''}
           </div>
         </div>
         ${renderSovereignMemory()}
@@ -3642,6 +3643,19 @@ function renderSovereignMemory(){
     + '<div style="font:700 18px \'JetBrains Mono\',monospace;color:' + (color||'#e6e9f2') + '">' + (val==null?'–':val) + '</div>'
     + '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">' + label + '</div></div>';
 
+  let execRow = '';
+  const evd = S9.read('execution-evidence.json');
+  if (evd && evd.gates) {
+    const g = evd.gates;
+    const pill = (k, v) => '<span style="font-size:11px;padding:3px 9px;border-radius:20px;margin-right:6px;background:'
+      + (v===null?'rgba(255,255,255,.06)':v?'rgba(52,211,153,.14)':'rgba(239,68,68,.16)') + ';color:'
+      + (v===null?'var(--muted)':v?'var(--good)':'var(--err)') + '">' + k + ': ' + (v===null?'—':v?'pass':'FAIL') + '</span>';
+    execRow = '<div style="margin:12px 0;padding:10px;border:1px solid var(--line);border-radius:9px">'
+      + '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Real execution · ' + fmtTimeAgo(evd.generatedAt) + '</div>'
+      + pill('tests', g.testsPass) + pill('build', g.buildPasses) + pill('lint', g.lintClean) + pill('types', g.typesClean)
+      + '</div>';
+  }
+
   const fileRows = (st.files || []).filter(f => f.indexOf('history/') !== 0).map(f =>
     '<div data-sovfile="' + esc(f) + '" style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font:500 12px \'JetBrains Mono\',monospace;color:#c7cddb" '
     + 'onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\'\'">'
@@ -3653,6 +3667,7 @@ function renderSovereignMemory(){
   return ''
     + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">' + loc
     + (st.lastAnalysisAt ? '  ·  last analysis ' + fmtTimeAgo(st.lastAnalysisAt) : '') + '</div>'
+    + execRow
     + '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">'
       + stat('Health', st.health, st.health>=75?'var(--good)':st.health>=50?'var(--warn)':'var(--err)')
       + stat('Components', c.components)
@@ -3679,6 +3694,23 @@ function runSovereignAnalysis(){
     renderAll();
   }, 60);
 }
+
+function runSovereignEvidence(){
+  if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
+  if (!(window.CSExec && CSExec.available())) { toast('Open a project folder in the desktop app first', '#f59e0b'); return; }
+  toast('Analyzing + running real test / build / lint…', '#a78bfa');
+  setTimeout(() => {
+    try { Engine.Sovereign.analyze(); } catch (e) { console.error(e); }
+    Engine.Sovereign.runEvidence().then(r => {
+      if (!r.ok) { toast(r.reason || 'evidence run failed', '#f59e0b'); }
+      else if (r.failed.length) { toast('Executed — FAILED: ' + r.failed.join(', ') + ' (see .sovereign/execution-evidence.json)', '#ef4444'); }
+      else { toast('Executed — all gates pass ✓ → .sovereign/execution-evidence.json', '#34d399'); }
+      if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
+      renderAll();
+    }).catch(e => { toast('Evidence run error: ' + e.message, '#ef4444'); console.error(e); });
+  }, 60);
+}
+window.runSovereignEvidence = runSovereignEvidence;
 
 function sovereignSnapshot(){
   if (!window.Engine || !Engine.Sovereign) return;
@@ -4353,11 +4385,37 @@ function repairWorkspace(){
     S.lastScan = null;
     runValidatorScan();
     renderAll();
+    if (!run.rolledBack) desktopVerifyRepair(run);
   } catch (e) {
     console.error(e);
     toast('Repair failed: ' + (e && e.message || e), '#ef4444');
   }
 }
+
+// After an FS-level repair, prove it with the project's REAL test + build
+// (desktop only). The Sovereign specs: never declare success from generation
+// alone. On failure, offer to roll the working tree back via git.
+function desktopVerifyRepair(run){
+  if (!(window.CSExec && CSExec.available())) return;
+  toast('Verifying repair with real test + build…', '#a78bfa');
+  Promise.resolve()
+    .then(() => CSExec.test())
+    .then(t => CSExec.build().then(b => ({ t: t, b: b })))
+    .then(res => {
+      var tOk = res.t.code === 0 || res.t.skipped;
+      var bOk = res.b.code === 0 || res.b.skipped;
+      try { Engine.Sovereign && Engine.Sovereign.runEvidence({ steps: ['test','build'] }); } catch (_) {}
+      if (tOk && bOk) {
+        toast('Repair VERIFIED — real tests + build pass', '#34d399');
+      } else {
+        toast('Repair verification FAILED (test:' + res.t.code + ' build:' + res.b.code + '). Use a Snapshot to roll back.', '#ef4444');
+      }
+      if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
+      renderAll();
+    })
+    .catch(e => { console.error(e); toast('Verification error: ' + e.message, '#f59e0b'); });
+}
+window.desktopVerifyRepair = desktopVerifyRepair;
 
 function repairWorkspaceV3(){
   try {

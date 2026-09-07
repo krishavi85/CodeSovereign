@@ -69,6 +69,18 @@ function spawnManaged({ cmd, args = [], cwd, shell }, onEvent) {
   return { id, pid: child.pid };
 }
 
+// Like spawnManaged, but restricted to the same allowlist as runManaged. Streams
+// output so the renderer can show a live log for long jobs (npm install, build).
+function spawnAllowed({ cmd, args = [], cwd }, onEvent) {
+  const base = baseCmd(cmd);
+  if (!ALLOWED.has(base)) {
+    const err = new Error(`Command "${base}" is not on the allowlist`);
+    err.code = 'ENOTALLOWED';
+    throw err;
+  }
+  return spawnManaged({ cmd, args, cwd }, onEvent);
+}
+
 function runManaged({ cmd, args = [], cwd }) {
   return new Promise((resolve) => {
     const base = baseCmd(cmd);
@@ -119,4 +131,4 @@ function killAll() {
   for (const id of Array.from(procs.keys())) kill(id);
 }
 
-module.exports = { spawnManaged, runManaged, spawnShell, write, kill, killAll, ALLOWED };
+module.exports = { spawnManaged, spawnAllowed, runManaged, spawnShell, write, kill, killAll, ALLOWED };

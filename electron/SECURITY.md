@@ -60,10 +60,12 @@ beyond what the user explicitly enabled.
 ### Process execution (`proc:*`)
 
 - **Removed `proc:spawn`** (arbitrary `{cmd,args}`) from the bridge entirely —
-  it was an unrestricted RCE surface and nothing used it.
-- `proc:run` — allowlisted to project tooling (`npm/npx/pnpm/yarn/node/git/
-  python/tsc/eslint/vite/jest/…`), workspace-scoped `cwd`, args coerced to
-  strings. `npm run <script>` can still execute whatever the **project's own**
+  it was an unrestricted RCE surface.
+- `proc:run` (one-shot) and `proc:spawnAllowed` (streamed, for long jobs like
+  `npm install` / `npm run build`) both enforce the **same allowlist** —
+  project tooling only (`npm/npx/pnpm/yarn/node/git/python/tsc/eslint/vite/jest/
+  vitest/playwright/…`), workspace-scoped `cwd`, args coerced to strings.
+  `npm run <script>` can still execute whatever the **project's own**
   `package.json` defines — inherent to "run my project", documented, not a
   main-process escalation.
 - `proc:shell` — spawns **only** the OS shell (`cmd.exe` / `$SHELL`) in the

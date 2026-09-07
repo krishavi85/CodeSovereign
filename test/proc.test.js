@@ -31,5 +31,20 @@ module.exports = async function (t) {
   t.ok('spawnManaged: streams stdout', events.some((e) => e.stream === 'stdout' && /hello/.test(e.data)));
   t.ok('spawnManaged: emits exit 0', events.some((e) => e.stream === 'exit' && e.code === 0));
 
+  // spawnAllowed: same allowlist as runManaged, but streamed
+  await t.throwsAsync('spawnAllowed rejects non-allowlisted', async () =>
+    proc.spawnAllowed({ cmd: 'powershell', args: ['-c', 'calc'], cwd: '.' }, () => {}));
+
+  const ev2 = [];
+  await new Promise((resolve) => {
+    let done = false;
+    proc.spawnAllowed({ cmd: 'node', args: ['-e', 'console.log("streamed")'], cwd: '.' }, (e) => {
+      ev2.push(e);
+      if (e.stream === 'exit') { done = true; resolve(); }
+    });
+    setTimeout(() => { if (!done) resolve(); }, 5000);
+  });
+  t.ok('spawnAllowed: streams + exits 0', ev2.some((e) => e.stream === 'stdout' && /streamed/.test(e.data)) && ev2.some((e) => e.stream === 'exit' && e.code === 0));
+
   fs.rmSync(tmp, { recursive: true, force: true });
 };

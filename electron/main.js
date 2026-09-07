@@ -296,11 +296,19 @@ function registerIpc() {
   });
 
   /* ---- processes ----
-     No arbitrary programmatic spawn is exposed. The renderer gets:
-       proc:shell  -> the OS shell only (the user then types into it)
-       proc:run    -> an allowlisted set of project tools, workspace-scoped     */
+     No ARBITRARY programmatic spawn is exposed. The renderer gets:
+       proc:shell         -> the OS shell only (the user then types into it)
+       proc:run           -> an allowlisted project tool, one-shot, workspace-scoped
+       proc:spawnAllowed  -> same allowlist, but streamed for long jobs (install/build) */
   ipcMain.handle('proc:shell', (_e, cwd) => {
     try { return ok(proc.spawnShell(procEvent, typeof cwd === 'string' ? cwd : '.')); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('proc:spawnAllowed', (_e, opts) => {
+    try {
+      const o = opts || {};
+      if (typeof o.cmd !== 'string' || !Array.isArray(o.args)) return fail('cmd/args required');
+      return ok(proc.spawnAllowed({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.' }, procEvent));
+    } catch (e) { return fail(e); }
   });
   ipcMain.handle('proc:write', (_e, id, data) => {
     if (typeof id === 'string' && typeof data === 'string') proc.write(id, data.slice(0, 100000));
