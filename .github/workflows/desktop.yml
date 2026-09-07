@@ -51,6 +51,8 @@ jobs:
           ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
       - name: Headless boot check (probes renderer, verifies 0 errors + safeStorage)
         run: npm run smoke
+      - name: Runtime observer integration check (drives a fixture page, classifies controls)
+        run: npm run smoke:observer
 
   build:
     name: Windows installer

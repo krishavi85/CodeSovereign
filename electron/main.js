@@ -14,6 +14,7 @@ const fsp = require('fs/promises');
 
 const workspace = require('./lib/workspace');
 const proc = require('./lib/proc');
+const observer = require('./lib/observer');
 const git = require('./lib/git');
 const creds = require('./lib/creds');
 const zip = require('./lib/zip');
@@ -23,10 +24,11 @@ const { applyMenu } = require('./menu');
 
 const DEV = process.argv.includes('--dev');
 const SMOKE = process.argv.includes('--smoke');
+const SMOKE_OBSERVER = process.argv.includes('--smoke-observer');
 const RENDERER = path.join(__dirname, '..', 'dist', 'index.html');
 
-// The headless boot check runs on CI runners with no GPU / no desktop session.
-if (SMOKE) {
+// The headless checks run on CI runners with no GPU / no desktop session.
+if (SMOKE || SMOKE_OBSERVER) {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('in-process-gpu');
@@ -322,6 +324,21 @@ function registerIpc() {
     } catch (e) { return fail(e); }
   });
 
+  /* ---- runtime observer (hidden BrowserWindow, localhost/workspace only) ---- */
+  ipcMain.handle('obs:load', async (_e, target) => {
+    try { return ok(await observer.load(String(target || ''))); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('obs:read', async () => {
+    try { return ok(await observer.read()); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('obs:crawl', async (_e, opts) => {
+    try { return ok(await observer.crawl(opts || {})); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('obs:screenshot', async () => {
+    try { return ok({ dataUrl: await observer.screenshot() }); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('obs:stop', () => { observer.stop(); return ok(); });
+
   /* ---- git ---- */
   ipcMain.handle('git:available', () => git.available());
   ipcMain.handle('git:exec', async (_e, args) => {
@@ -405,6 +422,9 @@ if (!app.requestSingleInstanceLock()) {
 
     registerIpc();
     rebuildMenu();
+
+    if (SMOKE_OBSERVER) { runObserverSmoke(); return; }
+
     createWindow();
 
     if (SMOKE) {
@@ -415,5 +435,64 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { proc.killAll(); });
+  app.on('before-quit', () => { proc.killAll(); observer.stop(); });
+}
+
+/* -------- observer integration check: serve a fixture page, crawl it -------- */
+async function runObserverSmoke() {
+  const http = require('http');
+  const os = require('os');
+  const fsp = require('fs/promises');
+  const PAGE = `<!doctype html><html><body>
+    <button id="real" onclick="fetch('/api').then(()=>{document.body.appendChild(document.createElement('p'))})">Load data</button>
+    <a id="dead" href="#">Nowhere</a>
+    <button id="boom" onclick="throw new Error('kaboom')">Break</button>
+  </body></html>`;
+  const server = http.createServer((req, res) => {
+    if (req.url === '/api') { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":1}'); return; }
+    res.writeHead(200, { 'content-type': 'text/html' }); res.end(PAGE);
+  });
+  await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  const port = server.address().port;
+  const base = 'http://localhost:' + port + '/';
+
+  // observer's file:// policy needs a workspace root; give it a temp one
+  const tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'cs-obs-'));
+  workspace.setRoot(tmp);
+
+  let exit = 0;
+  try {
+    // URL policy
+    let blocked = false;
+    try { observer.assertAllowedUrl('https://evil.example.com/'); } catch { blocked = true; }
+    console.log('[obs-smoke] external URL blocked:', blocked);
+    if (!blocked) exit = 1;
+
+    const loaded = await observer.load(base);
+    console.log('[obs-smoke] loaded:', JSON.stringify(loaded));
+
+    const trace = await observer.crawl({ max: 10 });
+    const byId = {};
+    (trace.trace || []).forEach((t) => { byId[t.control.name.toLowerCase()] = t.status; });
+    console.log('[obs-smoke] byStatus:', JSON.stringify(trace.byStatus));
+    console.log('[obs-smoke] per-control:', JSON.stringify(byId));
+    console.log('[obs-smoke] console errors captured:', (trace.consoleErrors || []).length);
+    console.log('[obs-smoke] network calls seen:', (trace.network || []).length);
+
+    const pass =
+      byId['load data'] === 'REAL' &&
+      byId['nowhere'] === 'MOCK' &&
+      byId['break'] === 'BROKEN' &&
+      (trace.network || []).some((n) => /\/api$/.test(n.url));
+    console.log('[obs-smoke] ' + (pass ? 'PASS' : 'FAIL'));
+    if (!pass) exit = 1;
+  } catch (e) {
+    console.error('[obs-smoke] error:', e && e.stack || e);
+    exit = 1;
+  } finally {
+    observer.stop();
+    server.close();
+    try { await fsp.rm(tmp, { recursive: true, force: true }); } catch { /* ignore */ }
+    app.exit(exit);
+  }
 }

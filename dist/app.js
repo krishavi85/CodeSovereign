@@ -2389,7 +2389,7 @@ function renderRecovery(){
           <div style="display:flex;gap:6px">
             <button class="btn" onclick="sovereignSnapshot()">+ Snapshot</button>
             <button class="btn" onclick="runSovereignAnalysis()">${I.run} Analyze</button>
-            ${(window.desktop && window.desktop.isDesktop) ? `<button class="btn primary" onclick="runSovereignEvidence()" title="Run the project's real npm test / build / lint / typecheck">${I.flask||I.run} Analyze + Test</button>` : ''}
+            ${(window.desktop && window.desktop.isDesktop) ? `<button class="btn" onclick="runSovereignObserve()" title="Drive the running app and record what every control actually does">${I.eye||I.run} Observe</button><button class="btn primary" onclick="runSovereignEvidence()" title="Run the project's real npm test / build / lint / typecheck">${I.flask||I.run} Analyze + Test</button>` : ''}
           </div>
         </div>
         ${renderSovereignMemory()}
@@ -3643,6 +3643,20 @@ function renderSovereignMemory(){
     + '<div style="font:700 18px \'JetBrains Mono\',monospace;color:' + (color||'#e6e9f2') + '">' + (val==null?'–':val) + '</div>'
     + '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">' + label + '</div></div>';
 
+  let obsRow = '';
+  const rt = S9.read('runtime-trace.json');
+  if (rt && rt.byStatus) {
+    const chip = (k, col) => rt.byStatus[k] ? '<span style="font-size:11px;padding:3px 9px;border-radius:20px;margin-right:6px;background:'
+      + col + '22;color:' + col + '">' + k + ': ' + rt.byStatus[k] + '</span>' : '';
+    obsRow = '<div style="margin:12px 0;padding:10px;border:1px solid var(--line);border-radius:9px">'
+      + '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Runtime crawl · '
+      + esc(rt.url || '') + ' · ' + fmtTimeAgo(rt.at) + '</div>'
+      + chip('REAL', '#34d399') + chip('MOCK', '#f59e0b') + chip('BROKEN', '#ef4444')
+      + chip('HIDDEN', '#8b93a7') + chip('DISABLED', '#8b93a7')
+      + ((rt.consoleErrors && rt.consoleErrors.length) ? '<span style="font-size:11px;color:var(--err);margin-left:6px">' + rt.consoleErrors.length + ' console errors</span>' : '')
+      + '</div>';
+  }
+
   let execRow = '';
   const evd = S9.read('execution-evidence.json');
   if (evd && evd.gates) {
@@ -3667,7 +3681,7 @@ function renderSovereignMemory(){
   return ''
     + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">' + loc
     + (st.lastAnalysisAt ? '  ·  last analysis ' + fmtTimeAgo(st.lastAnalysisAt) : '') + '</div>'
-    + execRow
+    + obsRow + execRow
     + '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">'
       + stat('Health', st.health, st.health>=75?'var(--good)':st.health>=50?'var(--warn)':'var(--err)')
       + stat('Components', c.components)
@@ -3711,6 +3725,22 @@ function runSovereignEvidence(){
   }, 60);
 }
 window.runSovereignEvidence = runSovereignEvidence;
+
+function runSovereignObserve(){
+  if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
+  if (!(window.CSObserve && CSObserve.available())) { toast('Open a project folder in the desktop app first', '#f59e0b'); return; }
+  var url = window.prompt('Runtime URL (blank = detect / start the dev server):', '') || undefined;
+  toast('Observing the running app…', '#a78bfa');
+  Engine.Sovereign.observe(url ? { url: url } : {}).then(function(r){
+    if (!r.ok) { toast(r.reason || 'observation failed', '#f59e0b'); return; }
+    var t = r.trace;
+    toast('Observed ' + t.controlsExercised + ' controls — ' + JSON.stringify(t.byStatus)
+      + (t.consoleErrors && t.consoleErrors.length ? ' · ' + t.consoleErrors.length + ' console errors' : ''), '#34d399');
+    if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
+    renderAll();
+  }).catch(function(e){ toast('Observation error: ' + e.message, '#ef4444'); console.error(e); });
+}
+window.runSovereignObserve = runSovereignObserve;
 
 function sovereignSnapshot(){
   if (!window.Engine || !Engine.Sovereign) return;

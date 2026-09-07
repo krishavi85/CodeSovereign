@@ -74,6 +74,20 @@ beyond what the user explicitly enabled.
 - `proc:write` caps input at 100 KB/chunk; `proc:kill` only touches tracked pids;
   all children are killed on quit.
 
+### Runtime observer (`obs:*`)
+
+- Drives the project's running app in a **separate hidden `BrowserWindow`**
+  (own `partition:'observer'`, own preload, `contextIsolation`,
+  `nodeIntegration:false`) so it can never touch the app window or `window.desktop`.
+- **URL policy** (`observer.assertAllowedUrl`): only
+  `http(s)://localhost|127.0.0.1|[::1]:*` and `file://` paths **inside the open
+  workspace**. The renderer cannot point the observer at an external site.
+- The observer window's own `setWindowOpenHandler` denies popups.
+- `observer-preload.js` only *reads* (console/network/nav buffers) and exposes a
+  read-only `window.__obs`; it sends nothing anywhere.
+- `sandbox:false` on this window only (the preload needs `require('electron')`);
+  acceptable because it loads localhost dev content the user is already running.
+
 ### Git (`git:*`)
 
 - **`git:exec(args)` was arbitrary** → `git -c core.pager=… status`,

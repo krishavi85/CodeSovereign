@@ -8,6 +8,7 @@ const git = require('../electron/lib/git');
 const { KEY_RE } = require('../electron/lib/creds');
 const { ID_RE } = require('../electron/lib/snapshots');
 const ws = require('../electron/lib/workspace');
+const observer = require('../electron/lib/observer');
 
 module.exports = async function (t) {
   // --- git argument validation ---
@@ -45,6 +46,19 @@ module.exports = async function (t) {
   t.ok('snap id: timestamp ok', ID_RE.test('2026-09-07T12-00-00-000Z'));
   t.ok('snap id: traversal blocked', !ID_RE.test('../../../etc/passwd'));
   t.ok('snap id: arbitrary blocked', !ID_RE.test('anything.json'));
+
+  // --- runtime observer URL policy ---
+  {
+    const otmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-obsurl-'));
+    ws.setRoot(otmp);
+    t.equal('observer allows localhost', observer.assertAllowedUrl('http://localhost:5173/'), 'http://localhost:5173/');
+    t.equal('observer allows 127.0.0.1', observer.assertAllowedUrl('http://127.0.0.1:3000/x'), 'http://127.0.0.1:3000/x');
+    for (const bad of ['https://evil.example.com/', 'http://localhost.evil.com/', 'http://169.254.169.254/', 'ftp://localhost/', 'http://[::1]evil/']) {
+      await t.throwsAsync('observer blocks ' + bad, async () => observer.assertAllowedUrl(bad));
+    }
+    await t.throwsAsync('observer blocks file:// outside workspace', async () => observer.assertAllowedUrl('file:///etc/passwd'));
+    fs.rmSync(otmp, { recursive: true, force: true });
+  }
 
   // --- workspace containment survives 8.3 short paths (regression: CI runner
   //     roots look like C:\Users\RUNNER~1\... while realpath returns the long form) ---

@@ -52,6 +52,7 @@
     'production-readiness.md':   'REAL / PARTIAL / MOCK / BROKEN / UNREACHABLE per interaction',
     // interactivity (spec 7)
     'interaction-inventory.json': 'Every interactive control with a stable id + contract slots',
+    'runtime-trace.json':        'Observed console / network / navigation + per-control event->effect (desktop)',
     'repairs/repair-ledger.md':  'Failed contract, root cause, patch, tests, rollback per repair',
     // rollups
     'analysis-summary.md':       'The latest full analysis in one readable page'
@@ -410,6 +411,68 @@
     });
   }
 
+  /* ---------------- runtime observation (desktop) ---------------- */
+  // Drives the project's running app, records what every control actually does,
+  // and folds the observed REAL / MOCK / BROKEN verdict back into the static
+  // interaction inventory. This is the specs' "reproduce the failure / trace the
+  // interaction chain" step made real.
+  function observe(opts) {
+    opts = opts || {};
+    var O = window.CSObserve;
+    if (!O || !O.available()) {
+      return Promise.resolve({ ok: false, reason: 'runtime observation needs the desktop app with a project folder open' });
+    }
+    return O.run(opts).then(function (r) {
+      if (!r.ok) return r;
+      var trace = r.trace;
+      write('runtime-trace.json', trace);
+
+      // diagnostics
+      write('diagnostics/console-' + new Date(trace.at).toISOString().replace(/[:.]/g, '-') + '.json', {
+        url: trace.url, at: trace.at,
+        consoleErrors: trace.consoleErrors || [],
+        network: trace.network || []
+      });
+
+      // enrich the static interaction inventory with what was actually observed
+      var inv = read('interaction-inventory.json') || interactionInventory();
+      var observedByName = {};
+      (trace.trace || []).forEach(function (o) {
+        var key = (o.control.name || o.control.tag || '').toLowerCase().slice(0, 40);
+        if (key) observedByName[key] = o;
+      });
+      (inv.interactions || []).forEach(function (it) {
+        var key = String(it.name || it.control || '').toLowerCase().slice(0, 40);
+        var o = observedByName[key];
+        if (o) {
+          it.observedStatus = o.status;
+          it.effects = o.effects;
+          it.status = o.status;                 // observed truth wins over the static guess
+        }
+      });
+      inv.observedAt = trace.at;
+      inv.observedCounts = trace.byStatus;
+      write('interaction-inventory.json', inv);
+
+      // production readiness reflects the real crawl
+      var pr = read('production-readiness.md') || '# Production readiness\n';
+      write('production-readiness.md', pr + '\n## Runtime crawl ' + new Date(trace.at).toISOString() + '\n\n' +
+        '- URL: ' + trace.url + '\n' +
+        '- controls exercised: ' + trace.controlsExercised + ' / ' + trace.controlsFound + '\n' +
+        Object.keys(trace.byStatus || {}).map(function (k) { return '- ' + k + ': ' + trace.byStatus[k]; }).join('\n') + '\n' +
+        (trace.consoleErrors && trace.consoleErrors.length ? '- **' + trace.consoleErrors.length + ' console errors during the crawl**\n' : ''));
+
+      var ds = read('decision-state.json') || {};
+      ds.runtime = { at: trace.at, url: trace.url, byStatus: trace.byStatus, consoleErrors: (trace.consoleErrors || []).length };
+      write('decision-state.json', ds);
+
+      appendChanges('runtime observation — ' + trace.controlsExercised + ' controls, ' +
+        JSON.stringify(trace.byStatus) + ', ' + (trace.consoleErrors || []).length + ' console errors');
+
+      return { ok: true, trace: trace };
+    });
+  }
+
   function snapshot(reason) {
     var stamp = new Date().toISOString().replace(/[:.]/g, '-');
     var dir = 'history/' + stamp;
@@ -437,7 +500,7 @@
   Engine.Sovereign = {
     FILES: FILES, ROOT: ROOT,
     read: read, write: write, list: list, exists: exists,
-    analyze: analyze, runEvidence: runEvidence, snapshot: snapshot, status: status,
+    analyze: analyze, runEvidence: runEvidence, observe: observe, snapshot: snapshot, status: status,
     componentInventory: componentInventory,
     interactionInventory: interactionInventory,
     pipelineInventory: pipelineInventory

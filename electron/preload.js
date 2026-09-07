@@ -59,6 +59,14 @@ contextBridge.exposeInMainWorld('desktop', {
     status: () => invoke('git:status')
   },
 
+  observer: {
+    load: (url) => invoke('obs:load', url),
+    read: () => invoke('obs:read'),
+    crawl: (opts) => invoke('obs:crawl', opts),
+    screenshot: () => invoke('obs:screenshot'),
+    stop: () => invoke('obs:stop')
+  },
+
   creds: {
     available: () => invoke('creds:available'),
     get: (key) => invoke('creds:get', key),
