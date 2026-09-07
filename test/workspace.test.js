@@ -31,6 +31,13 @@ module.exports = async function (t) {
   await t.throwsAsync('blocks node_modules mkdir', async () => ws.mkdirPath('node_modules'));
   await t.throwsAsync('blocks workspace-root delete', async () => ws.removePath('/'));
 
+  // .sovereign/ project memory must be writable + reloadable (not a protected dir)
+  await ws.writeFile('/.sovereign/decision-state.json', '{"health":90}');
+  await ws.writeFile('/.sovereign/history/2026-01-01/x.json', '{}');
+  t.equal('.sovereign file round-trips', await ws.readFile('/.sovereign/decision-state.json'), '{"health":90}');
+  const stree = await ws.readTree();
+  t.ok('.sovereign appears in the tree', stree.files.some((f) => f.path === '/.sovereign/decision-state.json'));
+
   fs.mkdirSync(path.join(tmp, 'node_modules'));
   fs.writeFileSync(path.join(tmp, 'node_modules', 'junk.js'), 'x');
   const tree2 = await ws.readTree();
