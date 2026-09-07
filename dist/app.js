@@ -3699,7 +3699,7 @@ function renderSovereignMemory(){
       + stat('Edges', c.edges + (c.brokenEdges?(' / '+c.brokenEdges+'✗'):''), c.brokenEdges?'var(--err)':'#e6e9f2')
       + stat('Mock signals', c.mockSignals, c.mockSignals?'var(--warn)':'var(--good)')
       + stat('Controls', c.interactions)
-      + stat('Pipelines', c.pipelines)
+      + stat('Pipeline gaps', c.pipelineGaps != null ? c.pipelineGaps : c.pipelines, c.pipelineGaps ? 'var(--warn)' : '#e6e9f2')
     + '</div>'
     + '<div style="display:flex;flex-direction:column;gap:1px;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:6px">'
       + (fileRows || '<div style="color:var(--muted);font-size:12px;padding:8px">(no files)</div>')

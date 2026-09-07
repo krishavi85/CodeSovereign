@@ -48,7 +48,9 @@
     'diagrams/component.mmd':    'Components grouped by layer, edges = imports',
     'diagrams/dataflow.mmd':     'Client -> route -> service -> data store',
     // pipelines (spec 4)
-    'pipeline-inventory.json':   'Discovered build / test / release / infra pipelines',
+    'pipeline-inventory.json':   'Discovered + parsed build / test / release / infra pipelines',
+    'pipeline-graph.json':       'Normalized pipeline job graph (nodes + needs edges)',
+    'pipeline-gaps.json':        'Missing trigger / unsafe deploy / migration race / secret exposure / ...',
     'execution-evidence.json':   'Real npm test / build / lint / typecheck results (desktop)',
     // mockups (spec 6)
     'simulation-report.json':    'Mock / stub / fake-data / unwired-control findings',
@@ -203,7 +205,14 @@
         Object.keys(scripts).forEach(function (s) { found.push({ family: 'development', kind: 'npm-script', file: p, name: s, command: scripts[s] }); });
       }
     });
-    return { pipelines: found, count: found.length, note: found.length ? undefined : 'No CI/infra/migration files found — pipelines are undiscovered.', generatedAt: Date.now() };
+    var parsed = safe(function () { return window.PipelineParse && window.PipelineParse.parseAll(); }, null);
+    return {
+      generatedAt: Date.now(),
+      files: found, count: found.length,
+      parsed: parsed || undefined,
+      gaps: parsed ? parsed.gaps : [],
+      note: found.length ? undefined : 'No CI/infra/migration files found — pipelines are undiscovered.'
+    };
   }
 
   function shortName(p) { return String(p).split('/').slice(-2).join('/').slice(0, 40); }
@@ -361,6 +370,11 @@
     write('components.json', components);
     write('interaction-inventory.json', interactions);
     write('pipeline-inventory.json', pipelines);
+    if (pipelines.parsed) {
+      write('pipeline-gaps.json', { generatedAt: Date.now(), gaps: pipelines.gaps || [], byCategory: (pipelines.gaps || []).reduce(function (m, g) { m[g.kind] = (m[g.kind] || 0) + 1; return m; }, {}) });
+      // normalized graph (JSON; the specs call it pipeline-graph.yaml — we keep JSON for reliable round-trip)
+      write('pipeline-graph.json', pipelines.parsed.graph);
+    }
     write('simulation-report.json', {
       generatedAt: Date.now(),
       total: mockCount,
@@ -379,6 +393,9 @@
     (graphHealth.broken || []).forEach(function (e) { kiLines.push('- **ERROR** ' + e.from + ' — broken edge to `' + e.to + '`'); });
     (mockScan.signals || []).filter(function (s) { return s.severity !== 'low'; }).slice(0, 120).forEach(function (m) {
       kiLines.push('- **' + m.severity.toUpperCase() + ' / mock** ' + m.file + ':' + m.line + ' — ' + m.why + ' (`' + (m.sample || '') + '`)');
+    });
+    (pipelines.gaps || []).forEach(function (g) {
+      kiLines.push('- **' + String(g.severity).toUpperCase() + ' / pipeline** ' + g.file + ' — ' + g.why);
     });
     write('known-issues.md', kiLines.join('\n') + '\n');
 
@@ -459,7 +476,9 @@
         errors: errs, warnings: warns,
         mockSignals: mockCount,
         interactions: interactions.total,
-        pipelines: pipelines.count
+        pipelines: pipelines.count,
+        pipelineJobs: (pipelines.parsed && pipelines.parsed.graph.nodes.length) || 0,
+        pipelineGaps: (pipelines.gaps || []).length
       },
       execution: prevState.execution || undefined,
       runtime: prevState.runtime || undefined,
@@ -480,7 +499,7 @@
       '| Validator | ' + errs + ' errors, ' + warns + ' warnings |\n' +
       '| Mock / simulation signals | ' + mockCount + ' |\n' +
       '| Interactive controls | ' + interactions.total + ' |\n' +
-      '| Pipelines discovered | ' + pipelines.count + ' |\n' +
+      '| Pipelines discovered | ' + pipelines.count + ' (' + ((pipelines.parsed && pipelines.parsed.graph.nodes.length) || 0) + ' jobs, ' + (pipelines.gaps || []).length + ' gaps) |\n' +
       '| External systems | ' + (state.externals.length ? state.externals.join(', ') : 'none detected') + ' |\n' +
       '| Graph fingerprint | `' + fp + '`' + (drift ? ' ⚠️ drift' : '') + ' |\n\n' +
       'Diagrams: `.sovereign/architecture.md` + `.sovereign/diagrams/`. Full evidence in `.sovereign/*.json`.\n');
