@@ -79,6 +79,22 @@
 
   function common() {
     return [
+      "const STARTED = Date.now();",
+      "const metrics = { requests: 0, byStatus: {} };",
+      "const LOG_SILENT = process.env.LOG === 'silent' || process.env.NODE_ENV === 'test';",
+      "function observe(req, res) {",
+      "  const t0 = Date.now(); metrics.requests++;",
+      "  res.on('finish', () => {",
+      "    const cls = (res.statusCode / 100 | 0) + 'xx'; metrics.byStatus[cls] = (metrics.byStatus[cls] || 0) + 1;",
+      "    if (!LOG_SILENT) { try { console.log(JSON.stringify({ t: new Date().toISOString(), level: res.statusCode >= 500 ? 'error' : 'info', msg: 'request', method: req.method, path: (req.url || '').split('?')[0], status: res.statusCode, ms: Date.now() - t0 })); } catch (_) {} }",
+      "  });",
+      "}",
+      "function metricsText() {",
+      "  let out = '# TYPE app_uptime_seconds gauge\\napp_uptime_seconds ' + ((Date.now() - STARTED) / 1000).toFixed(1) + '\\n';",
+      "  out += '# TYPE app_requests_total counter\\napp_requests_total ' + metrics.requests + '\\n';",
+      "  for (const k of Object.keys(metrics.byStatus)) out += 'app_responses_total{class=\"' + k + '\"} ' + metrics.byStatus[k] + '\\n';",
+      "  return out;",
+      "}",
       "function send(res, code, body, type) {",
       "  const s = typeof body === 'string' ? body : JSON.stringify(body);",
       "  res.writeHead(code, { 'content-type': type || 'application/json' }); res.end(s);",
@@ -115,10 +131,12 @@
       "}",
       "",
       "const server = http.createServer(async (req, res) => {",
+      "  observe(req, res);",
       "  const u = new URL(req.url, 'http://localhost'); const seg = u.pathname.split('/').filter(Boolean);",
       "  try {",
       "    if (u.pathname.startsWith('/api/') && !rateLimit(req)) return send(res, 429, { error: 'rate limit exceeded' });",
-      "    if (u.pathname === '/healthz') return send(res, 200, { ok: true, service: 'gateway' });"
+      "    if (u.pathname === '/healthz') return send(res, 200, { ok: true, service: 'gateway', uptime_s: Math.round((Date.now() - STARTED) / 1000) });",
+      "    if (u.pathname === '/metrics') return send(res, 200, metricsText(), 'text/plain; version=0.0.4');"
     ];
     if (withAuth) {
       L.push("    await auth.attachUser(req);");
@@ -161,9 +179,11 @@
       common(),
       "",
       "const server = http.createServer(async (req, res) => {",
+      "  observe(req, res);",
       "  const u = new URL(req.url, 'http://localhost'); const seg = u.pathname.split('/').filter(Boolean);",
       "  try {",
       "    if (u.pathname === '/healthz') return send(res, 200, { ok: true, service: '" + d.name + "' });",
+      "    if (u.pathname === '/metrics') return send(res, 200, metricsText(), 'text/plain; version=0.0.4');",
       resourceRouter('service', doms, withAuth),
       "    send(res, 404, { error: 'not found' });",
       "  } catch (e) { send(res, e.status || 500, { error: String(e.message || e) }); }",

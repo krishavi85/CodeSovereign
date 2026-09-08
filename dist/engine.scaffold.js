@@ -217,6 +217,7 @@
     var head = function (tag) {
       return "'use strict';\n" +
         "process.env.DATA_DIR = require('node:path').join(require('node:os').tmpdir(), 'test-" + tag + "-' + process.pid);\n" +
+        "process.env.LOG = 'silent';\n" +
         "const test = require('node:test');\nconst assert = require('node:assert');\n";
     };
     out['test/db.test.js'] =

@@ -312,6 +312,48 @@ module.exports = async function (t) {
     t.ok('packaging: CI has build-mac + build-linux jobs on their native runners', /build-mac:/.test(wf) && /macos-latest/.test(wf) && /build-linux:/.test(wf));
   }
 
+  /* ---------- 11. Ops: generated backends expose /healthz + /readyz + /metrics + structured logs ---------- */
+  {
+    const win = loadEngines(['engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.frontends.js', 'engine.graphql.js', 'engine.realtime.js', 'engine.pybackend.js', 'engine.microservices.js', 'engine.scaffold.js']);
+    const nodeSpec = { name: 'ops', auth: true, entities: [{ name: 'note', fields: [{ name: 'body', type: 'text', required: true }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] }] };
+    const g = win.Engine.Scaffold.generate(nodeSpec);
+    const map = {}; g.forEach((f) => { map[f.path] = f.content; });
+    const server = map['/server.js'];
+    t.ok('ops(node): server exposes /healthz, /readyz and /metrics', /'\/healthz'/.test(server) && /'\/readyz'/.test(server) && /'\/metrics'/.test(server));
+    t.ok('ops(node): Prometheus text format + a request counter', /app_requests_total/.test(server) && /text\/plain; version=0\.0\.4/.test(server));
+    t.ok('ops(node): structured JSON access log, silenced under test', /JSON\.stringify\(\{ t: new Date\(\)\.toISOString\(\)/.test(server) && /LOG_SILENT/.test(server));
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stk-ops-'));
+    try {
+      Object.keys(map).forEach((p) => { const abs = path.join(dir, p.replace(/^\//, '')); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, map[p]); });
+      cp.execFileSync('node', ['scripts/migrate.js'], { cwd: dir, stdio: 'pipe', timeout: 30000 });
+      fs.writeFileSync(path.join(dir, 'ops-probe.test.js'), [
+        "'use strict';",
+        "process.env.DATA_DIR = require('node:path').join(require('node:os').tmpdir(), 'ops-probe-' + process.pid);",
+        "process.env.LOG = 'silent';",
+        "const test = require('node:test'); const assert = require('node:assert');",
+        "const { server } = require('./server');",
+        "test('ops endpoints', async () => {",
+        "  await new Promise((r) => server.listen(0, r));",
+        "  const b = 'http://localhost:' + server.address().port;",
+        "  const h = await fetch(b + '/healthz'); const hj = await h.json();",
+        "  assert.equal(h.status, 200); assert.equal(hj.ok, true);",
+        "  const rd = await fetch(b + '/readyz'); assert.equal(rd.status, 200);",
+        "  const m = await fetch(b + '/metrics'); const mt = await m.text();",
+        "  assert.match(m.headers.get('content-type') || '', /text\\/plain/);",
+        "  assert.match(mt, /app_requests_total \\d/);",
+        "  await new Promise((r) => server.close(r));",
+        "});"
+      ].join('\n'));
+      const r = cp.spawnSync('node', ['--test', 'ops-probe.test.js'], { cwd: dir, encoding: 'utf8', timeout: 25000 });
+      t.equal('ops(node): a booted server answers /healthz + /readyz + /metrics for real', r.status, 0);
+      if (r.status !== 0) console.log(r.stdout + r.stderr);
+    } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
+
+    const pg = {}; win.Engine.Scaffold.generate({ name: 'pyops', auth: true, backend: 'python', entities: nodeSpec.entities }).forEach((f) => { pg[f.path] = f.content; });
+    t.ok('ops(python): app/main.py exposes /healthz + /readyz + /metrics + JSON access log', /"\/healthz"/.test(pg['/app/main.py']) && /"\/metrics"/.test(pg['/app/main.py']) && /_metrics_text/.test(pg['/app/main.py']) && /json\.dumps\(rec\)/.test(pg['/app/main.py']));
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');
