@@ -66,7 +66,7 @@ function driver() {
 
     try {
       window.__UM_TRACE = true;
-      window.__UM_STOP_AFTER_LOOP = ${process.env.GM_DEBUG_LOOP_ONLY ? 'true' : 'false'};
+      window.__UM_STOP_AFTER_LOOP = ${process.env.UM_DEBUG_LOOP_ONLY ? 'true' : 'false'};
       log('start'); await GM.reset();
 
       // ---- inject a repairable defect into the generated output (simulates an
@@ -240,7 +240,7 @@ async function run() {
       else [, level, message] = a;
       message = String(message);
       if (level === 'error' || level === 3) rendererErrors.push(message.slice(0, 300));
-      if (/^\[gm-(driver|acc)\]/.test(message)) console.log('  ' + message);
+      if (/^\[um-(driver|acc)\]/.test(message)) console.log('  ' + message);
     });
 
     await win.loadFile(RENDERER);

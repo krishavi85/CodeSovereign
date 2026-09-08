@@ -196,10 +196,12 @@ module.exports = async function (t) {
     const GM = win.Engine.UltraMode;
     const run = await GM.start({ prompt: PROMPT, useLLM: false });
     t.equal('defect path still reaches VERIFIED', run.state, 'VERIFIED');
-    t.equal('used exactly the repair attempts it needed', run.attempts.repair, 2);
-    t.ok('each repair took a pre-repair snapshot',
-      run.snapshots.filter((s) => /^pre-repair-/.test(s.phase)).length === 2);
-    t.ok('repair steps recorded in artifacts', run.artifacts.steps.filter((s) => s.kind === 'repair').length === 2);
+    t.ok('converged within the repair budget', run.attempts.repair >= 1 && run.attempts.repair <= 3);
+    t.ok('one repair attempt clears everything Recovery can (loops run() internally)',
+      run.artifacts.steps.some((s) => s.kind === 'repair' && s.passes >= 2), JSON.stringify(run.artifacts.steps.filter((s) => s.kind === 'repair').map((s) => s.passes)));
+    t.ok('each repair attempt took a pre-repair snapshot',
+      run.snapshots.filter((s) => /^pre-repair-/.test(s.phase)).length === run.attempts.repair);
+    t.ok('repair steps recorded in artifacts', run.artifacts.steps.filter((s) => s.kind === 'repair').length === run.attempts.repair);
     t.ok('evidence timeline shows the improvement',
       run.evidence.timeline.some((e) => e.label === 'post-validate') &&
       run.evidence.timeline.some((e) => /post-repair/.test(e.label)) &&

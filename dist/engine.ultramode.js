@@ -477,11 +477,23 @@
       var before = run.evidence.latest || recordEvidence(run, 'pre-repair');
       var phase = 'pre-repair-' + attempt;
       return snapshot(run, phase).then(function () {
-        var rec = { kind: 'repair', attempt: attempt, at: now() };
+        var rec = { kind: 'repair', attempt: attempt, at: now(), passes: 0 };
         try {
           if (Engine.Recovery && Engine.Recovery.run) {
-            var r = Engine.Recovery.run();
-            rec.status = r.status; rec.repaired = r.repairedCount; rec.rolledBack = !!r.rolledBack;
+            // Recovery fixes a bounded number of findings per run(); loop it (up to
+            // 4×) within ONE repair attempt so every auto-repairable finding is
+            // cleared before we spend real npm time re-verifying.
+            var total = 0, last = 1, r = null;
+            for (var i = 0; i < 4 && last > 0; i++) {
+              r = Engine.Recovery.run();
+              last = r.repairedCount || 0;
+              total += last;
+              rec.passes++;
+              if (r.rolledBack) break;
+            }
+            rec.status = r ? r.status : 'NO_RECOVERY';
+            rec.repaired = total;
+            rec.rolledBack = !!(r && r.rolledBack);
           } else { rec.status = 'NO_RECOVERY'; }
         } catch (e) { rec.status = 'ERROR'; rec.error = String(e && e.message || e); }
         run.attempts.repair = attempt;
