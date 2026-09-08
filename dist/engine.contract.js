@@ -187,7 +187,7 @@
      the optional LLM pass only adds extra functional requirements, never
      changes the machine criteria the Ledger / DoD verify against.
 
-     This is what the GodMode closed loop starts from. Every generated
+     This is what the Ultra Mode closed loop starts from. Every generated
      component, test and observation traces back to an id assigned here.
      ===================================================================== */
 

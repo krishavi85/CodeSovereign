@@ -1,7 +1,7 @@
 /* =====================================================================
    engine.orchestrator.js  —  Engine.Orchestrator
 
-   The closed loop the blueprint calls the GodMode pipeline (§71):
+   The closed loop the blueprint calls the Ultra pipeline (§71):
    for each ready task, GENERATE the slice -> write files -> re-run the
    proof engine (analyze -> runEvidence -> observe -> Recovery) -> rebuild
    the Evidence Ledger and the Definition-of-Done gate -> keep going until
@@ -184,7 +184,7 @@
     },
 
     // Emit a vendor-neutral AIProvider abstraction so a generated app never
-    // hard-codes one AI vendor (GodMode blueprint §29). Local-first: it prefers
+    // hard-codes one AI vendor (blueprint §29). Local-first: it prefers
     // an OLLAMA_BASE_URL, then falls back to whichever cloud key is present.
     'ai-provider': function (read) {
       var out = [];
@@ -401,5 +401,5 @@
   }
 
   Engine.Orchestrator = { run: run, TEMPLATES: TEMPLATES };
-  console.info('[Orchestrator] GodMode pipeline executor ready — Engine.Orchestrator');
+  console.info('[Orchestrator] Ultra pipeline executor ready — Engine.Orchestrator');
 })();

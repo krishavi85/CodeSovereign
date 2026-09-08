@@ -1,4 +1,4 @@
-# GodMode gap analysis
+# Blueprint gap analysis
 
 Measures the current codebase against the two blueprints:
 
@@ -29,7 +29,7 @@ offline, evidence-based verification substrate**.
 
 1. Product Contract + Requirement DAG — turn intent into explicit, testable requirements with dependencies
 2. Evidence Ledger — every PASS/FAIL claim traceable to a test / runtime observation / file / artifact
-3. GodMode Orchestrator — one closed loop: plan → implement → run → observe → repair → re-verify
+3. Ultra Mode coordinator — one closed loop: plan → implement → run → observe → repair → re-verify
 4. Definition of Done — block "complete" when code exists but runtime behaviour is absent
 
 All four now exist as a first vertical slice — `dist/engine.{contract,ledger,dod,orchestrator}.js`,
@@ -42,7 +42,7 @@ chase the 68 framework / platform features.
 
 ---
 
-## 2. Capability matrix — GodMode blueprint
+## 2. Capability matrix — blueprint
 
 ### A. Product & Architecture (§1–5)
 
@@ -79,7 +79,7 @@ chase the 68 framework / platform features.
 
 | § | Capability | State | Notes |
 |---|---|---|---|
-| 17 | Security GodMode (injection / XSS / CSRF / SSRF / secrets / headers / CORS / deps) on the *product* | ✅ | `dist/engine.security.js` — product security scanner over the workspace source: SQL/command injection, XSS (`innerHTML`/`document.write` with dynamic data), path traversal, hardcoded secrets (GitHub/OpenAI/Slack/AWS/PEM/JWT/credential literals), `eval`/`new Function`, weak crypto (md5/sha1, `Math.random` for security values), wildcard CORS, insecure cookies, committed `.env` values, **unauthenticated mutating routes**, missing rate limiting. `scan()` → `score = 100 − high·20 − medium·7 − low·2` → `.sovereign/security-findings.json` + `security-report.md`, folded into `decision-state.json`. Runs inside `Sovereign.analyze()`; `Engine.DoD` reads `bySeverity.high` as the authoritative security gate. `electron/SECURITY.md` still covers the shell's own IPC surface. |
+| 17 | Product security scanner (injection / XSS / CSRF / SSRF / secrets / headers / CORS / deps) on the *product* | ✅ | `dist/engine.security.js` — product security scanner over the workspace source: SQL/command injection, XSS (`innerHTML`/`document.write` with dynamic data), path traversal, hardcoded secrets (GitHub/OpenAI/Slack/AWS/PEM/JWT/credential literals), `eval`/`new Function`, weak crypto (md5/sha1, `Math.random` for security values), wildcard CORS, insecure cookies, committed `.env` values, **unauthenticated mutating routes**, missing rate limiting. `scan()` → `score = 100 − high·20 − medium·7 − low·2` → `.sovereign/security-findings.json` + `security-report.md`, folded into `decision-state.json`. Runs inside `Sovereign.analyze()`; `Engine.DoD` reads `bySeverity.high` as the authoritative security gate. `electron/SECURITY.md` still covers the shell's own IPC surface. |
 | 18 | Privacy engine (sensitive-data flow, retention, export) | ⬜ | Requirements pack names GDPR; no flow analysis. |
 | 19 | Testing factory (autogenerate unit/integration/e2e/a11y/install/upgrade/recovery tests) | 🟨 | `dist/engine.testgen.js` — reads the open project's route table + schema + interaction inventory and writes real `node:test` files into `test/` that `runEvidence()` then executes: one API test per detected endpoint (status + shape), an a11y suite (`<html lang>`, `<img alt>`, button text). **Not yet**: e2e / install / upgrade test generation. |
 | 20 | Adversarial test engine (disconnect net / kill backend / corrupt DB / expired tokens / malformed payloads) | ✅ | `dist/engine.testgen.js` `chaosSuite()` — generates `test/chaos.test.js`: malformed JSON body, oversized body (→ 413), unknown id, wrong method, expired/bogus token must not authenticate, mutation without auth → 401, 8 concurrent writes don't corrupt. Runs under `node --test` as part of the evidence gates. |
@@ -161,10 +161,10 @@ chase the 68 framework / platform features.
 
 | § | Capability | State |
 |---|---|---|
-| 69 | Graduated control levels (Assist / Build / Engineer / Autopilot / GodMode) | ✅ `dist/engine.autonomy.js` — 5 levels, each a capability set over `write/generate/command/repair/observe/deploy/release/network`. `allows(action)` / `gate(action, fn)`. `Engine.Orchestrator.run()` checks `allows('generate'/'command'/'observe'/'repair')` before each side effect; `Engine.Agents` blocks disallowed agents; Settings → **Autonomy & Deployment** card sets the level (persisted). Default `engineer`. |
-| 70 | GodMode command (compact BUILD/TARGET/CONSTRAINTS/MODE declaration) | 🟨 `Engine.GodMode.start({ prompt, answers?, bounds?, useLLM? })` is the programmatic entry; a free-text request is normalised into the machine-readable contract (BUILD/TARGET/CONSTRAINTS are all derived). A terse `BUILD:/TARGET:/CONSTRAINTS:/MODE:` DSL is not parsed as a distinct syntax. |
-| 71 | The GodMode pipeline (one closed loop intent→…→SOVEREIGN VERIFIED) | ✅ `dist/engine.godmode.js` `Engine.GodMode` — one coordinator, an explicit 15-state machine persisted to `.sovereign/godmode-run.json` (resumes after an app restart with no regeneration), bounded (max repair attempts, run timeout, cancellation), snapshot-before-mutation + rollback-when-worse. It sequences the existing engines only: `Contract.deriveFromPrompt` → `Universal.buildPlan` → `Scaffold`/`TestGen`/`Deploy` → `Sovereign.analyze`/`runEvidence`/`observe` → `Ledger` → `Recovery` → `DoD` + certificate. A plain-browser run generates then ends `BLOCKED` (execution + observation unavailable) — never falsely verified. Proven end-to-end by `npm run acceptance:godmode` (prompt → SOVEREIGN VERIFIED + resume + two negative scenarios) and `test/godmode.test.js` (82 checks). See `docs/GODMODE_CLOSED_LOOP.md`. |
-| 72 | The defining difference (verified outcomes, not files) | ✅ demonstrated for a **from-scratch product** built from one natural-language request: `acceptance:godmode` starts from an empty workspace + the acceptance prompt, generates a ~31-file full-stack app, runs its real `npm test/build/lint`, crawls it running, injects + repairs a defect through the normal repair path, and only then emits `SOVEREIGN VERIFIED`. A requirement is `verified` only when its acceptance criteria pass against real evidence — never because a file exists. |
+| 69 | Graduated control levels (Assist / Build / Engineer / Autopilot / Ultra) | ✅ `dist/engine.autonomy.js` — 5 levels, each a capability set over `write/generate/command/repair/observe/deploy/release/network`. `allows(action)` / `gate(action, fn)`. `Engine.Orchestrator.run()` checks `allows('generate'/'command'/'observe'/'repair')` before each side effect; `Engine.Agents` blocks disallowed agents; Settings → **Autonomy & Deployment** card sets the level (persisted). Default `engineer`. |
+| 70 | Ultra Mode command (compact BUILD/TARGET/CONSTRAINTS/MODE declaration) | 🟨 `Engine.UltraMode.start({ prompt, answers?, bounds?, useLLM? })` is the programmatic entry; a free-text request is normalised into the machine-readable contract (BUILD/TARGET/CONSTRAINTS are all derived). A terse `BUILD:/TARGET:/CONSTRAINTS:/MODE:` DSL is not parsed as a distinct syntax. |
+| 71 | The Ultra Mode pipeline (one closed loop intent→…→SOVEREIGN VERIFIED) | ✅ `dist/engine.ultramode.js` `Engine.UltraMode` — one coordinator, an explicit 15-state machine persisted to `.sovereign/ultramode-run.json` (resumes after an app restart with no regeneration), bounded (max repair attempts, run timeout, cancellation), snapshot-before-mutation + rollback-when-worse. It sequences the existing engines only: `Contract.deriveFromPrompt` → `Universal.buildPlan` → `Scaffold`/`TestGen`/`Deploy` → `Sovereign.analyze`/`runEvidence`/`observe` → `Ledger` → `Recovery` → `DoD` + certificate. A plain-browser run generates then ends `BLOCKED` (execution + observation unavailable) — never falsely verified. Proven end-to-end by `npm run acceptance:ultramode` (prompt → SOVEREIGN VERIFIED + resume + two negative scenarios) and `test/ultramode.test.js` (82 checks). See `docs/ULTRAMODE_CLOSED_LOOP.md`. |
+| 72 | The defining difference (verified outcomes, not files) | ✅ demonstrated for a **from-scratch product** built from one natural-language request: `acceptance:ultramode` starts from an empty workspace + the acceptance prompt, generates a ~31-file full-stack app, runs its real `npm test/build/lint`, crawls it running, injects + repairs a defect through the normal repair path, and only then emits `SOVEREIGN VERIFIED`. A requirement is `verified` only when its acceptance criteria pass against real evidence — never because a file exists. |
 
 ---
 
@@ -172,25 +172,25 @@ chase the 68 framework / platform features.
 
 | Stage | State | Gap |
 |---|---|---|
-| 1 Prompt intake / composer | 🟨 | free-text request → `Engine.GodMode.start({ prompt })` or the GodMode screen; still no attachments/screenshots/repos/audio |
+| 1 Prompt intake / composer | 🟨 | free-text request → `Engine.UltraMode.start({ prompt })` or the Ultra Mode screen; still no attachments/screenshots/repos/audio |
 | 2 Prompt normalization | 🟨 | keyword + spellfix rules (`Universal.Normalizer`), optional model pass; feeds `Contract.deriveFromPrompt` |
 | 3 Application classifier | 🟨 | rule-based (`Universal.Classifier`); now consumed by the contract's `product.type` + stack choice |
 | 4 Requirements engine | ✅ | `Contract.deriveFromPrompt` → machine-readable requirements with stable ids + machine-checkable acceptance criteria; each is **verified per-requirement** by `Engine.Ledger` against real evidence |
-| 5 Feasibility & constraint analysis | 🟨 | the contract records `unsupported` / `unsafe` / `blockingQuestions` / `assumptions`; `GodMode` acts on them (BLOCKED / NEEDS_INPUT / recorded default). Cost/host feasibility is still light. |
-| 6 Product specification (`/project-docs/*.md`) | 🟨 | `product-contract.json` + `godmode-plan.json` + `godmode-report.md` are the driven spec; the older `writeProjectDocs()` markdown is not wired into `GodMode` |
+| 5 Feasibility & constraint analysis | 🟨 | the contract records `unsupported` / `unsafe` / `blockingQuestions` / `assumptions`; `Ultra Mode` acts on them (BLOCKED / NEEDS_INPUT / recorded default). Cost/host feasibility is still light. |
+| 6 Product specification (`/project-docs/*.md`) | 🟨 | `product-contract.json` + `ultramode-plan.json` + `ultramode-report.md` are the driven spec; the older `writeProjectDocs()` markdown is not wired into `Ultra Mode` |
 | 7 Architecture generation | 🟨 | `Universal.buildPlan` + the contract's entities/journeys/api table drive generation; `Sovereign.analyze` regenerates architecture diagrams from the real graph. Not enforced as contract *rules*. |
 | 8 Technology stack selection | 🟨 | `Contract` picks the supported stack from the prompt (Postgres vs SQLite vs JSON, auth, jobs); `Scaffold` honours it. Not validated against the host machine. |
-| 9 Project blueprint (repo structure) | ✅ | `Scaffold.generate` emits the real repo structure the plan predicts; `godmode-plan.json` lists the files up front and the ledger checks they exist |
-| 10 Multi-agent orchestration | ✅ | `Engine.GodMode` (state machine) + `Engine.Agents` (specialist roster) + `Engine.Orchestrator` (task DAG). `Universal.buildPlan` produces the typed plan the coordinator executes against the real engines. |
+| 9 Project blueprint (repo structure) | ✅ | `Scaffold.generate` emits the real repo structure the plan predicts; `ultramode-plan.json` lists the files up front and the ledger checks they exist |
+| 10 Multi-agent orchestration | ✅ | `Engine.UltraMode` (state machine) + `Engine.Agents` (specialist roster) + `Engine.Orchestrator` (task DAG). `Universal.buildPlan` produces the typed plan the coordinator executes against the real engines. |
 | 11 Code generation | ✅ | `Engine.Scaffold.specFromContract` → `generate()` → a complete dependency-free full-stack repo (backend + data layer + real SQL migrations + auth + async queue/worker + frontend + tests + CI + Docker). Driven from the contract, offline, deterministic. Vanilla JS + JSON/pg store by design (so the generated `npm test` runs and the observer can drive it). |
 | 12 Connection & wiring engine | 🟨 | `Sovereign.analyze` builds the connection graph + health; `Ledger` checks per-control runtime verdicts (REAL / MOCK / BROKEN) from the observer crawl. Deep "button→handler→endpoint→service→DB" *static* tracing of generated code is still partial. |
 | 13 Build & execution | ✅ | real, via proc bridge (for projects that build) |
 | 14 Automated testing | ✅ | `engine.testgen.js` generates API + chaos + a11y `node:test` files; `runEvidence()` executes them |
-| 15 Repair loop | ✅ | `Engine.GodMode` REPAIRING/REVERIFYING — snapshot → `Recovery.run` → re-execute + re-observe → re-evaluate the DoD; bounded by `maxRepairAttempts`, rolls back a repair that makes the evidence worse, stops when a repair makes no progress |
-| 16 Quality gate (requirements met / no mocks / no broken routes / UX verified) | ✅ | `Engine.DoD.evaluate()` — 8 blocking criteria (implementation exists · dependencies connected · build succeeds · tests succeed · runtime action succeeds · no fake implementation · security gates · acceptance criteria) computed from real evidence; `Engine.GodMode` will not emit `VERIFIED` without it + a real certificate. |
+| 15 Repair loop | ✅ | `Engine.UltraMode` REPAIRING/REVERIFYING — snapshot → `Recovery.run` → re-execute + re-observe → re-evaluate the DoD; bounded by `maxRepairAttempts`, rolls back a repair that makes the evidence worse, stops when a repair makes no progress |
+| 16 Quality gate (requirements met / no mocks / no broken routes / UX verified) | ✅ | `Engine.DoD.evaluate()` — 8 blocking criteria (implementation exists · dependencies connected · build succeeds · tests succeed · runtime action succeeds · no fake implementation · security gates · acceptance criteria) computed from real evidence; `Engine.UltraMode` will not emit `VERIFIED` without it + a real certificate. |
 | 17 Packaging | 🟨 | Windows only |
 | 18 Deployment | 🟨 | `engine.deploy.js` generates IaC + deploy script + preflight for 7 targets; does not push (needs creds) |
-| 19/20 Delivery contract (code + build + tests + package + guide + evidence + known limits + continuation state) | 🟨 | `Engine.GodMode` produces `godmode-report.md` (request, state, assumptions, blocking questions, unsupported/unsafe items, the evidence timeline, requirement traceability) + the full `.sovereign/` set (contract, plan, ledger, DoD, certificate). Not yet a single downloadable delivery archive. |
+| 19/20 Delivery contract (code + build + tests + package + guide + evidence + known limits + continuation state) | 🟨 | `Engine.UltraMode` produces `ultramode-report.md` (request, state, assumptions, blocking questions, unsupported/unsafe items, the evidence timeline, requirement traceability) + the full `.sovereign/` set (contract, plan, ledger, DoD, certificate). Not yet a single downloadable delivery archive. |
 
 ---
 
@@ -217,7 +217,7 @@ already exists; none requires new frameworks.
    implementation" from what runtime observation actually *exercised*, not from
    static guesses. Works on any open project.
 
-4. ✅ **GodMode Orchestrator** — `dist/engine.orchestrator.js`. Executes a task
+4. ✅ **Ultra Mode coordinator** — `dist/engine.orchestrator.js`. Executes a task
    DAG: per task, run a generator (built-in template, or `Engine.LLM` prompt),
    write the slice, then loop `analyze → runEvidence → observe → Recovery →
    re-verify` until the task's target is met. The acceptance run proves it turns

@@ -1,7 +1,7 @@
 /* =====================================================================
    engine.airouter.js  —  Engine.AIRouter
 
-   Makes local inference a first-class target (GodMode blueprint §28):
+   Makes local inference a first-class target (blueprint §28):
    discover the local runtimes, recommend a model for this host + task,
    and wire the winner into Engine.LLM. Falls back to a configured cloud
    provider only when nothing local fits.

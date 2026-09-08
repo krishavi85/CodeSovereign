@@ -1,5 +1,5 @@
 /* =====================================================================
-   engine.backend.js  —  Engine.Backend   (GodMode blueprint §14)
+   engine.backend.js  —  Engine.Backend   (blueprint §14)
 
    Generates a real, dependency-free HTTP backend:
      - server.js         : routing table, static files, JSON body parsing,

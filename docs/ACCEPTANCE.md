@@ -23,10 +23,10 @@ detect → classify → execute → observe → repair → retest → regenerate
 | **regenerate** | `analyze()` again — new graph fingerprint + drift check vs. the pre-repair fingerprint | `decision-state.json` |
 | **readiness gate** | 9 boolean criteria computed from the artefacts above | `[acceptance] READINESS GATE PASSES` |
 
-### Stage 8 — the P0 pipeline (closed GodMode loop on generated code)
+### Stage 8 — the P0 pipeline (closed Ultra Mode loop on generated code)
 
 After the readiness gate, the harness exercises the P0 pipeline
-(`docs/GODMODE_GAP_ANALYSIS.md`):
+(`docs/BLUEPRINT_GAP_ANALYSIS.md`):
 
 1. **`Engine.Contract.derive()`** builds `product-contract.json` — requirements
    with machine-checkable acceptance criteria (execution gates, per-control
@@ -78,11 +78,11 @@ build half of the loop:
 This is the proof that CodeSovereign can *build* verified software from a spec,
 not only verify software that already exists. CI job **Desktop → acceptance-build**.
 
-## `npm run acceptance:godmode` — the closed GodMode loop (39 checks)
+## `npm run acceptance:ultramode` — the closed Ultra Mode loop (39 checks)
 
-`electron/acceptance-godmode.js` starts from an **empty** workspace and **one
-natural-language request** and drives `Engine.GodMode` through the entire real
-flow — see `docs/GODMODE_CLOSED_LOOP.md`:
+`electron/acceptance-ultramode.js` starts from an **empty** workspace and **one
+natural-language request** and drives `Engine.UltraMode` through the entire real
+flow — see `docs/ULTRAMODE_CLOSED_LOOP.md`:
 
 1. `Engine.Contract.deriveFromPrompt` → a machine-readable contract (14 requirements,
    all with machine-checkable acceptance criteria; entities `project` + `task`;
@@ -110,7 +110,7 @@ flow — see `docs/GODMODE_CLOSED_LOOP.md`:
 10. **Negative — unsupported**: a native-iOS-only request ends `BLOCKED` with a
     reason that names the supported stack.
 
-CI job **Desktop → acceptance-godmode**.
+CI job **Desktop → acceptance-ultramode**.
 
 ## `node test/run.js` — the factory layer (headless, no Electron)
 
@@ -129,7 +129,7 @@ Two suites cover the generation + factory engines without a renderer:
   parse and target real endpoints), `Engine.Autonomy` (5 levels, `gate()` blocks
   disallowed actions), `Engine.Agents` (roster, autonomy-gated `deploy` agent,
   arbitration by the product > architecture > security > performance > UI order).
-- **`test/godmode.test.js`** (82 checks) — the GodMode state machine with the real
+- **`test/ultramode.test.js`** (82 checks) — the Ultra Mode state machine with the real
   Contract / Universal / Scaffold / TestGen / Deploy engines and stubbed
   verification engines: happy path → `VERIFIED`; defect → bounded repair →
   `VERIFIED`; repair budget exhausted → `FAILED`; rollback of a worsening repair;

@@ -118,7 +118,7 @@ module.exports = async function (t) {
 
   // ================= Engine.Autonomy =================
   t.deepEqual('five graduated levels', E.Autonomy.LEVELS,
-    ['assist', 'build', 'engineer', 'autopilot', 'godmode']);
+    ['assist', 'build', 'engineer', 'autopilot', 'ultra']);
   t.equal('default level is engineer', E.Autonomy.get(), 'engineer');
   t.ok('assist allows observe but not generate/command/deploy', (() => {
     E.Autonomy.set('assist');
@@ -129,8 +129,8 @@ module.exports = async function (t) {
     E.Autonomy.set('engineer');
     return E.Autonomy.allows('repair') && !E.Autonomy.allows('deploy') && !E.Autonomy.allows('release');
   })());
-  t.ok('godmode allows everything incl. deploy + release', (() => {
-    E.Autonomy.set('godmode');
+  t.ok('ultra allows everything incl. deploy + release', (() => {
+    E.Autonomy.set('ultra');
     return ['generate', 'command', 'repair', 'observe', 'deploy', 'release', 'network'].every((a) => E.Autonomy.allows(a));
   })());
   t.deepEqual('gate() blocks a disallowed action', (() => {
@@ -138,7 +138,7 @@ module.exports = async function (t) {
     return E.Autonomy.gate('deploy', () => 'ran');
   })(), { blocked: 'deploy', level: 'assist' });
   t.equal('gate() runs an allowed action', E.Autonomy.gate('observe', () => 'ran'), 'ran');
-  E.Autonomy.set('godmode');   // so the agent pipeline below is unblocked
+  E.Autonomy.set('ultra');   // so the agent pipeline below is unblocked
 
   // ================= Engine.Agents =================
   t.ok('roster has >= 8 specialist agents', E.Agents.ROSTER.length >= 8);
@@ -152,7 +152,7 @@ module.exports = async function (t) {
   E.Autonomy.set('assist');
   const blocked = await E.Agents.run('deploy');
   t.equal('deploy agent is blocked at assist level', blocked.blocked, 'deploy');
-  E.Autonomy.set('godmode');
+  E.Autonomy.set('ultra');
 
   const dep = await E.Agents.run('deploy', { deployTarget: 'compose' });
   t.ok('deploy agent produces IaC when allowed', dep && Array.isArray(dep.files) && dep.files.length >= 2);

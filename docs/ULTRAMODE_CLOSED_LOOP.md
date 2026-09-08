@@ -1,6 +1,6 @@
-# GodMode closed loop
+# Ultra Mode closed loop
 
-`Engine.GodMode` is the single coordinator that turns **one natural-language
+`Engine.UltraMode` is the single coordinator that turns **one natural-language
 request** into a **real, generated, executed, observed and repaired project** with
 evidence proving whether the result satisfies the original request — or an honest
 `BLOCKED` / `FAILED` result if it does not.
@@ -26,10 +26,10 @@ prompt
 
 ## State machine
 
-Persisted to `.sovereign/godmode-run.json` (schema-versioned, written after every
+Persisted to `.sovereign/ultramode-run.json` (schema-versioned, written after every
 transition through `Sovereign.write`, which is an atomic temp-file + rename on
 disk). A run **resumes safely after an application restart** — reopen the project,
-call `Engine.GodMode.resume()`.
+call `Engine.UltraMode.resume()`.
 
 | State | Meaning |
 |---|---|
@@ -37,7 +37,7 @@ call `Engine.GodMode.resume()`.
 | `ANALYZING` | contract derived; safety + supported-stack + blocking-question checks |
 | `NEEDS_INPUT` | parked — waiting for `answer({ QID: "…" })` |
 | `CONTRACT_READY` | contract is buildable, nothing blocking |
-| `PLANNING` | `Universal.buildPlan` → `godmode-plan.json` |
+| `PLANNING` | `Universal.buildPlan` → `ultramode-plan.json` |
 | `GENERATING` | snapshot `pre-generate` → Scaffold + TestGen + Deploy write files |
 | `VALIDATING` | `Sovereign.analyze` (graph, validator, security, mockscan) + baseline ledger/DoD |
 | `EXECUTING` | `Sovereign.runEvidence(['test','build','lint'])` (real npm) |
@@ -47,7 +47,7 @@ call `Engine.GodMode.resume()`.
 | `VERIFIED` | every DoD gate passed **with a real certificate** |
 | `BLOCKED` | safety refusal, out-of-scope request, unanswered blocking question, or the environment cannot verify (browser mode) |
 | `FAILED` | the DoD gate did not pass after the repair budget, or an internal error |
-| `CANCELLED` | `Engine.GodMode.cancel()` |
+| `CANCELLED` | `Engine.UltraMode.cancel()` |
 
 ### Bounded behaviour
 
@@ -55,7 +55,7 @@ call `Engine.GodMode.resume()`.
 - **`bounds.runTimeoutMs`** (default 25 min) — overall wall-clock budget → `FAILED (run timeout)`.
 - **Per-command timeouts** — enforced by `window.CSExec` / `electron/lib/proc.js`.
 - **Cancellation** — `cancel()` sets a module flag + persists; the driver checks it between every state; process-tree cleanup is `observer.stop()` + `proc.killAll()` in the harness `finally`.
-- **Snapshot before every mutation** — an in-memory copy of every workspace file (for exact rollback) plus the desktop's durable `snapshots.create('godmode:<phase>')`.
+- **Snapshot before every mutation** — an in-memory copy of every workspace file (for exact rollback) plus the desktop's durable `snapshots.create('ultramode:<phase>')`.
 - **Rollback when a repair makes evidence worse** — `worse(before, after)` = strictly more failing requirements, or the DoD lost passing criteria, or new validator errors. On a worse reading the captured files are restored and files added by the repair are removed.
 - **No endless loop** — `REVERIFYING` only re-enters `REPAIRING` while there is budget **and** the last attempt made real progress (`repaired > 0`, not rolled back).
 
@@ -73,7 +73,7 @@ excluded) · `entities` · `roles` · `journeys` · `apiRequirements` ·
 `unsupported` (`UNS-###`) · `unsafe` (`UNSAFE-###`) · `verdict`.
 
 **Stable ids** — the same prompt always produces the same `REQ-`/`AC-`/`ASM-`
-ids and the same entities (proven in `test/godmode.test.js`). Every plan step,
+ids and the same entities (proven in `test/ultramode.test.js`). Every plan step,
 generated artifact, ledger claim and DoD result traces back to these ids.
 
 **A requirement is never "done" because a file exists** — the Evidence Ledger
@@ -113,13 +113,13 @@ Generated projects are **untrusted workspaces**.
   It never pushes anything — that needs the user's credentials.
 - Secrets: the coordinator scrubs token-shaped strings from the prompt before it
   is persisted, and `Sovereign.write` additionally redacts
-  `godmode-run` / `godmode-report` / `godmode-plan` / `product-contract` /
+  `ultramode-run` / `ultramode-report` / `ultramode-plan` / `product-contract` /
   `execution-evidence` / `runtime-trace` / … on the way in.
 
 ## Evidence model
 
 Every reading is appended to `run.evidence.timeline` and rendered in
-`godmode-report.md`: DoD pass/fail, DoD criteria count, failing requirement ids,
+`ultramode-report.md`: DoD pass/fail, DoD criteria count, failing requirement ids,
 ledger assertion count, validator errors/warnings. The successive readings
 (`post-validate` → `post-execute` → `post-observe` → `post-repair-N` →
 `post-reverify`) show the loop's real progress — there are no simulated
@@ -172,16 +172,16 @@ falsely `VERIFIED`.
 ## Verification
 
 ```bash
-node test/run.js               # 420 checks incl. test/godmode.test.js (82)
+node test/run.js               # 420 checks incl. test/ultramode.test.js (82)
 npm run smoke                   # renderer boots clean
 npm run smoke:observer          # observer classifies REAL / MOCK / BROKEN / SKIPPED
 npm run acceptance              # 38/38 — the 8 engines together on a fixture
 npm run acceptance:build        # 20/20 — repo-scale generation from a spec
-npm run acceptance:godmode      # the closed loop: prompt -> SOVEREIGN VERIFIED,
+npm run acceptance:ultramode      # the closed loop: prompt -> SOVEREIGN VERIFIED,
                                 #   + resume-after-interrupt, + two negative scenarios
 ```
 
-`test/godmode.test.js` exercises the state machine exhaustively with the real
+`test/ultramode.test.js` exercises the state machine exhaustively with the real
 Contract / Universal / Scaffold / TestGen / Deploy engines and stubbed
 verification engines (driven by a mutable world): happy path → `VERIFIED`;
 defect → bounded repair → `VERIFIED`; repair budget exhausted → `FAILED`;
@@ -190,7 +190,7 @@ simulated crash with no regeneration; unsafe → `BLOCKED`; unsupported →
 `BLOCKED`; blocking-question → `NEEDS_INPUT` → answer → continue; browser-mode
 degradation; deterministic ids; requirement traceability; secret redaction.
 
-`npm run acceptance:godmode` proves the **real** integration end to end: an empty
+`npm run acceptance:ultramode` proves the **real** integration end to end: an empty
 workspace, the acceptance prompt, a repairable defect injected into the generated
 output, real `npm test/build/lint`, a real runtime crawl, a real `Recovery`
 repair, DoD `PASS`, `SOVEREIGN VERIFIED` — then a resumed run and the two
@@ -206,5 +206,5 @@ negative scenarios.
 - Deployment stops at generated IaC + a deploy script. Nothing is pushed.
 - The LLM enrichment path (extra optional requirements, model-assisted repair)
   is available but off by default and never required.
-- `acceptance:godmode` runs Electron and real `npm`; it needs a machine that can
+- `acceptance:ultramode` runs Electron and real `npm`; it needs a machine that can
   run the desktop app (CI: the `Desktop` job).

@@ -69,7 +69,7 @@
     'evidence-ledger.json':      'Every claim -> evidence -> confidence, with assertion counts',
     'definition-of-done.json':   'The DoD gate: 8 criteria computed from the evidence',
     'release-certificate.md':    'Cross-gate SOVEREIGN VERIFIED certificate',
-    'orchestrator-run.json':     'Last GodMode pipeline run (tasks, generators, DoD before/after)',
+    'orchestrator-run.json':     'Last Ultra pipeline run (tasks, generators, DoD before/after)',
     'cost-analysis.json':        'Per-dependency cost tier + zero-cost alternatives (spec §30)',
     'cost-sovereignty.md':       'Readable mandatory vs optional cost breakdown',
     'requirements-ai.json':      'Model-found archetypes + implied requirements (when AI is connected)',
@@ -115,7 +115,7 @@
   }
 
   // Files that can contain build/runtime output -> redact secrets on the way in.
-  var RISKY_RE = /(execution-evidence|runtime-trace|diagnostics\/|known-issues|production-readiness|command-audit|godmode-run|godmode-report|godmode-plan|product-contract)/;
+  var RISKY_RE = /(execution-evidence|runtime-trace|diagnostics\/|known-issues|production-readiness|command-audit|ultramode-run|ultramode-report|ultramode-plan|product-contract)/;
   function write(p, data) {
     if (RISKY_RE.test(p)) data = (typeof data === 'string') ? redact(data) : redactDeep(data);
     var body = (typeof data === 'string') ? data : JSON.stringify(data, null, 2);

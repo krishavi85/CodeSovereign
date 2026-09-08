@@ -1,5 +1,5 @@
 /* =====================================================================
-   engine.testgen.js  —  Engine.TestGen   (GodMode blueprint §19, §20, §66)
+   engine.testgen.js  —  Engine.TestGen   (blueprint §19, §20, §66)
 
    Testing factory + adversarial/chaos suite. Reads the open project's
    interaction inventory, routes and schema and writes REAL test files

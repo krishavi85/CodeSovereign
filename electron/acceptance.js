@@ -218,7 +218,7 @@ function driverSource() {
       R.stages.repair.patchesApplied = patchesApplied;
 
       /* 8 ── P0 PIPELINE: contract -> ledger -> DoD gate -> orchestrator ──
-         Prove the closed GodMode loop on generated code: the DoD gate must
+         Prove the closed Ultra Mode loop on generated code: the DoD gate must
          REFUSE while the planted MOCK/BROKEN controls exist, the orchestrator
          generates the real slices, and the gate + evidence ledger flip. */
       if (window.Engine.Contract && window.Engine.Orchestrator) {

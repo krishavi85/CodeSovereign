@@ -1,5 +1,5 @@
 /* =====================================================================
-   engine.auth.js  —  Engine.Auth   (GodMode blueprint §16)
+   engine.auth.js  —  Engine.Auth   (blueprint §16)
 
    Emits a real, dependency-free auth system:
      - src/auth.js : register / login / logout / verify, scrypt password

@@ -1,5 +1,5 @@
 /* =====================================================================
-   engine.scaffold.js  —  Engine.Scaffold   (GodMode blueprint §5, build-flow §9-11)
+   engine.scaffold.js  —  Engine.Scaffold   (blueprint §5, build-flow §9-11)
 
    Repo-scale generation: turns a product spec into a COMPLETE, RUNNABLE,
    TESTED full-stack project — backend + data layer + migrations + auth +

@@ -819,7 +819,7 @@ const Universal = {
   /* ============================================================
      BUILD PLAN — the typed, executable output of stages 5-12.
      Turns a Product Contract (Engine.Contract.deriveFromPrompt) into an
-     ordered list of generation steps the GodMode coordinator runs against
+     ordered list of generation steps the Ultra Mode coordinator runs against
      the real engines (Scaffold / TestGen / Security / Deploy), plus the
      requirement -> artifact traceability map the Evidence Ledger needs.
      Deterministic + offline.

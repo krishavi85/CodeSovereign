@@ -1,7 +1,7 @@
 /* =====================================================================
    engine.cost.js  —  Engine.Cost
 
-   Cost Sovereignty (GodMode blueprint §30): for every paid dependency or
+   Cost Sovereignty (blueprint §30): for every paid dependency or
    hosted service the project pulls in, say whether the cost is MANDATORY
    or OPTIONAL, and name a zero-cost / self-hostable alternative.
 

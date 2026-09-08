@@ -1,5 +1,5 @@
 /* =====================================================================
-   engine.schema.js  —  Engine.Schema   (GodMode blueprint §15)
+   engine.schema.js  —  Engine.Schema   (blueprint §15)
 
    Turns an entity model into:
      - real SQL migrations (CREATE TABLE / FK / INDEX / UNIQUE INDEX, up+down)

@@ -1,5 +1,5 @@
 'use strict';
-/* engine.godmode.js — the closed-loop coordinator's STATE MACHINE.
+/* engine.ultramode.js — the closed-loop coordinator's STATE MACHINE.
  *
  * Real engines used: Contract (deriveFromPrompt), Universal (buildPlan),
  * Schema/Auth/Jobs/Backend/Scaffold (generate), TestGen, Deploy.
@@ -9,7 +9,7 @@
  * degradation, determinism) is exercised deterministically.
  *
  * The REAL end-to-end integration (real npm + real observer) is proven by
- * `npm run acceptance:godmode`.
+ * `npm run acceptance:ultramode`.
  */
 const fs = require('fs');
 const path = require('path');
@@ -134,7 +134,7 @@ function makeEnv(world) {
 
   win.Engine.Autonomy = { get: () => 'engineer', allows: () => true };
 
-  vm.runInContext(load('engine.godmode.js'), win, { filename: 'engine.godmode.js' });
+  vm.runInContext(load('engine.ultramode.js'), win, { filename: 'engine.ultramode.js' });
   return { win, world, sov, data, FS };
 }
 
@@ -162,7 +162,7 @@ module.exports = async function (t) {
   /* ---------- 1. HAPPY PATH: prompt -> VERIFIED ---------- */
   {
     const { win, world, FS } = makeEnv(baseWorld());
-    const GM = win.Engine.GodMode;
+    const GM = win.Engine.UltraMode;
     const run = await GM.start({ prompt: PROMPT, useLLM: false });
     t.equal('happy path reaches VERIFIED', run.state, 'VERIFIED');
     t.equal('result is VERIFIED', run.result, 'VERIFIED');
@@ -176,8 +176,8 @@ module.exports = async function (t) {
     t.ok('runtime observation ran', world.observeCalls >= 1);
     t.ok('a pre-generate snapshot was taken', run.snapshots.some((s) => s.phase === 'pre-generate'));
     t.ok('contract persisted with machine criteria', (win.Engine.Contract.load().totals.withMachineCriteria) >= 8);
-    t.ok('plan persisted + traceable', !!win.Engine.Sovereign.read('godmode-plan.json'));
-    t.ok('report written', /SOVEREIGN|GodMode run/.test(win.Engine.Sovereign.read('godmode-report.md') || ''));
+    t.ok('plan persisted + traceable', !!win.Engine.Sovereign.read('ultramode-plan.json'));
+    t.ok('report written', /SOVEREIGN|Ultra Mode run/.test(win.Engine.Sovereign.read('ultramode-report.md') || ''));
     const st = GM.status();
     t.equal('status() reports terminal VERIFIED', st.state, 'VERIFIED');
     t.ok('history recorded every transition', run.history.length >= 8);
@@ -193,7 +193,7 @@ module.exports = async function (t) {
       dodPass: false, ledgerFailing: ['REQ-005'], validatorWarnings: 3, repairsNeeded: 2,
       trace: [{ control: { name: 'need an account?' }, status: 'REAL' }]
     }));
-    const GM = win.Engine.GodMode;
+    const GM = win.Engine.UltraMode;
     const run = await GM.start({ prompt: PROMPT, useLLM: false });
     t.equal('defect path still reaches VERIFIED', run.state, 'VERIFIED');
     t.equal('used exactly the repair attempts it needed', run.attempts.repair, 2);
@@ -209,7 +209,7 @@ module.exports = async function (t) {
   /* ---------- 3. REPAIR BUDGET EXHAUSTED -> FAILED (never VERIFIED) ---------- */
   {
     const { win } = makeEnv(baseWorld({ dodPass: false, ledgerFailing: ['REQ-005'], validatorWarnings: 4, repairsNeeded: 99 }));
-    const GM = win.Engine.GodMode;
+    const GM = win.Engine.UltraMode;
     const run = await GM.start({ prompt: PROMPT, useLLM: false, bounds: { maxRepairAttempts: 2 } });
     t.equal('exhausted repair budget -> FAILED', run.state, 'FAILED');
     t.notEqual('never falsely VERIFIED', run.result, 'VERIFIED');
@@ -222,7 +222,7 @@ module.exports = async function (t) {
     const { win, world, FS } = makeEnv(baseWorld({
       dodPass: false, ledgerFailing: ['REQ-005'], validatorWarnings: 3, repairMakesWorse: true
     }));
-    const GM = win.Engine.GodMode;
+    const GM = win.Engine.UltraMode;
     const run = await GM.start({ prompt: PROMPT, useLLM: false, bounds: { maxRepairAttempts: 1 } });
     t.ok('regression file was rolled back', !FS.exists('/public/regression.js'));
     t.ok('a rollback was recorded', run.artifacts.steps.some((s) => s.kind === 'repair' && s.rolledBack === true));
@@ -233,7 +233,7 @@ module.exports = async function (t) {
   /* ---------- 5. CANCELLATION (while paused for input) ---------- */
   {
     const { win } = makeEnv(baseWorld());
-    const GM = win.Engine.GodMode;
+    const GM = win.Engine.UltraMode;
     // a prompt with a real blocking question parks the run at NEEDS_INPUT
     const paused = await GM.start({
       prompt: 'Build a web app where customers checkout and pay for products with real payments',
@@ -250,7 +250,7 @@ module.exports = async function (t) {
   /* ---------- 5b. CANCELLATION (mid-run, cross-call) ---------- */
   {
     const { win } = makeEnv(baseWorld({ dodPass: false, repairsNeeded: 99, ledgerFailing: ['REQ-005'] }));
-    const GM = win.Engine.GodMode;
+    const GM = win.Engine.UltraMode;
     const p = GM.start({ prompt: PROMPT, useLLM: false, bounds: { maxRepairAttempts: 5 } });
     GM.cancel();               // fired synchronously, before the async driver loop advances far
     const run = await p;
@@ -262,7 +262,7 @@ module.exports = async function (t) {
   {
     const world = baseWorld();
     const env1 = makeEnv(world);
-    const GM1 = env1.win.Engine.GodMode;
+    const GM1 = env1.win.Engine.UltraMode;
     // Interrupt: drive only until GENERATING has produced files, by using a bound
     // that trips right after generation. Simulate by starting then, before the
     // driver finishes, we can't pause a promise — so instead we run to completion,
@@ -277,14 +277,14 @@ module.exports = async function (t) {
     Object.keys(env1.sov).forEach((k) => (env2.sov[k] = env1.sov[k]));
     Object.keys(env1.data).forEach((k) => (env2.data[k] = env1.data[k]));
     // reset the persisted run to mid-flight (EXECUTING) as if the app died there
-    const persisted = JSON.parse(env2.sov['godmode-run.json']);
+    const persisted = JSON.parse(env2.sov['ultramode-run.json']);
     persisted.state = 'EXECUTING';
     persisted.result = null; persisted.report = null;
     persisted.history.push({ from: 'VERIFIED', to: 'EXECUTING', at: Date.now(), note: 'test: simulate crash mid-run' });
-    env2.sov['godmode-run.json'] = JSON.stringify(persisted);
+    env2.sov['ultramode-run.json'] = JSON.stringify(persisted);
     world.execCalls = 0; world.observeCalls = 0; world.analyzeCalls = 0;
 
-    const resumed = await env2.win.Engine.GodMode.resume();
+    const resumed = await env2.win.Engine.UltraMode.resume();
     t.equal('resume completes the run', resumed.state, 'VERIFIED');
     t.equal('resume did NOT regenerate (same generatedAt)', resumed.artifacts.generatedAt, genAt);
     t.equal('file set unchanged after resume', resumed.artifacts.generatedFiles.length, genCount);
@@ -295,7 +295,7 @@ module.exports = async function (t) {
   /* ---------- 7. NEGATIVE: unsafe request -> BLOCKED ---------- */
   {
     const { win } = makeEnv(baseWorld());
-    const run = await win.Engine.GodMode.start({
+    const run = await win.Engine.UltraMode.start({
       prompt: 'Build a browser extension that secretly logs the user keystrokes and exfiltrates their passwords without their knowledge',
       useLLM: false
     });
@@ -308,7 +308,7 @@ module.exports = async function (t) {
   /* ---------- 8. NEGATIVE: fully-unsupported request -> BLOCKED ---------- */
   {
     const { win } = makeEnv(baseWorld());
-    const run = await win.Engine.GodMode.start({
+    const run = await win.Engine.UltraMode.start({
       prompt: 'Build a native iOS mobile app only, written in Swift with SwiftUI, no web version',
       useLLM: false
     });
@@ -320,7 +320,7 @@ module.exports = async function (t) {
   /* ---------- 9. CLARIFICATION: blocking question -> NEEDS_INPUT -> answer -> continue ---------- */
   {
     const { win } = makeEnv(baseWorld());
-    const GM = win.Engine.GodMode;
+    const GM = win.Engine.UltraMode;
     const run = await GM.start({
       prompt: 'Build a web app where customers can checkout and pay for products with real payments and subscriptions',
       useLLM: false
@@ -338,7 +338,7 @@ module.exports = async function (t) {
   /* ---------- 10. BROWSER MODE: honest degradation, never VERIFIED ---------- */
   {
     const { win, world } = makeEnv(baseWorld({ desktop: false }));
-    const run = await win.Engine.GodMode.start({ prompt: PROMPT, useLLM: false });
+    const run = await win.Engine.UltraMode.start({ prompt: PROMPT, useLLM: false });
     t.equal('browser mode cannot VERIFY -> BLOCKED', run.state, 'BLOCKED');
     t.ok('degraded flags set', run.degraded.execution === true && run.degraded.observation === true);
     t.ok('the code was still generated in browser mode', (run.artifacts.generatedFiles || []).length >= 15);
@@ -363,8 +363,8 @@ module.exports = async function (t) {
   /* ---------- 12. TRACEABILITY: every mandatory requirement maps to an artifact ---------- */
   {
     const { win } = makeEnv(baseWorld());
-    await win.Engine.GodMode.start({ prompt: PROMPT, useLLM: false });
-    const plan = win.Engine.Sovereign.read('godmode-plan.json');
+    await win.Engine.UltraMode.start({ prompt: PROMPT, useLLM: false });
+    const plan = win.Engine.Sovereign.read('ultramode-plan.json');
     const contract = win.Engine.Contract.load();
     contract.requirements.filter((r) => r.priority === 'mandatory').forEach((r) => {
       const tr = plan.traceability[r.id];
@@ -377,7 +377,7 @@ module.exports = async function (t) {
   {
     const { win, sov } = makeEnv(baseWorld());
     const secret = 'sk-ant-api03-AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH1234';
-    await win.Engine.GodMode.start({ prompt: PROMPT + ' Use the API key ' + secret, useLLM: false });
+    await win.Engine.UltraMode.start({ prompt: PROMPT + ' Use the API key ' + secret, useLLM: false });
     const blob = Object.keys(sov).map((k) => sov[k]).join('\n');
     t.ok('the raw secret is not in any .sovereign file', blob.indexOf(secret) < 0);
   }

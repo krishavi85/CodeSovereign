@@ -94,8 +94,8 @@ jobs:
       - name: generate -> analyze -> real npm test/build/lint -> observe -> DoD -> SOVEREIGN VERIFIED
         run: npm run acceptance:build
 
-  acceptance-godmode:
-    name: GodMode closed loop (one prompt -> generated app -> SOVEREIGN VERIFIED)
+  acceptance-ultramode:
+    name: Ultra Mode closed loop (one prompt -> generated app -> SOVEREIGN VERIFIED)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -112,12 +112,12 @@ jobs:
         env:
           ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
       - name: prompt -> contract -> plan -> generate -> execute -> observe -> repair -> DoD (+ resume + negatives)
-        run: npm run acceptance:godmode
+        run: npm run acceptance:ultramode
 
   build:
     name: Windows installer
     runs-on: windows-latest
-    needs: [test, smoke, acceptance, acceptance-build, acceptance-godmode]
+    needs: [test, smoke, acceptance, acceptance-build, acceptance-ultramode]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

@@ -1,5 +1,5 @@
 /* =====================================================================
-   engine.deploy.js  —  Engine.Deploy   (GodMode blueprint §41-42)
+   engine.deploy.js  —  Engine.Deploy   (blueprint §41-42)
 
    Separates application build from infrastructure provisioning. It does
    NOT push to a cloud (that needs your credentials) — it generates the

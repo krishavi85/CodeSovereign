@@ -2,7 +2,7 @@
    engine.hardware.js  —  Engine.Hardware
 
    Host inventory for the AI router and the cross-platform build matrix
-   (GodMode blueprint §32). Desktop: the real probe over the preload
+   (blueprint §32). Desktop: the real probe over the preload
    bridge. Browser: the little the platform exposes.
 
    window.Engine.Hardware

@@ -1,5 +1,5 @@
 /* =====================================================================
-   engine.agents.js  —  Engine.Agents   (GodMode blueprint §25, §26)
+   engine.agents.js  —  Engine.Agents   (blueprint §25, §26)
 
    The specialist agents, as real implementations that wrap the engines
    built elsewhere. One interface: agent.run(ctx) -> Promise<{ files?,

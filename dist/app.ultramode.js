@@ -1,19 +1,19 @@
 /* =====================================================================
-   app.godmode.js  —  the GodMode run surface.
+   app.ultramode.js  —  the Ultra Mode run surface.
 
-   One screen that drives Engine.GodMode from a single natural-language
+   One screen that drives Engine.UltraMode from a single natural-language
    request and shows ONLY real state + real evidence: the current machine
    state, the derived requirements + assumptions + blocking questions, the
    planned artifacts, the live test/build/observer readings, repair
    attempts, the Definition-of-Done gate, and the final VERIFIED / BLOCKED
    / FAILED result. No simulated progress, timings or agent chatter.
 
-   Injects a "GodMode" rail entry and paints #main; a plain browser still
+   Injects an "Ultra Mode" rail entry and paints #main; a plain browser still
    works and clearly reports the desktop-only steps as unavailable.
    ===================================================================== */
 (function () {
   'use strict';
-  function GM() { return window.Engine && window.Engine.GodMode; }
+  function GM() { return window.Engine && window.Engine.UltraMode; }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
   var poll = null;
   var draft = '';
@@ -44,7 +44,7 @@
 
   function evidenceTable(st) {
     var tl = (st.history && []) || [];
-    var rows = (window.Engine.GodMode.load() || {}).evidence;
+    var rows = (window.Engine.UltraMode.load() || {}).evidence;
     var timeline = (rows && rows.timeline) || (st.evidence ? [st.evidence] : []);
     if (!timeline.length) return '';
     return '<table style="width:100%;border-collapse:collapse;font-size:12px;margin-top:8px">' +
@@ -65,12 +65,12 @@
 
     if (st.state === 'NONE') {
       return '<div class="screen-inner" style="max-width:820px">' +
-        '<h1 class="cs-h1" style="margin-bottom:6px">GodMode</h1>' +
+        '<h1 class="cs-h1" style="margin-bottom:6px">Ultra Mode</h1>' +
         '<p class="cs-muted" style="margin-bottom:16px">One request in — CodeSovereign derives a machine-readable contract, generates a real Node + vanilla-JS + Postgres/SQLite project, runs its real tests/build, observes it running, repairs what fails, and returns <b>SOVEREIGN VERIFIED</b> or an honest blocked/failed result. Supported today: vanilla web frontend · Node REST backend · SQLite/Postgres · background queue · Docker.</p>' +
         '<div class="card" style="padding:18px">' +
         '<textarea id="gmPrompt" rows="5" placeholder="Build a secure task-management web app with user accounts, projects, tasks, role-based access, PostgreSQL, background email-reminder jobs, REST APIs, accessibility checks, tests and Docker." style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg-2);color:#e6e9f2;font:13px system-ui;resize:vertical">' + esc(draft) + '</textarea>' +
         '<div style="margin-top:10px;display:flex;gap:10px;align-items:center">' +
-        '<button id="gmRun" class="btn primary" style="padding:7px 16px">Run GodMode</button>' +
+        '<button id="gmRun" class="btn primary" style="padding:7px 16px">Run Ultra Mode</button>' +
         '<span class="cs-muted" style="font-size:11.5px">Autonomy: <code>' + esc((window.Engine.Autonomy && window.Engine.Autonomy.get && window.Engine.Autonomy.get()) || 'engineer') + '</code>' +
         (window.desktop && window.desktop.isDesktop ? '' : ' · <b style="color:var(--warn,#f59e0b)">browser mode — generation only, no real execution/observation</b>') + '</span>' +
         '</div></div></div>';
@@ -80,7 +80,7 @@
     var h = [];
     h.push('<div class="screen-inner" style="max-width:900px">');
     h.push('<div style="display:flex;align-items:center;gap:12px;margin-bottom:4px">' +
-      '<h1 class="cs-h1" style="margin:0">GodMode</h1>' + badge(st.state) +
+      '<h1 class="cs-h1" style="margin:0">Ultra Mode</h1>' + badge(st.state) +
       (st.product ? '<span class="cs-muted">' + esc(st.product) + (st.verdict ? ' · ' + esc(st.verdict) : '') + '</span>' : '') +
       '<div style="flex:1"></div>' +
       (running ? '<button id="gmCancel" class="btn" style="padding:5px 12px;font-size:12px;border-color:#ef4444;color:#ef4444">Cancel</button>' : '') +
@@ -167,7 +167,7 @@
     var st = GM() ? GM().status() : { state: 'NONE' };
     if (!st.terminal && st.state !== 'NONE' && st.state !== 'NEEDS_INPUT') {
       poll = setInterval(function () {
-        if (window.S && window.S.screen === 'godmode') { try { window.renderAll(); } catch (_) {} }
+        if (window.S && window.S.screen === 'ultra') { try { window.renderAll(); } catch (_) {} }
         else { clearInterval(poll); poll = null; }
       }, 1200);
     }
@@ -217,10 +217,10 @@
     var origRail = window.renderRail;
     window.renderRail = function () {
       var html = origRail.apply(this, arguments);
-      if (html.indexOf('data-screen="godmode"') >= 0) return html;
-      var btn = '<button data-screen="godmode" title="GodMode" class="' + (window.S && window.S.screen === 'godmode' ? 'active' : '') + '">' +
+      if (html.indexOf('data-screen="ultra"') >= 0) return html;
+      var btn = '<button data-screen="ultra" title="Ultra Mode" class="' + (window.S && window.S.screen === 'ultra' ? 'active' : '') + '">' +
         '<span style="display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center">⚡</span>' +
-        '<span style="font-size:9.5px;font-weight:500">GodMode</span></button>';
+        '<span style="font-size:9.5px;font-weight:500">Ultra Mode</span></button>';
       // place it just before the Settings button
       return html.replace('<button data-screen="settings"', btn + '<button data-screen="settings"');
     };
@@ -229,9 +229,9 @@
     if (origTop) {
       window.renderTopNav = function () {
         var html = origTop.apply(this, arguments);
-        if (html.indexOf('data-screen="godmode"') >= 0) return html;
+        if (html.indexOf('data-screen="ultra"') >= 0) return html;
         return html.replace(/(<button data-screen="settings")/,
-          '<button data-screen="godmode" class="' + (window.S && window.S.screen === 'godmode' ? 'active' : '') + '"><span>⚡</span><span>GodMode</span></button>$1');
+          '<button data-screen="ultra" class="' + (window.S && window.S.screen === 'ultra' ? 'active' : '') + '"><span>⚡</span><span>Ultra Mode</span></button>$1');
       };
     }
 
@@ -239,11 +239,11 @@
     window.renderAll = function () {
       var r = origAll.apply(this, arguments);
       try {
-        if (window.S && window.S.screen === 'godmode') {
+        if (window.S && window.S.screen === 'ultra') {
           var main = document.getElementById('main');
           if (main) { main.innerHTML = render(); bind(); schedulePoll(); }
         }
-      } catch (e) { console.error('[godmode-ui]', e); }
+      } catch (e) { console.error('[ultramode-ui]', e); }
       return r;
     };
   }

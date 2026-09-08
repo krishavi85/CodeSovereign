@@ -1,7 +1,7 @@
 /* =====================================================================
-   engine.godmode.js  —  Engine.GodMode
+   engine.ultramode.js  —  Engine.UltraMode
 
-   The closed GodMode loop, as one connected coordinator with an explicit,
+   The closed Ultra Mode loop, as one connected coordinator with an explicit,
    persisted state machine:
 
      natural-language prompt
@@ -19,10 +19,10 @@
 
    It does NOT re-implement any engine — it sequences the ones that exist.
    State + inputs + decisions + evidence are written to
-   `.sovereign/godmode-run.json` after every transition, so the run resumes
+   `.sovereign/ultramode-run.json` after every transition, so the run resumes
    safely after an application restart without repeating side effects.
 
-   window.Engine.GodMode
+   window.Engine.UltraMode
      STATES
      start({ prompt, answers?, bounds?, injectedContext? })  -> Promise<run>
      resume(opts?)                                            -> Promise<run>
@@ -34,13 +34,13 @@
 (function () {
   'use strict';
   var Engine = window.Engine;
-  if (!Engine || !Engine.FS) { console.error('[GodMode] Engine.FS missing'); return; }
+  if (!Engine || !Engine.FS) { console.error('[UltraMode] Engine.FS missing'); return; }
   var FS = Engine.FS;
   var S = function () { return Engine.Sovereign; };
 
   var SCHEMA_VERSION = 1;
-  var RUN_FILE = 'godmode-run.json';
-  var REPORT_FILE = 'godmode-report.md';
+  var RUN_FILE = 'ultramode-run.json';
+  var REPORT_FILE = 'ultramode-report.md';
 
   var STATES = [
     'RECEIVED', 'ANALYZING', 'NEEDS_INPUT', 'CONTRACT_READY', 'PLANNING',
@@ -110,7 +110,7 @@
     run.history.push({ from: run.state, to: next, at: now(), note: note || null });
     run.state = next;
     if (run.history.length > 400) run.history = run.history.slice(-400);
-    try { if (window.__GM_TRACE) console.log('[gm-driver] -> ' + next + (note ? ' (' + note + ')' : '')); } catch (_) {}
+    try { if (window.__UM_TRACE) console.log('[um-driver] -> ' + next + (note ? ' (' + note + ')' : '')); } catch (_) {}
   }
 
   function newRun(input) {
@@ -132,7 +132,7 @@
       history: [],
       degraded: { browserMode: !isDesktop(), execution: false, observation: false, reasons: [] },
       contract: null,             // summary; full contract in product-contract.json
-      plan: null,                 // summary; full plan in godmode-plan.json
+      plan: null,                 // summary; full plan in ultramode-plan.json
       clarification: { blockingQuestions: [], answered: {}, assumptions: [], unsupported: [], unsafe: [] },
       artifacts: { generatedFiles: [], generatedAt: null, steps: [] },
       snapshots: [],              // { phase, at, id, memKeys }
@@ -162,7 +162,7 @@
     run.snapshots.push(rec);
     var durable = Promise.resolve();
     if (isDesktop() && window.desktop.snapshots && window.desktop.snapshots.create) {
-      durable = window.desktop.snapshots.create('godmode:' + phase)
+      durable = window.desktop.snapshots.create('ultramode:' + phase)
         .then(function (r) { if (r && r.id) rec.id = r.id; })
         .catch(function () {});
     }
@@ -340,7 +340,7 @@
         transition(run, 'FAILED', 'no plan');
         return Promise.resolve();
       }
-      if (S()) S().write('godmode-plan.json', plan);
+      if (S()) S().write('ultramode-plan.json', plan);
       run.plan = {
         steps: plan.steps.map(function (s) { return { id: s.id, kind: s.kind, agent: s.agent, produces: s.produces.length, requirementIds: s.requirementIds }; }),
         files: plan.files.length,
@@ -366,7 +366,7 @@
         return Promise.resolve();
       }
       var contract = Engine.Contract.load();
-      var plan = sread('godmode-plan.json');
+      var plan = sread('ultramode-plan.json');
       return snapshot(run, 'pre-generate').then(function () {
         var written = [];
         // 1) scaffold — the runnable repo
@@ -557,7 +557,7 @@
     var e = run.evidence.latest || {};
     var contract = Engine.Contract && Engine.Contract.load();
     var lines = [
-      '# GodMode run — ' + run.runId,
+      '# Ultra Mode run — ' + run.runId,
       '',
       '_' + new Date(run.updatedAt).toISOString() + '_',
       '',
@@ -606,7 +606,7 @@
       });
       lines.push('');
     }
-    lines.push('_Full evidence: `.sovereign/product-contract.json`, `godmode-plan.json`, `evidence-ledger.json`, `definition-of-done.json`, `release-certificate.md`._');
+    lines.push('_Full evidence: `.sovereign/product-contract.json`, `ultramode-plan.json`, `evidence-ledger.json`, `definition-of-done.json`, `release-certificate.md`._');
     run.report = lines.join('\n');
     if (S()) S().write(REPORT_FILE, run.report);
   }
@@ -735,7 +735,7 @@
     };
   }
 
-  Engine.GodMode = {
+  Engine.UltraMode = {
     STATES: STATES,
     SCHEMA_VERSION: SCHEMA_VERSION,
     DEFAULT_BOUNDS: DEFAULT_BOUNDS,
@@ -750,5 +750,5 @@
     _readGate: readGate,
     _worse: worse
   };
-  console.info('[GodMode] closed-loop coordinator ready — Engine.GodMode');
+  console.info('[UltraMode] closed-loop coordinator ready — Engine.UltraMode');
 })();

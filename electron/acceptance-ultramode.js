@@ -1,9 +1,9 @@
 'use strict';
 /*
- * acceptance-godmode.js — proves the CLOSED GODMODE LOOP end to end.
+ * acceptance-ultramode.js — proves the CLOSED ULTRA MODE LOOP end to end.
  *
- * `electron . --acceptance-godmode` starts from an EMPTY workspace and a single
- * natural-language request, and drives Engine.GodMode through the whole real
+ * `electron . --acceptance-ultramode` starts from an EMPTY workspace and a single
+ * natural-language request, and drives Engine.UltraMode through the whole real
  * flow against the GENERATED code:
  *
  *   prompt -> machine-readable contract -> typed plan -> REAL repo generation
@@ -16,7 +16,7 @@
  *   - an unsafe request ends BLOCKED, never VERIFIED
  *   - a fully-unsupported request ends BLOCKED, never VERIFIED
  *
- * Prints "[acceptance-godmode] PASS" / "FAIL" and sets the exit code.
+ * Prints "[acceptance-ultramode] PASS" / "FAIL" and sets the exit code.
  */
 const { app, BrowserWindow, session } = require('electron');
 const path = require('path');
@@ -45,28 +45,28 @@ const UNSUPPORTED_PROMPT =
 const results = [];
 function check(name, pass, detail) {
   results.push({ name, pass: !!pass });
-  console.log('[acceptance-godmode] ' + (pass ? 'PASS ' : 'FAIL ') + name + (detail ? '  — ' + detail : ''));
+  console.log('[acceptance-ultramode] ' + (pass ? 'PASS ' : 'FAIL ') + name + (detail ? '  — ' + detail : ''));
 }
 
 function driver() {
   return `(async () => {
     const R = { errors: [] };
-    const GM = window.Engine.GodMode, FS = window.Engine.FS, S = window.Engine.Sovereign, Sc = window.Engine.Scaffold;
+    const GM = window.Engine.UltraMode, FS = window.Engine.FS, S = window.Engine.Sovereign, Sc = window.Engine.Scaffold;
     const sj = (p) => { try { const v = S.read(p); return typeof v === 'string' ? JSON.parse(v) : v; } catch (_) { return null; } };
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     for (let i = 0; i < 60 && !(FS.__hasWorkspace && FS.__hasWorkspace()); i++) await wait(250);
     if (!(FS.__hasWorkspace && FS.__hasWorkspace())) { R.fatal = 'workspace never loaded'; return JSON.stringify(R); }
-    if (!GM) { R.fatal = 'Engine.GodMode missing'; return JSON.stringify(R); }
+    if (!GM) { R.fatal = 'Engine.UltraMode missing'; return JSON.stringify(R); }
 
-    const log = (m) => console.log('[gm-driver] ' + m);
+    const log = (m) => console.log('[um-driver] ' + m);
     const T = (label, ms, p) => Promise.race([
       Promise.resolve().then(() => p),
       new Promise((_, rej) => setTimeout(() => rej(new Error('phase timeout: ' + label + ' (' + ms + 'ms)')), ms))
     ]);
 
     try {
-      window.__GM_TRACE = true;
-      window.__GM_STOP_AFTER_LOOP = ${process.env.GM_DEBUG_LOOP_ONLY ? 'true' : 'false'};
+      window.__UM_TRACE = true;
+      window.__UM_STOP_AFTER_LOOP = ${process.env.GM_DEBUG_LOOP_ONLY ? 'true' : 'false'};
       log('start'); await GM.reset();
 
       // ---- inject a repairable defect into the generated output (simulates an
@@ -91,7 +91,7 @@ function driver() {
       log('closed loop done: ' + run.state + ' (repairs=' + run.attempts.repair + ')');
 
       const contract = window.Engine.Contract.load() || {};
-      const plan = sj('godmode-plan.json') || {};
+      const plan = sj('ultramode-plan.json') || {};
       const ledger = sj('evidence-ledger.json') || {};
       const dod = sj('definition-of-done.json') || {};
       const ev = sj('execution-evidence.json') || {};
@@ -151,7 +151,7 @@ function driver() {
         },
         dod: { PASS: dod.PASS, criteria: dod.criteria || {} },
         certificate: /SOVEREIGN VERIFIED/.test(S.read('release-certificate.md') || ''),
-        report: /GodMode run/.test(S.read('godmode-report.md') || ''),
+        report: /Ultra Mode run/.test(S.read('ultramode-report.md') || ''),
         ledgerAssertions: (ledger.totals || {}).assertions,
         history: run.history.map((h) => h.to),
         _debug: {
@@ -160,21 +160,23 @@ function driver() {
             evi: (c.evidence || []).filter((e) => e.result === 'FAIL').map((e) => e.check + ' [' + e.result + ']') })),
           execSteps: Object.keys(ev.steps || {}).reduce((m, k) => { m[k] = { code: ev.steps[k].code, pass: ev.steps[k].pass, tail: (ev.steps[k].tail || '').slice(-600) }; return m; }, {}),
           obsControls: (tr.trace || []).map((t) => t.control.name + '=' + t.status),
+          timeline: (run.evidence && run.evidence.timeline || []).map((e) => e.label + ' dodPass=' + e.dodPass +
+            ' crit=' + e.dodPassCount + ' fail=[' + (e.dodFailing || []).join(',') + '] warn=' + e.validatorWarnings),
           security: sj('security-findings.json')
         }
       };
 
-      if (window.__GM_STOP_AFTER_LOOP) return JSON.stringify(R);
+      if (window.__UM_STOP_AFTER_LOOP) return JSON.stringify(R);
 
       // ================= 2. RESUME AFTER INTERRUPTION =================
       // Simulate a crash by forcing the persisted run back to a mid-flight state,
       // then resume() from a fresh coordinator load. Must NOT regenerate.
       const genAt = run.artifacts.generatedAt;
-      const persisted = sj('godmode-run.json');
+      const persisted = sj('ultramode-run.json');
       persisted.state = 'EXECUTING';
       persisted.result = null; persisted.resultReason = null; persisted.report = null;
       persisted.history.push({ from: 'VERIFIED', to: 'EXECUTING', at: Date.now(), note: 'acceptance: simulate crash mid-run' });
-      S.write('godmode-run.json', persisted);
+      S.write('ultramode-run.json', persisted);
       if (FS.__flush) await FS.__flush();
 
       log('resume()');
@@ -208,7 +210,7 @@ function driver() {
 async function run() {
   let exitCode = 1, tmp = null;
   const watchdog = setTimeout(() => {
-    console.error('[acceptance-godmode] FAIL — watchdog 20m');
+    console.error('[acceptance-ultramode] FAIL — watchdog 20m');
     try { observer.stop(); proc.killAll(); } catch (_) {}
     app.exit(1);
   }, 20 * 60 * 1000);
@@ -216,11 +218,11 @@ async function run() {
   try {
     try {
       const fp = await freePort(4319);
-      if (fp.wasHeld) console.log('[acceptance-godmode] freed port 4319 (killed ' + JSON.stringify(fp.killed) + ')');
+      if (fp.wasHeld) console.log('[acceptance-ultramode] freed port 4319 (killed ' + JSON.stringify(fp.killed) + ')');
     } catch (_) { /* best effort */ }
 
-    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'cs-godmode-'));
-    const wsDir = path.join(tmp, 'godmode-app');
+    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'cs-ultramode-'));
+    const wsDir = path.join(tmp, 'ultramode-app');
     await fsp.mkdir(wsDir, { recursive: true });
     await fsp.writeFile(path.join(wsDir, '.gitkeep'), '');
 
@@ -249,11 +251,11 @@ async function run() {
       'await new Promise(r=>setTimeout(r,400)); return true; })()');
 
     const report = JSON.parse(await win.webContents.executeJavaScript(driver()));
-    console.log('\n[acceptance-godmode] ---- report ----');
+    console.log('\n[acceptance-ultramode] ---- report ----');
     console.log(JSON.stringify(report, (k, v) => (k === 'errors' && Array.isArray(v) && !v.length ? undefined : v), 2));
-    console.log('[acceptance-godmode] ----------------------\n');
+    console.log('[acceptance-ultramode] ----------------------\n');
 
-    if (report.fatal) { check('workspace + GodMode load', false, report.fatal); }
+    if (report.fatal) { check('workspace + Ultra Mode load', false, report.fatal); }
     else {
       const L = report.loop || {};
       // ---- 1. contract from prompt ----
@@ -302,7 +304,7 @@ async function run() {
       Object.keys(L.dod.criteria).forEach((k) => check('GATE: ' + k, L.dod.criteria[k] === true, String(L.dod.criteria[k])));
       check('DEFINITION-OF-DONE PASSES', L.dod.PASS === true);
       check('Sovereign Release Certificate: SOVEREIGN VERIFIED', L.certificate === true);
-      check('GodMode report written', L.report === true);
+      check('Ultra Mode report written', L.report === true);
       check('CLOSED LOOP: prompt -> SOVEREIGN VERIFIED', L.state === 'VERIFIED' && L.result === 'VERIFIED', L.state + '/' + L.result);
       check('history passed through every phase',
         ['ANALYZING','CONTRACT_READY','PLANNING','GENERATING','VALIDATING','EXECUTING','OBSERVING','REPAIRING','REVERIFYING','VERIFIED']
@@ -325,11 +327,11 @@ async function run() {
     check('renderer produced no console errors', rendererErrors.length === 0, rendererErrors.slice(0, 4).join(' | '));
 
     const failed = results.filter((r) => !r.pass);
-    console.log('\n[acceptance-godmode] ' + (results.length - failed.length) + '/' + results.length + ' checks passed');
-    if (failed.length === 0) { console.log('[acceptance-godmode] PASS'); exitCode = 0; }
-    else { console.log('[acceptance-godmode] FAIL — ' + failed.map((f) => f.name).join('; ')); exitCode = 1; }
+    console.log('\n[acceptance-ultramode] ' + (results.length - failed.length) + '/' + results.length + ' checks passed');
+    if (failed.length === 0) { console.log('[acceptance-ultramode] PASS'); exitCode = 0; }
+    else { console.log('[acceptance-ultramode] FAIL — ' + failed.map((f) => f.name).join('; ')); exitCode = 1; }
   } catch (e) {
-    console.error('[acceptance-godmode] harness error:', (e && e.stack) || e);
+    console.error('[acceptance-ultramode] harness error:', (e && e.stack) || e);
   } finally {
     clearTimeout(watchdog);
     try { observer.stop(); } catch (_) {}

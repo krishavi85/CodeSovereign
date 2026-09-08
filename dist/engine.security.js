@@ -1,5 +1,5 @@
 /* =====================================================================
-   engine.security.js  —  Engine.Security   (GodMode blueprint §17)
+   engine.security.js  —  Engine.Security   (blueprint §17)
 
    A product security scanner over the workspace source (not the Electron
    shell — that is covered by electron/SECURITY.md). Static + AST rules for

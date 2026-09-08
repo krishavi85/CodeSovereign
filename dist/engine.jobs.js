@@ -1,5 +1,5 @@
 /* =====================================================================
-   engine.jobs.js  —  Engine.Jobs   (GodMode blueprint §14 — async infra)
+   engine.jobs.js  —  Engine.Jobs   (blueprint §14 — async infra)
 
    Generates dependency-free async infrastructure for a scaffolded app:
      - src/queue.js  : a durable job queue backed by the data layer

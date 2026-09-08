@@ -1,7 +1,7 @@
 /* =====================================================================
    engine.modelmanager.js  —  Engine.ModelManager
 
-   Model lifecycle for local inference (GodMode blueprint §27):
+   Model lifecycle for local inference (blueprint §27):
    VRAM/RAM estimation, a curated catalogue of open models, "can this
    host run it?", and real `ollama pull` through the proc bridge.
 
