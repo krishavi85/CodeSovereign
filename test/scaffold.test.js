@@ -17,7 +17,7 @@ module.exports = async function (t) {
   win.window = win;
   win.Engine = { FS: { read: () => null } };
   vm.createContext(win);
-  for (const f of ['engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.scaffold.js']) {
+  for (const f of ['engine.schema.js', 'engine.auth.js', 'engine.jobs.js', 'engine.backend.js', 'engine.scaffold.js']) {
     vm.runInContext(load(f), win, { filename: f });
   }
   const Sc = win.Engine.Scaffold;
@@ -86,4 +86,38 @@ module.exports = async function (t) {
     { name: 'note', fields: [{ name: 'body', type: 'longtext', required: true, max: 4000 }] }
   ] });
   t.ok('no-auth spec still generates a server + db + test', noAuth.some((f) => f.path === '/server.js') && noAuth.some((f) => f.path === '/src/auth.js') === false);
+
+  // ---- async infra variant (jobs + worker + SSE) generates and RUNS ----
+  const jobsFiles = Sc.generate({ name: 'jobsapp', auth: true, jobs: true, entities: [
+    { name: 'doc', fields: [{ name: 'title', type: 'text', required: true }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] }
+  ] });
+  const jp = jobsFiles.map((f) => f.path);
+  ['/src/queue.js', '/src/worker.js', '/src/events.js', '/src/jobs/welcome.js', '/test/worker.test.js'].forEach((p) =>
+    t.ok('jobs variant generates ' + p, jp.includes(p)));
+  t.ok('jobs variant: server wires SSE events + job enqueue', (() => {
+    const srv = jobsFiles.find((f) => f.path === '/server.js').content;
+    return /events\.subscribe\(res\)/.test(srv) && /queue\.enqueue\(/.test(srv);
+  })());
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-jobs-'));
+    try {
+      for (const f of jobsFiles) { const abs = path.join(dir, f.path.slice(1)); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, f.content); }
+      let out = '';
+      try { out = execFileSync('node', ['--test'], { cwd: dir, stdio: 'pipe', timeout: 60000 }).toString(); }
+      catch (e) { out = (e.stdout || '').toString() + (e.stderr || '').toString(); }
+      const p = (out.match(/(?:^|\s)pass (\d+)/m) || [])[1], fl = (out.match(/(?:^|\s)fail (\d+)/m) || [])[1];
+      t.ok('jobs variant: generated app tests pass (incl. queue/worker)', Number(p) >= 4 && Number(fl) === 0, 'pass=' + p + ' fail=' + fl);
+    } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
+  }
+
+  // ---- node-pg stack variant generates a pg adapter + shim + optionalDependency ----
+  const pgFiles = Sc.generate(Object.assign({}, Sc.DEMO_SPEC, { stack: 'node-pg' }));
+  const pgp = pgFiles.map((f) => f.path);
+  t.ok('node-pg: emits db.js shim + db.json.js + db.pg.js',
+    pgp.includes('/src/db.js') && pgp.includes('/src/db.json.js') && pgp.includes('/src/db.pg.js'));
+  t.ok('node-pg: db.js picks pg when DATABASE_URL is set',
+    /DATABASE_URL \? require\('\.\/db\.pg'\)/.test(pgFiles.find((f) => f.path === '/src/db.js').content));
+  t.ok('node-pg: package.json lists pg as an optionalDependency',
+    /"optionalDependencies"[\s\S]*"pg"/.test(pgFiles.find((f) => f.path === '/package.json').content));
+  for (const f of pgFiles) if (f.path.endsWith('.js')) { try { new vm.Script(f.content, { filename: f.path }); } catch (e) { t.ok('node-pg parse ' + f.path + ' -> ' + e.message, false); } }
 };

@@ -76,11 +76,18 @@
       return !fsBases[base];
     });
 
-    // high-severity security-ish signals
+    // high-severity security signals — the dedicated product scanner is
+    // authoritative; the mock-signal heuristic is a fallback.
     var known = t('known-issues.md');
-    var highSec = ((sim.signals || []).filter(function (s) {
-      return s.severity === 'high' && /secret|inject|xss|csrf|ssrf|eval|traversal|cred/i.test((s.why || '') + (s.kind || ''));
-    }).length) + (/\*\*(ERROR|CRITICAL)\*\*.*(secret|api[_-]?key|password|private key|token)/i.test(known) ? 1 : 0);
+    var secReport = j('security-findings.json');
+    var highSec;
+    if (secReport) {
+      highSec = (secReport.bySeverity && secReport.bySeverity.high) || 0;
+    } else {
+      highSec = ((sim.signals || []).filter(function (s) {
+        return s.severity === 'high' && /secret|inject|xss|csrf|ssrf|eval|traversal|cred/i.test((s.why || '') + (s.kind || ''));
+      }).length) + (/\*\*(ERROR|CRITICAL)\*\*.*(secret|api[_-]?key|password|private key|token)/i.test(known) ? 1 : 0);
+    }
 
     // a requirement blocks DONE only when it is DEMONSTRABLY failing (>=1 FAIL);
     // merely-unproven criteria (NA) are tracked as coverage gaps, not failures.

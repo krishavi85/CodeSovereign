@@ -78,6 +78,24 @@ build half of the loop:
 This is the proof that CodeSovereign can *build* verified software from a spec,
 not only verify software that already exists. CI job **Desktop → acceptance-build**.
 
+## `node test/run.js` — the factory layer (headless, no Electron)
+
+Two suites cover the generation + factory engines without a renderer:
+
+- **`test/scaffold.test.js`** — generates a full-stack app, writes it to a temp
+  dir, and actually runs its `migrate` / `lint` / `node --test` / `build`.
+  Also proves the **stack variants**: the `jobs` variant (queue + polling worker
+  + SSE hub) generates and its `node --test` passes incl. queue/worker tests; the
+  `node-pg` variant emits a `db.js` shim that picks `db.pg` when `DATABASE_URL`
+  is set, plus `pg` as an `optionalDependency`.
+- **`test/factory.test.js`** — over a generated repo: `Engine.Security.scan()`
+  (clean score, then planted SQLi / XSS / secret / command-injection all caught,
+  score drops), `Engine.Deploy` (7 targets, preflight checklist, `apply()` writes
+  Dockerfile/compose/scripts, never pushes), `Engine.TestGen` (chaos + API suites
+  parse and target real endpoints), `Engine.Autonomy` (5 levels, `gate()` blocks
+  disallowed actions), `Engine.Agents` (roster, autonomy-gated `deploy` agent,
+  arbitration by the product > architecture > security > performance > UI order).
+
 ## Known limitations surfaced by the run (non-gating diagnostics)
 
 - The in-renderer static validator's `new Function()` JS parse is blocked by the
@@ -89,3 +107,10 @@ not only verify software that already exists. CI job **Desktop → acceptance-bu
 - `runEvidence()` / `observe()` rewrite `decision-state.json` down to their own
   slice; the harness captures `counts` / `graphFingerprint` immediately after
   each `analyze()` instead of reading them back later.
+- `desktop-observe.ensureServer()` reuses a dev server that is *already* listening
+  on the detected port. If a previous crashed/killed run left its `node server.js`
+  alive, the observer would crawl that stale (possibly already-repaired) workspace
+  and silently invalidate the run. Both harnesses now call
+  `electron/lib/freeport.js` `freePort(4319)` at startup to kill any stray
+  listener first — if a run ever prints `freed port 4319 (killed …)`, a prior run
+  did not shut down cleanly.

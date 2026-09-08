@@ -94,7 +94,13 @@
         how: 'keyword rules + aiNormalize() — an LLM reads the objective when connected' },
       { id: 'router', label: 'Model routing (Engine.AIRouter)',
         wired: !!E.AIRouter,
-        how: 'discover local runtimes + OmniRoute, recommend for the host, auto-wire' }
+        how: 'discover local runtimes + OmniRoute, recommend for the host, auto-wire' },
+      { id: 'agents', label: 'Specialist agents (Engine.Agents)',
+        wired: !!(E.Agents && E.Agents.pipeline),
+        how: 'the product agent derives the contract with useLLM; the rest wrap deterministic engines' },
+      { id: 'autonomy', label: 'Graduated autonomy (Engine.Autonomy)',
+        wired: !!(E.Autonomy && E.Autonomy.allows),
+        how: 'gates generate/command/repair/observe/deploy/release + network before any side effect' }
     ];
     return list;
   }

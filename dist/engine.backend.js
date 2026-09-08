@@ -62,7 +62,8 @@
   function serverModule(spec) {
     var s = Schema().normalizeSpec(spec);
     var withAuth = s.auth;
-    var resources = s.entities.filter(function (e) { return e.name !== 'user' && e.name !== 'session'; });
+    var withJobs = !!spec.jobs;
+    var resources = s.entities.filter(function (e) { return e.name !== 'user' && e.name !== 'session' && e.name !== 'job'; });
     var portArg = "(process.argv.find((a) => a.startsWith('--port=')) || '').split('=')[1]";
     var lines = [
       "'use strict';",
@@ -73,6 +74,8 @@
       "const path = require('path');",
       "const db = require('./src/db');",
       withAuth ? "const auth = require('./src/auth');" : "",
+      withJobs ? "const queue = require('./src/queue');" : "",
+      withJobs ? "const events = require('./src/events');" : "",
       ""
     ];
     resources.forEach(function (e) {
@@ -89,10 +92,21 @@
     lines.push("}");
     lines.push("function readBody(req) { return new Promise((resolve) => { let r = ''; req.on('data', (c) => { r += c; if (r.length > 1e6) req.destroy(); }); req.on('end', () => { try { resolve(r ? JSON.parse(r) : {}); } catch (_) { resolve({}); } }); }); }");
     lines.push("");
+    lines.push("// simple fixed-window rate limiter (per IP): 120 req / 60s");
+    lines.push("const rl = new Map();");
+    lines.push("function rateLimit(req) {");
+    lines.push("  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'x').split(',')[0].trim();");
+    lines.push("  const now = Date.now(); const e = rl.get(ip) || { n: 0, t: now };");
+    lines.push("  if (now - e.t > 60000) { e.n = 0; e.t = now; }");
+    lines.push("  e.n++; rl.set(ip, e);");
+    lines.push("  return e.n <= 120;");
+    lines.push("}");
+    lines.push("");
     lines.push("const server = http.createServer(async (req, res) => {");
     lines.push("  const u = new URL(req.url, 'http://localhost'); const seg = u.pathname.split('/').filter(Boolean);");
     lines.push("  const q = Object.fromEntries(u.searchParams);");
     lines.push("  try {");
+    lines.push("    if (u.pathname.startsWith('/api/') && !rateLimit(req)) return send(res, 429, { error: 'rate limit exceeded' });");
     if (withAuth) {
       lines.push("    await auth.attachUser(req);");
       lines.push("    if (seg[0] === 'api' && seg[1] === 'auth') {");
@@ -101,6 +115,13 @@
       lines.push("      if (seg[2] === 'logout' && req.method === 'POST') { return send(res, 200, await auth.logout(auth.bearer(req))); }");
       lines.push("      if (seg[2] === 'me' && req.method === 'GET') { return send(res, 200, { user: req.user || null }); }");
       lines.push("      return send(res, 404, { error: 'not found' });");
+      lines.push("    }");
+    }
+    if (withJobs) {
+      lines.push("    if (seg[0] === 'api' && seg[1] === 'events' && req.method === 'GET') return events.subscribe(res);");
+      lines.push("    if (seg[0] === 'api' && seg[1] === 'jobs') {");
+      lines.push("      if (seg[2] === 'stats' && req.method === 'GET') return send(res, 200, await queue.stats());");
+      lines.push("      if (!seg[2] && req.method === 'POST') { " + (withAuth ? "auth.requireAuth(req); " : "") + "const b = await readBody(req); const j = await queue.enqueue(b.type, b.payload); return send(res, 202, j); }");
       lines.push("    }");
     }
     lines.push("    if (seg[0] === 'api') {");

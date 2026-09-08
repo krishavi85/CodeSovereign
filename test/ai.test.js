@@ -73,6 +73,8 @@ module.exports = async function (t) {
   win.Engine.Orchestrator = {}; win.Engine.Contract = {}; win.Engine.Recovery = { aiSuggest: () => {} };
   win.Engine.Requirements = { aiAssist: () => {} };
   win.Engine.Universal = { buildStateAsync: () => {} };
+  win.Engine.Agents = { pipeline: () => {} };
+  win.Engine.Autonomy = { allows: () => true };
   const wAll = En.AI.wiring();
   t.ok('every AI consumer is wired once the engines expose their hooks',
     wAll.wiredCount === wAll.total, wAll.wiredCount + '/' + wAll.total);

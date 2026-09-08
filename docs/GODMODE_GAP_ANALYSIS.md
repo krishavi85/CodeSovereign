@@ -71,7 +71,7 @@ chase the 68 framework / platform features.
 | 11 | UI generation from prompt / screenshot / Figma / wireframe | 🟨 | Prompt-to-UI only (LLM/templates). No vision input, no reconstruction. |
 | 12 | Visual validation (render → inspect clipping/overflow/contrast) | ⬜ | Not built. The observer window could host this. |
 | 13 | Screenshot fidelity mode | ⬜ | Not built. |
-| 14 | Backend builder (routes / services / validation / error handling) | 🟨 | `dist/engine.backend.js` — generates a real zero-dep HTTP server: routing table, JSON body parsing, per-entity CRUD service layer, ownership scoping, structured errors, static serving. **Not yet**: workers/queues/websockets/uploads/payments/webhooks. |
+| 14 | Backend builder (routes / services / validation / error handling / async infra) | ✅ | `dist/engine.backend.js` — real zero-dep HTTP server: routing table, JSON body parsing, per-entity CRUD service layer, ownership scoping, structured errors, static serving, in-memory rate limiter (120/min/IP → 429). `dist/engine.jobs.js` — durable job queue (`enqueue`/`claim`/`complete`/`fail`, 5 attempts, exponential backoff, dead-letter), a polling worker (`src/worker.js`, dispatches `src/jobs/<type>.js`), and an SSE hub (`src/events.js`, `/api/events`). `Engine.Scaffold` emits all of it + a passing `test/worker.test.js` when `spec.jobs`. **Not yet**: websockets (SSE only), uploads/payments/webhooks. |
 | 15 | Database architect (schema / migrations / constraints / indexes / query analysis / N+1) | ✅ | `dist/engine.schema.js` — entity model → real SQL migrations (CREATE TABLE, FK + `ON DELETE`, `CREATE [UNIQUE] INDEX`, up+down) + a schema-enforcing data layer (types, required, max, defaults, auto-inc, FK existence, unique indexes, cascade delete) + N+1 / missing-FK-index analysis. JSON-backed for portability; the SQL is the real artefact for Postgres. |
 | 16 | Auth & authz engine (password + RBAC + sessions + tenant scoping) | 🟨 | `dist/engine.auth.js` — generates a real auth module: scrypt hashing (`node:crypto`, timing-safe), opaque session tokens, `requireAuth` / `requireRole`, per-request user, first-user-is-admin, a login/register UI. **Not yet**: OAuth / passkeys / MFA / authorization attack tests. |
 
@@ -79,10 +79,10 @@ chase the 68 framework / platform features.
 
 | § | Capability | State | Notes |
 |---|---|---|---|
-| 17 | Security GodMode (injection / XSS / CSRF / SSRF / secrets / headers / CORS / deps) on the *product* | 🟨 | Secret redaction in `.sovereign`; CSP checks + `eval` findings in recovery/validator; `electron/SECURITY.md` covers the shell's own IPC surface. No product-wide security scanner. |
+| 17 | Security GodMode (injection / XSS / CSRF / SSRF / secrets / headers / CORS / deps) on the *product* | ✅ | `dist/engine.security.js` — product security scanner over the workspace source: SQL/command injection, XSS (`innerHTML`/`document.write` with dynamic data), path traversal, hardcoded secrets (GitHub/OpenAI/Slack/AWS/PEM/JWT/credential literals), `eval`/`new Function`, weak crypto (md5/sha1, `Math.random` for security values), wildcard CORS, insecure cookies, committed `.env` values, **unauthenticated mutating routes**, missing rate limiting. `scan()` → `score = 100 − high·20 − medium·7 − low·2` → `.sovereign/security-findings.json` + `security-report.md`, folded into `decision-state.json`. Runs inside `Sovereign.analyze()`; `Engine.DoD` reads `bySeverity.high` as the authoritative security gate. `electron/SECURITY.md` still covers the shell's own IPC surface. |
 | 18 | Privacy engine (sensitive-data flow, retention, export) | ⬜ | Requirements pack names GDPR; no flow analysis. |
-| 19 | Testing factory (autogenerate unit/integration/e2e/a11y/install/upgrade/recovery tests) | ⬜ | `runEvidence` runs *existing* tests; nothing generates them. |
-| 20 | Adversarial test engine (disconnect net / kill backend / corrupt DB / expired tokens / malformed payloads) | ⬜ | Not built. |
+| 19 | Testing factory (autogenerate unit/integration/e2e/a11y/install/upgrade/recovery tests) | 🟨 | `dist/engine.testgen.js` — reads the open project's route table + schema + interaction inventory and writes real `node:test` files into `test/` that `runEvidence()` then executes: one API test per detected endpoint (status + shape), an a11y suite (`<html lang>`, `<img alt>`, button text). **Not yet**: e2e / install / upgrade test generation. |
+| 20 | Adversarial test engine (disconnect net / kill backend / corrupt DB / expired tokens / malformed payloads) | ✅ | `dist/engine.testgen.js` `chaosSuite()` — generates `test/chaos.test.js`: malformed JSON body, oversized body (→ 413), unknown id, wrong method, expired/bogus token must not authenticate, mutation without auth → 401, 8 concurrent writes don't corrupt. Runs under `node --test` as part of the evidence gates. |
 | 21 | Autonomous debugger (evidence → hypotheses → test → repair) | 🟨 | `engine.recovery.js` `rootCauseFor()` + plan/repair; hypothesis testing is implicit, not explicit. |
 | 22 | Root-cause engine (cause → cascade → fix → prevention) | 🟨 | `rootCauseFor()` produces cause/cascade/confidence; no "prevention" (add test + version gate) output. |
 | 23 | Repair All (dependency-aware ordering, re-run full chain) | 🟨 | Recovery loop repairs validator findings + re-verifies levels; ordering is confidence-based, not the blueprint's build→dep→arch→backend→db→frontend→runtime→security→test→packaging order. |
@@ -92,8 +92,8 @@ chase the 68 framework / platform features.
 
 | § | Capability | State | Notes |
 |---|---|---|---|
-| 25 | Multi-agent software company (17 agents + orchestrator) | 🟧 | `engine-universal.js TaskGraph` *names* agents and builds a dependency DAG with `PENDING` tasks — **no executor**, no agents, tasks never run. |
-| 26 | Agent conflict resolution / arbitration | ⬜ | Not built. |
+| 25 | Multi-agent software company (agents + orchestrator) | ✅ | `dist/engine.agents.js` — 9 specialist agents as real implementations wrapping the engines: `product` (Contract.derive), `architect` (Scaffold spec), `scaffold` (full repo), `test` (TestGen), `security` (Security.scan), `verify` (analyze + runEvidence + observe), `repair` (Recovery.run), `deploy` (Deploy.apply), `release` (DoD + certificate). `run(id, ctx)`, `pipeline(ctx)` runs the standard product order and writes `.sovereign/agents-run.json`. Every side-effecting agent checks `Engine.Autonomy.allows(...)` first. The `engine-universal.js TaskGraph` still feeds only a plan. |
+| 26 | Agent conflict resolution / arbitration | ✅ | `Engine.Agents.arbitrate(conflicts)` — resolves by the blueprint hierarchy **product contract > architecture > security > performance > UI**; returns the winning side + a resolution note per conflict. |
 | 27 | AI/ML development — model lifecycle, quantization, VRAM | 🟨 | `dist/engine.modelmanager.js`: `estimate(params, quant, ctx)` (real GGUF byte-per-weight table + KV cache), `canRun(model, hw)`, a curated 26-model catalogue, real `ollama pull` via the proc bridge. Model *conversion* still needs a llama.cpp toolchain (contract only). |
 | 28 | Local AI router (Ollama / llama.cpp / LM Studio / vLLM / Jan / **OmniRoute**) | ✅ | `dist/engine.airouter.js` + `electron/lib/aihost.js`: discovers running local runtimes + their models over the vetted main-process proxy, `recommend(hw, task)` picks the largest model that fits (GPU vs CPU aware), `apply()` wires it into `Engine.LLM`, `route()` does the whole flow. **OmniRoute** (github.com/diegosouzapw/OmniRoute) is a first-class runtime + provider — one-click "Enable free AI" installs + starts `npx omniroute serve` and wires `model:"auto"` (no key, ~150 free provider tiers). Settings → **Local AI** card (model catalogue with per-host fit + `pull`, manual endpoint, wiring audit). |
 | 29 | AI provider abstraction | ✅ | `engine.llm.js` registry (incl. keyless OmniRoute) + keychain + main-process proxy so **local** endpoints work despite CSP. `Engine.AI` is a single facade the app talks to: `ready()`, `ensure()` (auto-connect: local → OmniRoute), `chat()`, and `consumers()` — a live audit of every AI touch-point. For *generated apps*: `Engine.Orchestrator` `ai-provider` template emits a vendor-neutral `src/ai/provider.js` (Ollama-first) + `.env.example`; the LLM system prompt forbids hard-coding a vendor. **All 7 AI touch-points wired**: Agent, Orchestrator, Contract, Recovery (`aiSuggest` — model-drafted patch when deterministic generators no-op), Router, Requirements (`aiAssist` — folds AI archetypes + implied requirements into `requirements.json` / `requirements-ai.json`, and into the product contract), Universal normalizer (`aiNormalize` / `buildStateAsync` — an LLM reads the objective when connected, keyword rules otherwise). |
@@ -118,8 +118,8 @@ chase the 68 framework / platform features.
 
 | § | Capability | State |
 |---|---|---|
-| 41 | Deployment engine (VPS / Docker / K8s / Vercel / Netlify / cloud / self-host / desktop-local) | ⬜ |
-| 42 | Infrastructure as code (Dockerfile / compose / Terraform / K8s / proxy / TLS / DNS) | 🟨 generation of a Dockerfile only |
+| 41 | Deployment engine (VPS / Docker / K8s / Vercel / Netlify / cloud / self-host / desktop-local) | 🟨 `dist/engine.deploy.js` — 7 targets (docker · compose · vps · fly · render · railway · static), each with label + cost + prerequisites. `preflight()` runs 7 readiness checks (start command, configurable port, build, `.env.example`, no committed `.env`, healthcheck, migrations). `apply(target)` generates the IaC + a runnable `deploy/<target>.sh` and writes `.sovereign/deployment.json`. **Does not push** — that needs the user's credentials; `bash deploy/<target>.sh` is the last step. No K8s manifests yet. |
+| 42 | Infrastructure as code (Dockerfile / compose / Terraform / K8s / proxy / TLS / DNS) | ✅ `dist/engine.deploy.js` generates multi-stage Dockerfile (non-root, healthcheck), `docker-compose.prod.yml` (app + Postgres 16 w/ healthcheck + volume), `fly.toml`, `render.yaml`, a systemd unit + Caddyfile (TLS via Caddy) for VPS, `.dockerignore`, `_headers`. No Terraform / K8s yet. |
 | 43 | Monitoring (logs / metrics / traces / health / crash / uptime / audit) | ⬜ (the *shell* has a command-audit log; nothing generated for the product) |
 | 44 | Production diagnosis (correlate logs / code / version / DB / commits) | ⬜ |
 | 45 | Performance engineering (profile CPU/RAM/GPU/IO/DB/render/startup/bundle) | ⬜ |
@@ -153,7 +153,7 @@ chase the 68 framework / platform features.
 | 63 | Feature builder (implement the entire functional dependency surface) | ⬜ |
 | 64 | Feature completion graph | ⬜ |
 | 65 | User-journey testing | ⬜ |
-| 66 | Chaos mode | ⬜ |
+| 66 | Chaos mode | ✅ `dist/engine.testgen.js` `chaosSuite()` — see §20; generated `test/chaos.test.js` runs as a real gate |
 | 67 | Zero-Mock release gate | 🟨 detection exists (`mockscan`); not enforced as a gate |
 | 68 | Sovereign release certificate (cross-gate, evidence-backed) | 🟧 `engine.recovery.v4.js` has a "certificate" concept scoped to recovery runs; not the multi-gate SOVEREIGN VERIFIED cert |
 
@@ -161,7 +161,7 @@ chase the 68 framework / platform features.
 
 | § | Capability | State |
 |---|---|---|
-| 69 | Graduated control levels (Assist / Build / Engineer / Autopilot / GodMode) | ⬜ |
+| 69 | Graduated control levels (Assist / Build / Engineer / Autopilot / GodMode) | ✅ `dist/engine.autonomy.js` — 5 levels, each a capability set over `write/generate/command/repair/observe/deploy/release/network`. `allows(action)` / `gate(action, fn)`. `Engine.Orchestrator.run()` checks `allows('generate'/'command'/'observe'/'repair')` before each side effect; `Engine.Agents` blocks disallowed agents; Settings → **Autonomy & Deployment** card sets the level (persisted). Default `engineer`. |
 | 70 | GodMode command (compact BUILD/TARGET/CONSTRAINTS/MODE declaration) | ⬜ |
 | 71 | The GodMode pipeline (one closed loop intent→…→SOVEREIGN VERIFIED) | 🟨 the P0 slice (`engine.orchestrator.js`) closes the loop for a task DAG with generators; the 20-stage `engine-universal.js` front end still feeds it only a plan |
 | 72 | The defining difference (verified outcomes, not files) | 🟨 now demonstrated on **generated** code too (acceptance §8), for template/LLM-task slices; not yet for a full from-scratch product |
@@ -185,11 +185,11 @@ chase the 68 framework / platform features.
 | 11 Code generation | 🟨 | one LLM call → flat SPA, or templates |
 | 12 Connection & wiring engine | 🟨 | `engine-universal.js` produces wiring *contracts* + a simple issue list; no deep "button→handler→endpoint→service→DB" verification of generated code |
 | 13 Build & execution | ✅ | real, via proc bridge (for projects that build) |
-| 14 Automated testing | 🟨 | runs existing tests; none generated |
+| 14 Automated testing | ✅ | `engine.testgen.js` generates API + chaos + a11y `node:test` files; `runEvidence()` executes them |
 | 15 Repair loop | 🟨 | Recovery loop; not requirement-driven |
 | 16 Quality gate (requirements met / no mocks / no broken routes / UX verified) | 🟧 | the ingredients exist; not assembled into one gate |
 | 17 Packaging | 🟨 | Windows only |
-| 18 Deployment | ⬜ | |
+| 18 Deployment | 🟨 | `engine.deploy.js` generates IaC + deploy script + preflight for 7 targets; does not push (needs creds) |
 | 19/20 Delivery contract (code + build + tests + package + guide + evidence + known limits + continuation state) | 🟨 | `.sovereign/` covers evidence + continuation; no assembled delivery bundle |
 
 ---

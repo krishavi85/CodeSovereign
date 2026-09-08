@@ -72,7 +72,10 @@
     'orchestrator-run.json':     'Last GodMode pipeline run (tasks, generators, DoD before/after)',
     'cost-analysis.json':        'Per-dependency cost tier + zero-cost alternatives (spec §30)',
     'cost-sovereignty.md':       'Readable mandatory vs optional cost breakdown',
-    'requirements-ai.json':      'Model-found archetypes + implied requirements (when AI is connected)'
+    'requirements-ai.json':      'Model-found archetypes + implied requirements (when AI is connected)',
+    'security-findings.json':    'Product security scan — injection / XSS / secrets / auth (spec §17)',
+    'security-report.md':        'Readable security findings + score',
+    'deployment.json':           'Last generated deployment target + IaC + preflight (spec §41)'
   };
 
   function rel(p) { return ROOT + '/' + String(p).replace(/^\/+/, ''); }
@@ -581,6 +584,9 @@
 
     // ---- cost sovereignty (spec §30) ----
     safe(function () { window.Engine.Cost && window.Engine.Cost.analyze({}); });
+
+    // ---- product security scan (spec §17) ----
+    safe(function () { window.Engine.Security && window.Engine.Security.scan(); });
 
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {

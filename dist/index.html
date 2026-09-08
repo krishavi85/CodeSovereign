@@ -213,11 +213,19 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="engine.airouter.js"></script>
 <script src="engine.ai.js"></script>
 <script src="engine.cost.js"></script>
-<!-- Repo-scale generation: schema/migrations/data-layer -> auth -> REST backend -> full-repo scaffold -->
+<!-- Repo-scale generation: schema/migrations/data-layer -> auth -> async infra -> REST backend -> full-repo scaffold -->
 <script src="engine.schema.js"></script>
 <script src="engine.auth.js"></script>
+<script src="engine.jobs.js"></script>
 <script src="engine.backend.js"></script>
 <script src="engine.scaffold.js"></script>
+<!-- product security scan + testing factory + deployment IaC -->
+<script src="engine.security.js"></script>
+<script src="engine.testgen.js"></script>
+<script src="engine.deploy.js"></script>
+<!-- graduated autonomy + specialist agents -->
+<script src="engine.autonomy.js"></script>
+<script src="engine.agents.js"></script>
 <!-- P0 pipeline: product contract -> evidence ledger -> definition-of-done gate -> orchestrator -->
 <script src="engine.contract.js"></script>
 <script src="engine.ledger.js"></script>

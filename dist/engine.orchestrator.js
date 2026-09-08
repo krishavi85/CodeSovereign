@@ -34,6 +34,9 @@
     } catch (_) { return null; }
   }
   function isDesktop() { return !!(window.desktop && window.desktop.isDesktop && FS.__hasWorkspace && FS.__hasWorkspace()); }
+  // graduated autonomy — Engine.Autonomy.allows(action) gates every side effect.
+  // Missing engine => allow (back-compat).
+  function allows(action) { var A = Engine.Autonomy; return !A || !A.allows || A.allows(action); }
   function flush() { return (FS.__flush ? FS.__flush() : Promise.resolve()); }
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
@@ -282,10 +285,10 @@
     opts = opts || {};
     try { S().analyze(); } catch (e) { /* keep going */ }
     var chain = Promise.resolve();
-    if (desktop && opts.evidence !== false) {
+    if (desktop && opts.evidence !== false && allows('command')) {
       chain = chain.then(function () { return S().runEvidence().catch(function () {}); });
     }
-    if (desktop && opts.observe !== false) {
+    if (desktop && opts.observe !== false && allows('observe')) {
       chain = chain
         .then(function () { try { window.CSObserve && window.CSObserve.stop(); } catch (_) {} })
         .then(function () { return wait(1500); })   // let the old dev-server port free up
@@ -335,6 +338,11 @@
       chain = chain.then(function () {
         var tr = { id: task.id || task.name, name: task.name || task.id, status: 'PENDING', cycles: 0, notes: [] };
         record.tasks.push(tr);
+        if (!allows('generate') || !allows('write')) {
+          tr.status = 'BLOCKED';
+          tr.notes.push('autonomy level "' + ((Engine.Autonomy && Engine.Autonomy.get && Engine.Autonomy.get()) || '?') + '" does not allow generate/write');
+          return;
+        }
         var gen = resolveGenerator(task);
         if (!gen) { tr.status = 'BLOCKED'; tr.notes.push('no generator (template / prompt+LLM / generate fn)'); return; }
         if (targetMet(task)) { tr.status = 'ALREADY_MET'; return; }
@@ -357,7 +365,7 @@
               return reproof(desktop, {})
                 .then(function () {
                   if (targetMet(task)) { tr.status = 'COMPLETE'; return; }
-                  if (Engine.Recovery && Engine.Recovery.run) { try { Engine.Recovery.run(); } catch (_) {} }
+                  if (allows('repair') && Engine.Recovery && Engine.Recovery.run) { try { Engine.Recovery.run(); } catch (_) {} }
                   return reproof(desktop, {}).then(function () {
                     if (targetMet(task)) { tr.status = 'COMPLETE'; return; }
                     if (tr.cycles < maxCycles) return wait(50).then(loop);

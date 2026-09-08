@@ -23,6 +23,7 @@ const trust = require('./lib/trust');
 const store = require('./lib/store');
 const proc = require('./lib/proc');
 const observer = require('./lib/observer');
+const { freePort } = require('./lib/freeport');
 
 const RENDERER = path.join(__dirname, '..', 'dist', 'index.html');
 
@@ -110,6 +111,11 @@ async function run() {
   const watchdog = setTimeout(() => { console.error('[acceptance-build] FAIL — watchdog 20m'); try { observer.stop(); proc.killAll(); } catch (_) {} app.exit(1); }, 20 * 60 * 1000);
   watchdog.unref && watchdog.unref();
   try {
+    try {
+      const fp = await freePort(4319);
+      if (fp.wasHeld) console.log('[acceptance-build] freed port 4319 (killed ' + JSON.stringify(fp.killed) + (fp.stillHeld ? ', STILL HELD' : '') + ')');
+    } catch (_) { /* best effort */ }
+
     tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'cs-build-'));
     const wsDir = path.join(tmp, 'generated');
     await fsp.mkdir(wsDir, { recursive: true });

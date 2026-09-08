@@ -27,6 +27,7 @@ const observer = require('./lib/observer');
 
 const RENDERER = path.join(__dirname, '..', 'dist', 'index.html');
 const FIXTURE = path.join(__dirname, '..', 'test', 'fixtures', 'acceptance');
+const { freePort } = require('./lib/freeport');
 const SKIP = new Set(['node_modules', '.git', '.data', 'dist', '.sovereign']);
 
 async function copyTree(src, dst) {
@@ -327,6 +328,13 @@ async function run() {
   }, 20 * 60 * 1000);
   watchdog.unref && watchdog.unref();
   try {
+    // A stray dev server from a previous crashed run would be silently reused by
+    // the observer, crawling the wrong workspace. Clear the fixture's port first.
+    try {
+      const fp = await freePort(4319);
+      if (fp.wasHeld) console.log('[acceptance] freed port 4319 (killed ' + JSON.stringify(fp.killed) + (fp.stillHeld ? ', STILL HELD' : '') + ')');
+    } catch (_) { /* best effort */ }
+
     tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'cs-accept-'));
     const wsDir = path.join(tmp, 'taskboard');
     await copyTree(FIXTURE, wsDir);

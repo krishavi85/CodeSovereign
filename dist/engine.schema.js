@@ -52,11 +52,13 @@
       if (!fields.some(function (f) { return f.name === 'createdAt'; })) fields.push({ name: 'createdAt', type: 'timestamp', default: 'now' });
       fields = fields.map(function (f) {
         var t = TYPES[f.type] ? f.type : (f.ref ? 'ref' : 'text');
+        // idempotent: accept both raw ({default}) and already-normalized ({def})
+        var d = f.default !== undefined ? f.default : (f.def !== undefined ? f.def : null);
         return {
           name: ident(f.name), type: t,
           required: !!f.required && t !== 'id',
           max: f.max || (t === 'text' ? 500 : null),
-          def: f.default === undefined ? null : f.default,
+          def: d,
           ref: t === 'ref' ? singular(f.ref || (f.name.replace(/Id$/, '') || 'user')) : null,
           onDelete: f.onDelete || (t === 'ref' ? 'cascade' : null)
         };
@@ -214,6 +216,65 @@
     ].join('\n');
   }
 
+  // node-pg stack: src/db.js becomes a shim that picks pg (DATABASE_URL set) or
+  // the JSON store. Migrations are already real SQL — `npm run migrate` runs
+  // them against Postgres.
+  function dbShim() {
+    return "'use strict';\n" +
+      "// Picks the real Postgres adapter when DATABASE_URL is set, else the\n" +
+      "// dependency-free JSON store (used by the tests and for local dev).\n" +
+      "module.exports = process.env.DATABASE_URL ? require('./db.pg') : require('./db.json');\n";
+  }
+  function pgModule(spec) {
+    var s = normalizeSpec(spec);
+    return [
+      "'use strict';",
+      "// Real Postgres data layer — same interface as db.json. Needs `pg`",
+      "// (optionalDependency) and DATABASE_URL. Run migrations with npm run migrate.",
+      "const { Pool } = require('pg');",
+      "const schema = require('./schema');",
+      "const pool = new Pool({ connectionString: process.env.DATABASE_URL, max: 10 });",
+      "function ent(name) { const e = schema.entities.find((x) => x.name === name || x.table === name); if (!e) throw new Error('unknown entity ' + name); return e; }",
+      "const q = (text, params) => pool.query(text, params);",
+      "",
+      "async function migrate() {",
+      "  const fs = require('fs'); const path = require('path');",
+      "  const dir = path.join(__dirname, '..', 'db', 'migrations');",
+      "  for (const f of fs.readdirSync(dir).filter((x) => /^\\d+_.*\\.sql$/.test(x) && !/\\.down\\./.test(x)).sort())",
+      "    await q(fs.readFileSync(path.join(dir, f), 'utf8'));",
+      "  return schema.entities.map((e) => e.table);",
+      "}",
+      "async function create(name, input) {",
+      "  const e = ent(name); const cols = e.fields.filter((f) => f.type !== 'id' && input[f.name] !== undefined);",
+      "  const now = e.fields.find((f) => f.name === 'createdAt'); if (now && input.createdAt === undefined) { cols.push(now); input.createdAt = new Date().toISOString(); }",
+      "  const names = cols.map((f) => f.name); const vals = names.map((n) => input[n]);",
+      "  const ph = names.map((_, i) => '$' + (i + 1)).join(', ');",
+      "  const { rows } = await q('INSERT INTO ' + e.table + ' (' + names.join(', ') + ') VALUES (' + ph + ') RETURNING *', vals);",
+      "  return rows[0];",
+      "}",
+      "async function list(name, opts) {",
+      "  const e = ent(name); opts = opts || {}; const where = opts.where || {};",
+      "  const keys = Object.keys(where); const cond = keys.map((k, i) => k + ' = $' + (i + 1));",
+      "  const base = 'FROM ' + e.table + (cond.length ? ' WHERE ' + cond.join(' AND ') : '');",
+      "  const total = Number((await q('SELECT count(*) ' + base, keys.map((k) => where[k]))).rows[0].count);",
+      "  const { rows } = await q('SELECT * ' + base + ' ORDER BY id DESC LIMIT ' + Math.min(Number(opts.limit || 100), 500) + ' OFFSET ' + Number(opts.offset || 0), keys.map((k) => where[k]));",
+      "  return { total, rows };",
+      "}",
+      "async function get(name, id) { const e = ent(name); return (await q('SELECT * FROM ' + e.table + ' WHERE id = $1', [id])).rows[0] || null; }",
+      "async function update(name, id, input) {",
+      "  const e = ent(name); const cols = e.fields.filter((f) => f.type !== 'id' && input[f.name] !== undefined).map((f) => f.name);",
+      "  if (!cols.length) return get(name, id);",
+      "  const set = cols.map((c, i) => c + ' = $' + (i + 2)).join(', ');",
+      "  const { rows } = await q('UPDATE ' + e.table + ' SET ' + set + ' WHERE id = $1 RETURNING *', [id].concat(cols.map((c) => input[c])));",
+      "  return rows[0] || null;",
+      "}",
+      "async function remove(name, id) { const e = ent(name); const r = await q('DELETE FROM ' + e.table + ' WHERE id = $1', [id]); return r.rowCount > 0; }",
+      "async function reset() { for (const e of schema.entities.slice().reverse()) await q('TRUNCATE ' + e.table + ' RESTART IDENTITY CASCADE').catch(() => {}); }",
+      "module.exports = { create, list, get, update, remove, reset, migrate, schema };",
+      ""
+    ].join('\n');
+  }
+
   function analyze(spec) {
     var s = normalizeSpec(spec);
     var hints = [];
@@ -228,6 +289,6 @@
     return { entities: s.entities.length, hints: hints };
   }
 
-  Engine.Schema = { TYPES: TYPES, normalizeSpec: normalizeSpec, migrationsSQL: migrationsSQL, schemaModule: schemaModule, dbModule: dbModule, analyze: analyze, tableOf: tableOf, singular: singular };
+  Engine.Schema = { TYPES: TYPES, normalizeSpec: normalizeSpec, migrationsSQL: migrationsSQL, schemaModule: schemaModule, dbModule: dbModule, dbShim: dbShim, pgModule: pgModule, analyze: analyze, tableOf: tableOf, singular: singular };
   console.info('[Schema] schema + migration + data-layer engine ready — Engine.Schema');
 })();

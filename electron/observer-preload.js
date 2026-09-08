@@ -7,7 +7,8 @@
  */
 (function () {
   var MAX = 500;
-  var buf = { console: [], errors: [], network: [], nav: [], mutations: 0 };
+  var buf = { console: [], errors: [], network: [], nav: [], mutations: 0, inflight: 0, lastActivity: 0 };
+  function bump() { buf.lastActivity = Date.now(); }
   function push(arr, item) { arr.push(item); if (arr.length > MAX) arr.shift(); }
 
   ['log', 'info', 'warn', 'error', 'debug'].forEach(function (level) {
@@ -41,10 +42,11 @@
       var rec = { t: Date.now(), kind: 'fetch', method: method, url: String(url).slice(0, 300), status: 0, ms: 0 };
       push(buf.network, rec);
       var started = Date.now();
+      buf.inflight++; bump();
       return origFetch.apply(this, arguments).then(function (res) {
-        rec.status = res.status; rec.ms = Date.now() - started; return res;
+        rec.status = res.status; rec.ms = Date.now() - started; buf.inflight--; bump(); return res;
       }, function (err) {
-        rec.status = -1; rec.ms = Date.now() - started; rec.error = String(err && err.message || err); throw err;
+        rec.status = -1; rec.ms = Date.now() - started; rec.error = String(err && err.message || err); buf.inflight--; bump(); throw err;
       });
     };
   }
@@ -85,6 +87,7 @@
       var r = list[i];
       buf.mutations += 1 + (r.addedNodes ? r.addedNodes.length : 0) + (r.removedNodes ? r.removedNodes.length : 0);
     }
+    bump();
   });
   function attachMO() {
     var target = document.body || document.documentElement;
@@ -107,11 +110,26 @@
         return {
           console: buf.console.slice(), errors: buf.errors.slice(),
           network: buf.network.slice(), nav: buf.nav.slice(), mutations: buf.mutations,
+          inflight: buf.inflight, lastActivity: buf.lastActivity,
           url: location.href, title: document.title
         };
       },
       reset: function () {
         buf.console.length = 0; buf.errors.length = 0; buf.network.length = 0; buf.nav.length = 0; buf.mutations = 0;
+      },
+      // resolves once the page has been quiet (no in-flight fetch, no DOM
+      // mutation) for `quietMs`, or `capMs` elapses — so one control's async
+      // work can't be attributed to the next.
+      quiet: function (quietMs, capMs) {
+        quietMs = quietMs || 250; capMs = capMs || 3000;
+        var start = Date.now();
+        return new Promise(function (resolve) {
+          (function tick() {
+            var idleFor = Date.now() - (buf.lastActivity || 0);
+            if ((buf.inflight <= 0 && idleFor >= quietMs) || Date.now() - start >= capMs) return resolve({ waited: Date.now() - start, inflight: buf.inflight });
+            setTimeout(tick, 60);
+          })();
+        });
       }
     }
   });

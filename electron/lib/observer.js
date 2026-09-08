@@ -112,6 +112,13 @@ async function reset() {
   const w = ensureWin();
   try { await w.webContents.executeJavaScript('window.__obs && window.__obs.reset()', true); } catch { /* ignore */ }
 }
+async function quietWait(quietMs, capMs) {
+  const w = ensureWin();
+  try {
+    return await w.webContents.executeJavaScript(
+      `window.__obs && window.__obs.quiet ? window.__obs.quiet(${quietMs || 250}, ${capMs || 3000}) : null`, true);
+  } catch { return null; }
+}
 
 async function screenshot() {
   const w = ensureWin();
@@ -169,9 +176,12 @@ async function crawl(opts = {}) {
     actionLog.push({ t: Date.now(), kind: 'activate', control: c.name, risky });
     // Let the previous control's in-flight async (a pending fetch, a debounced
     // render) drain and be discarded before this control's window opens, so an
-    // effect is attributed to the control that actually caused it.
+    // effect is attributed to the control that actually caused it. Wait for the
+    // page to actually go quiet (no in-flight fetch, no mutations) rather than a
+    // fixed sleep that is too short on a fast host and racy on a slow one.
+    await quietWait(250, 3000);
     await reset();
-    await wait(350);
+    await wait(120);
     await reset();
     const before = await read();
     let threw = null;
@@ -197,6 +207,9 @@ async function crawl(opts = {}) {
       await wait(150);
       after = await read();
     }
+    // if this control kicked off a fetch, wait for it to finish so the effect is
+    // measured against the control that caused it, not the next one.
+    if ((after.inflight || 0) > 0) { await quietWait(200, 2500); after = await read(); }
 
     const realNav = stripBareHash(after.url) !== stripBareHash(before.url);
 
@@ -207,6 +220,11 @@ async function crawl(opts = {}) {
       domMutations: (after.mutations || 0) - (before.mutations || 0),
       newConsole: (after.console || []).slice((before.console || []).length).slice(0, 5)
     };
+    if (process.env.CS_OBS_DEBUG) {
+      console.error('[obs] ' + c.name + ' before.net=' + (before.network || []).length + ' after.net=' + (after.network || []).length +
+        ' netURLs=' + JSON.stringify((after.network || []).slice((before.network || []).length).map((n) => n.url || n)) +
+        ' dom=' + effects.domMutations + ' errs=' + effects.consoleErrors + ' inflight=' + (after.inflight || 0) + ' threw=' + threw);
+    }
     const deadHref = !c.href || c.href === '#' || /^javascript:/.test(c.href);
     let status;
     if (threw || effects.consoleErrors > 0) status = 'BROKEN';

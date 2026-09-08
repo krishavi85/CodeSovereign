@@ -238,15 +238,72 @@
     };
   }
 
+  /* ---------- Autonomy + Deployment ---------- */
+  function factoryCardHtml() {
+    var A = E().Autonomy, D = E().Deploy;
+    if (!A && !D) return '';
+    var out = '<div class="card" style="padding:20px;margin-bottom:18px"><h3 class="cs-h3" style="margin-bottom:14px">Autonomy &amp; Deployment</h3>';
+
+    if (A) {
+      var lvl = A.get();
+      var desc = A.describe();
+      out += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">How much runs without asking</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">' +
+        A.LEVELS.map(function (l) {
+          var on = l === lvl;
+          return '<button class="cs-autolvl" data-lvl="' + l + '" style="padding:4px 10px;border-radius:6px;font:11.5px JetBrains Mono,monospace;cursor:pointer;border:1px solid ' +
+            (on ? 'var(--good)' : 'var(--line)') + ';background:' + (on ? 'rgba(52,211,153,.10)' : 'var(--bg-2)') + ';color:' + (on ? 'var(--good)' : '#e6e9f2') + '">' + l + '</button>';
+        }).join('') + '</div>' +
+        '<div style="font-size:12px;color:var(--muted);margin-bottom:14px">' + esc(desc.summary) +
+        ' — allows: ' + Object.keys(desc.caps).filter(function (k) { return desc.caps[k]; }).join(', ') + '</div>';
+    }
+
+    if (D) {
+      var dep = null; try { dep = E().Sovereign && E().Sovereign.read('deployment.json'); } catch (_) {}
+      out += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">Deployment target (generates IaC — never pushes)</div>' +
+        '<select id="depTarget" style="padding:5px 8px;border-radius:6px;background:var(--bg-2);color:#e6e9f2;border:1px solid var(--line);font-size:12px">' +
+        Object.keys(D.TARGETS).map(function (k) {
+          return '<option value="' + k + '"' + (dep && dep.target === k ? ' selected' : '') + '>' + esc(D.TARGETS[k].label) + ' — ' + esc(D.TARGETS[k].cost) + '</option>';
+        }).join('') + '</select> ' +
+        '<button id="depGenBtn" class="btn primary" style="padding:5px 12px;font-size:12px;margin-left:6px">Generate deploy files</button>' +
+        (dep ? '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Last: <b>' + esc(dep.target) + '</b> · preflight ' +
+          (dep.preflight && dep.preflight.ok ? '<span style="color:var(--good)">ready</span>' : '<span style="color:var(--warn,#f59e0b)">' + ((dep.preflight && dep.preflight.checks || []).filter(function (c) { return !c.ok; }).length) + ' item(s) to fix</span>') +
+          ' · ' + (dep.artifacts || []).length + ' file(s)</div>' : '') +
+        (state.depLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:120px;overflow:auto">' + esc(state.depLog) + '</pre>' : '');
+    }
+
+    return out + '</div>';
+  }
+  function bindFactory(host) {
+    host.querySelectorAll('.cs-autolvl').forEach(function (b) {
+      b.onclick = function () {
+        E().Autonomy.set(b.dataset.lvl);
+        window.toast && window.toast('Autonomy: ' + b.dataset.lvl, '#22d3ee');
+        rerender();
+      };
+    });
+    var g = host.querySelector('#depGenBtn');
+    if (g) g.onclick = function () {
+      var tgt = (host.querySelector('#depTarget') || {}).value || 'compose';
+      if (E().Autonomy && !E().Autonomy.allows('write')) { window.toast && window.toast('Autonomy level "' + E().Autonomy.get() + '" cannot write files', '#f59e0b'); return; }
+      try {
+        var r = E().Deploy.apply(tgt, {});
+        state.depLog = 'wrote:\n  ' + r.wrote.join('\n  ') + '\n\npreflight: ' + (r.preflight.ok ? 'ready' : 'fix ' + r.preflight.checks.filter(function (c) { return !c.ok; }).map(function (c) { return c.name; }).join('; '));
+        window.toast && window.toast('Deploy files for ' + tgt + ' written to the workspace', '#34d399');
+      } catch (e) { state.depLog = 'error: ' + (e && e.message || e); }
+      rerender();
+    };
+  }
+
   /* ---------- injection ---------- */
   function fullHtml() {
-    return '<div id="aiExtrasHost">' + localAiCardHtml() + costCardHtml() + '</div>';
+    return '<div id="aiExtrasHost">' + localAiCardHtml() + factoryCardHtml() + costCardHtml() + '</div>';
   }
   function rerender() {
     var host = document.getElementById('aiExtrasHost');
     if (!host) return;
-    host.innerHTML = localAiCardHtml() + costCardHtml();
-    bindLocalAi(host); bindCost(host);
+    host.innerHTML = localAiCardHtml() + factoryCardHtml() + costCardHtml();
+    bindLocalAi(host); bindFactory(host); bindCost(host);
   }
 
   function install() {
