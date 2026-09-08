@@ -104,6 +104,12 @@
     'feature-graph.md':           'Readable feature-completion matrix',
     'decision-log.json':          'Decision ledger — ADRs harvested from the build evidence (assumptions, substitutions, refusals, rolled-back repairs, release decision) (spec §57-58)',
     'decision-report.md':         'Architecture Decision Records, newest first',
+    'cicd.json':                  'Multi-provider CI/CD generation — GitLab / Jenkins / Azure / Bitbucket from the detected stack (spec §40)',
+    'cicd-report.md':             'Readable CI/CD generation summary',
+    'bootstrap.json':             'Environment bootstrap plan — required runtimes + versions + setup steps (spec §33)',
+    'bootstrap-report.md':        'Readable environment-bootstrap summary',
+    'release-notes.json':         'Release engineering — version, verdict, changelog + notes generation (spec §37)',
+    'release-notes.md':           'The generated release announcement',
     'documentation-index.json':   'Documentation factory — which docs were (re)generated + folded-in verification evidence (spec §49)',
     'documentation-report.md':    'Readable summary of the documentation factory run',
     'delivery-manifest.json':     'Delivery archive manifest — verdict, DoD result, per-file hashes, content hash (spec §19-20)',
@@ -671,6 +677,15 @@
 
     // ---- documentation factory (spec §49) — after the gate so it folds in evidence ----
     safe(function () { window.Engine.Docs && window.Engine.Docs.analyze(); });
+
+    // ---- CI/CD for the other providers (spec §40) ----
+    safe(function () { window.Engine.CICD && window.Engine.CICD.analyze(); });
+
+    // ---- environment bootstrapper (spec §33) ----
+    safe(function () { window.Engine.Bootstrap && window.Engine.Bootstrap.analyze(); });
+
+    // ---- release engineering — changelog / notes / checksums (spec §37) ----
+    safe(function () { window.Engine.Release && window.Engine.Release.analyze(); });
 
     // ---- decision ledger / ADRs (spec §57-58) — after the gate for the release decision ----
     safe(function () { window.Engine.Decisions && window.Engine.Decisions.analyze(); });

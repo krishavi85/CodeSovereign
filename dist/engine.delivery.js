@@ -82,6 +82,9 @@
     'decision-log.json',
     'refactor-plan.json',
     'upgrade-plan.json',
+    'cicd.json',
+    'bootstrap.json',
+    'release-notes.json',
     'design-spec.json',
     'mobile-evidence.json',
     'mobile-ios-evidence.json',
@@ -93,7 +96,8 @@
   var DOC_FILES = [
     '/README.md', '/docs/API.md', '/docs/DATABASE.md',
     '/docs/DEPLOYMENT.md', '/docs/TROUBLESHOOTING.md', '/docs/DATA_MODEL.md',
-    '/docs/TS_MIGRATION.md', '/docs/DECISIONS.md'
+    '/docs/TS_MIGRATION.md', '/docs/DECISIONS.md', '/docs/DEVELOPMENT.md',
+    '/CHANGELOG.md', '/RELEASE_NOTES.md'
   ];
 
   function collect() {
