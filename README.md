@@ -67,11 +67,15 @@ p50/p95/p99** in the backend, a **localization** substrate (`i18n/` catalogue +
 `window.t()` runtime + pseudo-locale), a **feature-completion graph**, **refactor**
 (AST-safe rename) + **dependency-upgrade** plans, and one downloadable
 **delivery archive** (`/delivery/` — manifest + certificate + all evidence +
-continuation state). Engines: `engine.docs.js`, `engine.testgen.js`,
-`engine.journeys.js`, `engine.localize.js`, `engine.features.js`,
-`engine.refactor.js`, `engine.upgrade.js`, `engine.delivery.js`, `engine.decisions.js`,
-`engine.design.js`, `engine.perfcheck.js`, `engine.a11y.js`,
-`engine.visualcheck.js`, `engine.depintel.js`.
+continuation state), CHANGELOG + release notes + SHA-256 checksums, an
+environment `doctor.js`, CI for 5 providers, and an ADR **decision log**
+(every choice + every rejected approach). It also ingests an attached spec
+(Markdown / JSON Schema / OpenAPI) or a Figma export. Engines: `engine.intake.js`,
+`engine.design.js`, `engine.docs.js`, `engine.testgen.js`, `engine.journeys.js`,
+`engine.localize.js`, `engine.features.js`, `engine.refactor.js`, `engine.upgrade.js`,
+`engine.cicd.js`, `engine.bootstrap.js`, `engine.release.js`, `engine.decisions.js`,
+`engine.delivery.js`, `engine.perfcheck.js`, `engine.a11y.js`, `engine.visualcheck.js`,
+`engine.depintel.js`.
 
 **Web targets** — generated → run → verified: vanilla **or**
 React/Preact/Vue/Svelte/Angular frontends (vendored VDOM runtime, no build);
