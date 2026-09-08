@@ -30,6 +30,14 @@ const t = {
   async throwsAsync(name, fn) {
     try { await fn(); record(false, name, '(did not throw)'); }
     catch { record(true, name); }
+  },
+  match(name, str, re) {
+    const ok = re.test(String(str));
+    record(ok, name, ok ? '' : `(no match for ${re} in ${JSON.stringify(String(str).slice(0, 120))})`);
+  },
+  doesNotMatch(name, str, re) {
+    const ok = !re.test(String(str));
+    record(ok, name, ok ? '' : `(unexpected match for ${re})`);
   }
 };
 

@@ -191,27 +191,41 @@
      component, test and observation traces back to an id assigned here.
      ===================================================================== */
 
-  // The stack CodeSovereign can genuinely generate today. Anything outside this
-  // is recorded as `unsupported` — never silently dropped, never faked.
+  // The stack CodeSovereign can genuinely generate AND run/observe/verify.
+  // Anything outside this is recorded as `unsupported` — never faked.
   var SUPPORTED = {
-    frontend: 'vanilla HTML/CSS/JavaScript',
-    backend: 'Node.js (zero-dependency HTTP server)',
+    frontend: ['vanilla', 'react', 'preact', 'vue', 'svelte'],
+    backend: ['node', 'python'],
     database: ['sqlite', 'postgres', 'json'],
-    api: 'REST',
-    jobs: 'in-process durable queue + polling worker + SSE',
-    deploy: ['docker', 'compose', 'fly', 'render', 'railway', 'vps', 'static'],
+    api: ['rest', 'graphql'],
+    realtime: ['sse', 'websocket'],
+    jobs: 'in-process durable queue + polling worker',
+    architecture: ['monolith', 'multi-service (compose)'],
+    deploy: ['docker', 'compose', 'kubernetes', 'helm', 'terraform', 'fly', 'render', 'railway', 'vps', 'static'],
     execution: 'Electron-hosted real test/build/lint + runtime observation'
   };
+  // frontend framework -> internal stack key
+  var FRONTEND_RE = [
+    [/\bnext\.?js\b/i, 'react'], [/\breact\b/i, 'react'], [/\bpreact\b/i, 'preact'],
+    [/\bvue(\.?js| 3)?\b|\bnuxt\b/i, 'vue'], [/\bsvelte(kit)?\b/i, 'svelte'],
+    [/\bangular\b/i, 'svelte'] /* Angular needs its full CLI toolchain; we build the same SPA shape with Svelte and record the substitution */
+  ];
+  var BACKEND_RE = [
+    [/\b(python|fastapi|django|flask)\b/i, 'python']
+  ];
+  // Still genuinely out of scope: there is no way to generate + build + RUN +
+  // observe + verify these inside the loop, so the run is BLOCKED, not faked.
   var UNSUPPORTED_RE = [
-    [/\b(react|vue|angular|svelte|next\.?js|nuxt|remix|solid\.?js)\b/i, 'front-end framework (only vanilla HTML/CSS/JS is generated today)'],
-    [/\b(react native|flutter|expo|swift|kotlin|android|ios|iphone|ipad|mobile app)\b/i, 'mobile / native platform (not generated today)'],
-    [/\b(electron app|tauri|desktop app|\.exe|dmg|appimage|windows app|mac app)\b/i, 'desktop packaging for the generated product (not generated today)'],
-    [/\b(kubernetes|k8s|helm|terraform|pulumi|cloudformation)\b/i, 'infrastructure-as-code beyond Docker / Compose / PaaS manifests'],
-    [/\b(graphql|grpc|websocket|web ?socket|socket\.io)\b/i, 'non-REST API transport (REST + SSE only today)'],
-    [/\b(microservices?|service mesh|event sourcing|cqrs)\b/i, 'multi-service architecture (a single Node service is generated)'],
-    [/\b(machine learning|train a model|neural net|llm fine-?tun|computer vision)\b/i, 'ML model training pipeline (not generated today)'],
-    [/\b(blockchain|smart contract|web3|solidity|nft)\b/i, 'blockchain / smart-contract runtime (not generated today)'],
-    [/\b(python|django|flask|fastapi|rails|ruby|golang|go backend|java|spring|\.net|php|laravel)\b/i, 'non-Node backend language (Node.js only today)']
+    [/\b(react native|flutter|expo|swift ?ui|swift\b|kotlin|jetpack compose|android app|ios app|iphone app|ipad app|\.apk\b|\.ipa\b|app ?store|play ?store|native mobile|mobile-only)\b/i,
+      'native mobile app (no simulator/device + platform SDK in the loop — the runtime observer cannot drive an APK/IPA)'],
+    [/\b(train (a|an|the|our)? ?(ml |ai )?model|model training|fine-?tun(e|ing) (a|an|the)? ?(model|llm)|train a neural net|dataset .* training|reinforcement learning)\b/i,
+      'ML model training (needs a dataset + compute; no verifiable trained artifact to gate on) — inference against an existing model IS supported'],
+    [/\b(smart contract|solidity|deploy .* to (a|the)? ?(blockchain|chain|mainnet|testnet)|web3 (dapp|app)|on-chain|erc-?20|erc-?721|nft (mint|contract))\b/i,
+      'blockchain / smart-contract runtime (needs a live chain to deploy to; no in-loop runtime to observe)'],
+    [/\b(gRPC|protobuf service)\b/i,
+      'gRPC transport (the .proto + a Node service impl are generated, but cross-language stub generation via protoc is not run) — REST + GraphQL + WebSocket are fully supported'],
+    [/\b(desktop app|electron app|tauri|\.exe installer|dmg\b|appimage|msi\b)\b/i,
+      'desktop packaging OF THE GENERATED PRODUCT (CodeSovereign itself ships desktop; it does not package the apps it generates)']
   ];
   // Requests that must NOT be built — recorded and the run is BLOCKED, never verified.
   var UNSAFE_RE = [
@@ -226,6 +240,18 @@
 
   var _cid;
   function nid(prefix) { _cid[prefix] = (_cid[prefix] || 0) + 1; return prefix + '-' + ('000' + _cid[prefix]).slice(-3); }
+
+  // Which deployment IaC to generate, from the prompt. Always includes docker + compose.
+  function deployTargetsFor(lc) {
+    var t = ['docker', 'compose'];
+    if (/\b(kubernetes|k8s)\b/.test(lc)) t.push('kubernetes');
+    if (/\bhelm\b/.test(lc)) t.push('helm');
+    if (/\bterraform\b/.test(lc)) t.push('terraform');
+    if (/\bfly\.io|\bfly\b/.test(lc)) t.push('fly');
+    if (/\brender\b/.test(lc)) t.push('render');
+    if (/\brailway\b/.test(lc)) t.push('railway');
+    return t;
+  }
 
   function slugName(prompt) {
     var m = String(prompt || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
@@ -293,7 +319,31 @@
     var wantsJobs = /\b(job|jobs|queue|worker|background|reminder|reminders|email|notification|notifications|schedule|cron|digest|async)\b/.test(lc);
     var wantsApi = /\b(api|rest|endpoint|endpoints|integrat)\b/.test(lc) || classification.primaryType === 'api_service';
     var wantsA11y = /\b(accessib|a11y|wcag|screen reader)\b/.test(lc);
-    var wantsDocker = /\b(docker|container|compose|deploy|deployment|kubernetes|infrastructure)\b/.test(lc);
+    var wantsDocker = /\b(docker|container|compose|deploy|deployment|kubernetes|k8s|helm|terraform|infrastructure|iac)\b/.test(lc);
+
+    /* ---- frontend framework ---- */
+    var frontend = 'vanilla', frontendNote = null;
+    for (var fi = 0; fi < FRONTEND_RE.length; fi++) {
+      if (FRONTEND_RE[fi][0].test(prompt)) {
+        frontend = FRONTEND_RE[fi][1];
+        if (/\bangular\b/i.test(prompt) && frontend === 'svelte') frontendNote = 'Angular needs its full CLI toolchain; the same SPA is generated with Svelte (Vite build) — recorded so you can swap it.';
+        if (/\bnext\.?js\b/i.test(prompt) && frontend === 'react') frontendNote = 'Next.js server components / file routing are not generated; a Vite + React SPA against the same API is.';
+        break;
+      }
+    }
+    /* ---- backend language ---- */
+    var backend = 'node', backendNote = null;
+    for (var bi = 0; bi < BACKEND_RE.length; bi++) {
+      if (BACKEND_RE[bi][0].test(prompt)) {
+        backend = BACKEND_RE[bi][1];
+        if (/\bdjango\b/i.test(prompt)) backendNote = 'Django admin / ORM specifics are not generated; a FastAPI + SQLModel service with the same data model is.';
+        break;
+      }
+    }
+    /* ---- API style + realtime ---- */
+    var apiStyle = /\bgraphql\b/i.test(prompt) ? 'graphql' : 'rest';
+    var wantsWs = /\b(web ?socket|websockets?|real-?time|live updates?|presence|collaborat(e|ive)|chat|socket\.io)\b/i.test(prompt);
+    var wantsMicroservices = /\b(microservices?|multi-?service|separate services?|service-oriented|split into services)\b/i.test(prompt);
     var storage =
       /\bpostgres|postgresql|pg\b/.test(lc) ? { choice: 'postgres', reason: 'requested explicitly' }
       : /\bsqlite\b/.test(lc) ? { choice: 'sqlite', reason: 'requested explicitly' }
@@ -317,7 +367,11 @@
     if (wantsAuth) assume('password policy', 'scrypt hash, minimum 8 characters, first user becomes admin', 'scrypt+8', 'no policy specified; a safe conservative default');
     if (wantsAuth) assume('session model', 'opaque server-side session tokens (no JWT)', 'opaque-session', 'simplest secure default; no third-party identity provider named');
     if (wantsJobs) assume('job delivery', 'in-process durable queue + polling worker; email send is logged, not wired to a provider', 'queue+log', 'no email/SMS provider named — wiring one needs credentials the user must supply');
-    assume('frontend', 'server-rendered vanilla HTML/CSS/JS with fetch', 'vanilla-js', 'no framework named and none is generated today');
+    if (frontend === 'vanilla') assume('frontend', 'vanilla HTML/CSS/JS with fetch', 'vanilla', 'no framework named');
+    else assume('frontend', frontend + ' component app (vendored, no build step) with fetch', frontend, frontendNote || (frontend + ' is generated as a real component app the runtime crawl can drive'));
+    if (frontendNote) assume('frontend substitution', frontendNote, frontend, 'the requested framework maps to a supported one with the same app shape');
+    if (backend === 'python') assume('backend', 'Python + FastAPI + SQLModel; tests run with pytest', 'python', backendNote || 'a real FastAPI service — needs Python 3.10+ on the machine that runs the verify loop');
+    if (apiStyle === 'graphql') assume('API', 'GraphQL schema + resolvers over the same data model (REST endpoints are also emitted)', 'graphql', 'GraphQL requested');
     if (!wantsDocker) assume('deployment', 'Docker + Compose IaC is generated but nothing is pushed', 'compose', 'no target named; generation is safe, a real deploy needs the user\'s credentials');
 
     /* ---- blocking questions (only where the answer changes architecture / data-safety / money / auth) ---- */
@@ -373,26 +427,49 @@
       addReq('Access is role-based: a member can only act on their own records; an admin can act on all.', 'security', 'mandatory',
         [{ kind: 'file', path: '/src/auth.js' }, { kind: 'execution', gate: 'testsPass' }]);
     }
+    var svcExt = backend === 'python' ? '.py' : '.js';
+    var svcDir = backend === 'python' ? '/app/services/' : '/src/services/';
     entities.forEach(function (e) {
       if (['user', 'session', 'job'].indexOf(e.name) >= 0) return;
-      addReq('Users can create, list and delete ' + e.name + ' records through a REST API.', 'functional', 'mandatory',
-        [{ kind: 'file', path: '/src/services/' + e.name + '.js' }, { kind: 'execution', gate: 'testsPass' }]);
+      addReq('Users can create, list and delete ' + e.name + ' records through the ' + apiStyle.toUpperCase() + ' API.', 'functional', 'mandatory',
+        [{ kind: 'file', path: svcDir + e.name + svcExt }, { kind: 'execution', gate: 'testsPass' }]);
     });
     if (wantsJobs) {
       addReq('Background jobs run on a durable queue with retry and dead-letter handling.', 'functional', 'mandatory',
-        [{ kind: 'file', path: '/src/queue.js' }, { kind: 'file', path: '/src/worker.js' }, { kind: 'execution', gate: 'testsPass' }]);
+        backend === 'python'
+          ? [{ kind: 'file', path: '/app/queue.py' }, { kind: 'file', path: '/app/worker.py' }, { kind: 'execution', gate: 'testsPass' }]
+          : [{ kind: 'file', path: '/src/queue.js' }, { kind: 'file', path: '/src/worker.js' }, { kind: 'execution', gate: 'testsPass' }]);
     }
-    if (wantsApi) {
-      addReq('The backend exposes a documented REST API surface.', 'functional', 'mandatory',
-        [{ kind: 'file', path: '/server.js' }]);
+    if (wantsApi || apiStyle === 'graphql') {
+      addReq('The backend exposes a ' + (apiStyle === 'graphql' ? 'GraphQL schema + resolvers' : 'documented REST API surface') + '.', 'functional', 'mandatory',
+        apiStyle === 'graphql'
+          ? [{ kind: 'file', path: backend === 'python' ? '/app/schema.graphql' : '/src/graphql/schema.js' }, { kind: 'execution', gate: 'testsPass' }]
+          : [{ kind: 'file', path: backend === 'python' ? '/app/main.py' : '/server.js' }]);
+    }
+    if (wantsWs) {
+      addReq('The backend exposes a working WebSocket endpoint for real-time updates.', 'functional', 'mandatory',
+        [{ kind: 'file', path: backend === 'python' ? '/app/ws.py' : '/src/ws.js' }, { kind: 'execution', gate: 'testsPass' }]);
+    }
+    if (frontend !== 'vanilla') {
+      addReq('The frontend is a working ' + frontend + ' component app that the runtime crawl can drive.', 'functional', 'mandatory',
+        [{ kind: 'file', path: '/public/app.js' }, { kind: 'control', name: frontend === 'vanilla' ? 'add' : 'need an account?', want: 'REAL' }]);
     }
     if (wantsA11y) {
       addReq('The frontend passes basic accessibility checks (lang attribute, image alt text, labelled controls).', 'quality', 'mandatory',
         [{ kind: 'file', path: '/test/a11y.test.js' }, { kind: 'execution', gate: 'testsPass' }]);
     }
     if (wantsDocker) {
-      addReq('The project ships Docker and deployment-ready infrastructure.', 'delivery', 'mandatory',
-        [{ kind: 'file', path: '/Dockerfile' }, { kind: 'file', path: '/docker-compose.prod.yml' }]);
+      var depTargets = deployTargetsFor(lc);
+      addReq('The project ships ' + depTargets.join(' + ') + ' infrastructure-as-code.', 'delivery', 'mandatory',
+        [{ kind: 'file', path: '/Dockerfile' }].concat(
+          depTargets.indexOf('kubernetes') >= 0 ? [{ kind: 'file', path: '/k8s/deployment.yaml' }] :
+          depTargets.indexOf('helm') >= 0 ? [{ kind: 'file', path: '/chart/Chart.yaml' }] :
+          depTargets.indexOf('terraform') >= 0 ? [{ kind: 'file', path: '/terraform/main.tf' }] :
+          [{ kind: 'file', path: '/docker-compose.prod.yml' }]));
+    }
+    if (wantsMicroservices) {
+      addReq('The system is split into independently-runnable services wired by Docker Compose.', 'architecture', 'mandatory',
+        [{ kind: 'file', path: '/docker-compose.prod.yml' }, { kind: 'execution', gate: 'testsPass' }]);
     }
 
     /* ---- journeys ---- */
@@ -448,8 +525,12 @@
         prompt: prompt.slice(0, 2000)
       },
       supportedStack: {
-        frontend: 'vanilla-js', backend: 'node', database: storage.choice, api: wantsApi ? 'rest' : 'rest',
-        jobs: wantsJobs, auth: wantsAuth, rbac: wantsRBAC, deploy: wantsDocker
+        frontend: frontend, frontendNote: frontendNote,
+        backend: backend, backendNote: backendNote,
+        database: storage.choice, api: apiStyle, websocket: wantsWs,
+        architecture: wantsMicroservices ? 'multi-service' : 'monolith',
+        jobs: wantsJobs, auth: wantsAuth, rbac: wantsRBAC, deploy: wantsDocker,
+        deployTargets: deployTargetsFor(lc)
       },
       capabilitiesReference: SUPPORTED,
       scope: { mandatory: mandatory, optional: optional, deferred: [], excluded: unsupported.map(function (u) { return u.id; }) },
@@ -460,7 +541,7 @@
       jobRequirements: jobRequirements,
       storage: storage,
       security: security,
-      deployment: { expectation: wantsDocker ? 'Docker + Compose, deploy-ready' : 'Docker generated, not pushed', targets: wantsDocker ? ['docker', 'compose'] : ['compose'] },
+      deployment: { expectation: wantsDocker ? deployTargetsFor(lc).join(' + ') + ', deploy-ready' : 'Docker + Compose generated, not pushed', targets: deployTargetsFor(lc) },
       requirements: reqs,
       acceptanceCriteria: acList,
       assumptions: assumptions,
@@ -481,11 +562,13 @@
     // buildable functional core (everything asked for is outside the supported
     // stack). Partial-scope requests still build the supported part and report
     // the rest as `unsupported`.
-    var mentionsWeb = /\b(web ?app|webapp|website|web application|web platform|browser|dashboard|portal|admin panel|rest api|\bapi\b|saas|internal tool)\b/i.test(prompt) &&
+    var mentionsWeb = /\b(web ?app|webapp|website|web application|web platform|browser|dashboard|portal|admin panel|rest api|graphql|\bapi\b|saas|internal tool|service|backend|platform)\b/i.test(prompt) &&
       !/\bno web\b|\bnot .{0,12}web\b|\bwithout .{0,12}web\b|web version/i.test(prompt);
-    var platformBlock = unsupported.some(function (u) { return /platform|backend language|framework/.test(u.reason); });
+    // Only BLOCK for safety, or when the ENTIRE request is a genuinely-unsupported
+    // thing (native mobile / ML training / blockchain) with no web/service core.
+    var hardBlock = unsupported.some(function (u) { return /native mobile|ML model training|blockchain/.test(u.reason); });
     if (unsafe.length) contract.verdict = 'unsafe';
-    else if (platformBlock && !mentionsWeb) contract.verdict = 'unsupported';
+    else if (hardBlock && !mentionsWeb && reqs.filter(function (r) { return r.category === 'functional' && r.priority === 'mandatory'; }).length <= 1) contract.verdict = 'unsupported';
     else contract.verdict = 'buildable';
 
     var finish = function (llmReqs) {

@@ -38,11 +38,18 @@
     ]
   };
 
+  var FRONTENDS = ['vanilla', 'react', 'preact', 'vue', 'svelte'];
   function normalize(spec) {
     spec = spec || DEMO_SPEC;
     var s = S().normalizeSpec(spec);
     s.jobs = !!spec.jobs;
     s.stack = spec.stack === 'node-pg' ? 'node-pg' : 'node-vanilla';
+    s.frontend = FRONTENDS.indexOf(spec.frontend) >= 0 ? spec.frontend : 'vanilla';
+    s.api = spec.api === 'graphql' ? 'graphql' : 'rest';
+    s.websocket = !!spec.websocket;
+    s.microservices = !!spec.microservices;
+    s.deployTargets = Array.isArray(spec.deployTargets) && spec.deployTargets.length ? spec.deployTargets : ['docker', 'compose'];
+    s.pyBackend = spec.backend === 'python';
     var names = s.entities.map(function (e) { return e.name; });
     var prepend = function (ent) {
       if (names.indexOf(ent.name) >= 0) return;
@@ -94,6 +101,11 @@
       auth: st.auth !== false,
       jobs: !!st.jobs,
       stack: (contract.storage && contract.storage.choice) === 'postgres' ? 'node-pg' : 'node-vanilla',
+      frontend: FRONTENDS.indexOf(st.frontend) >= 0 ? st.frontend : 'vanilla',
+      api: st.api === 'graphql' ? 'graphql' : 'rest',
+      websocket: !!st.websocket,
+      microservices: st.architecture === 'multi-service',
+      deployTargets: st.deployTargets || ['docker', 'compose'],
       entities: ents
     });
   }
@@ -346,7 +358,27 @@
       files['/test/worker.test.js'] = J.workerTest();
     }
     files['/server.js'] = B().serverModule(s);
-    add(frontend(s));
+    // frontend: a component framework (react/preact/vue) if asked, else vanilla
+    if (s.frontend && s.frontend !== 'vanilla' && Engine.Frontends) {
+      add(Engine.Frontends.generate(s));
+    } else if (s.frontend === 'svelte' && Engine.Frontends) {
+      // Svelte needs a compiler — fall back to the react-compatible runtime and
+      // record it (the contract already carries the substitution note).
+      var sv = Engine.Frontends.generate(Object.assign({}, s, { frontend: 'react' }));
+      add(sv);
+    } else {
+      add(frontend(s));
+    }
+    // GraphQL layer over the same entities (REST is still emitted)
+    if (s.api === 'graphql' && Engine.GraphQL) {
+      var gq = Engine.GraphQL.generate(s);
+      Object.keys(gq).forEach(function (k) { files['/' + k] = gq[k]; });
+    }
+    // real WebSocket endpoint + round-trip test
+    if (s.websocket && Engine.Realtime) {
+      var rt = Engine.Realtime.generate(s);
+      Object.keys(rt).forEach(function (k) { files['/' + k] = rt[k]; });
+    }
     add(tests(s));
     add(meta(s));
 

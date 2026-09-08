@@ -63,6 +63,8 @@
     var s = Schema().normalizeSpec(spec);
     var withAuth = s.auth;
     var withJobs = !!spec.jobs;
+    var withGraphQL = spec.api === 'graphql';
+    var withWS = !!spec.websocket;
     var resources = s.entities.filter(function (e) { return e.name !== 'user' && e.name !== 'session' && e.name !== 'job'; });
     var portArg = "(process.argv.find((a) => a.startsWith('--port=')) || '').split('=')[1]";
     var lines = [
@@ -76,6 +78,8 @@
       withAuth ? "const auth = require('./src/auth');" : "",
       withJobs ? "const queue = require('./src/queue');" : "",
       withJobs ? "const events = require('./src/events');" : "",
+      withGraphQL ? "const { graphqlHandler } = require('./src/graphql/handler');" : "",
+      withWS ? "const { wsAttach, broadcast } = require('./src/ws');" : "",
       ""
     ];
     resources.forEach(function (e) {
@@ -107,6 +111,9 @@
     lines.push("  const q = Object.fromEntries(u.searchParams);");
     lines.push("  try {");
     lines.push("    if (u.pathname.startsWith('/api/') && !rateLimit(req)) return send(res, 429, { error: 'rate limit exceeded' });");
+    if (withGraphQL) {
+      lines.push("    if (u.pathname === '/graphql') return graphqlHandler(req, res, req.method === 'GET' ? '' : await new Promise((rs) => { let b = ''; req.on('data', (c) => b += c); req.on('end', () => rs(b)); }));");
+    }
     if (withAuth) {
       lines.push("    await auth.attachUser(req);");
       lines.push("    if (seg[0] === 'api' && seg[1] === 'auth') {");
@@ -149,8 +156,9 @@
     lines.push("  }");
     lines.push("});");
     lines.push("");
+    if (withWS) lines.push("wsAttach(server, { path: '/ws' });");
     lines.push("if (require.main === module) db.migrate().then(() => server.listen(PORT, () => console.log('" + s.name + " on http://localhost:' + PORT)));");
-    lines.push("module.exports = { server };");
+    lines.push("module.exports = { server" + (withWS ? ", broadcast" : "") + " };");
     lines.push("");
     return lines.filter(function (l, i) { return !(l === '' && lines[i - 1] === ''); }).join('\n');
   }
