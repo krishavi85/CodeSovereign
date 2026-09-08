@@ -158,6 +158,18 @@ beyond what the user explicitly enabled.
   forwards whatever `Authorization` header the caller sets, to an allow-listed
   host only.
 
+### OmniRoute launcher (`ai:omniroute`)
+
+- `status` reports whether OmniRoute is installed / running. `start` runs
+  `npx --yes omniroute serve` (fixed argv, `OMNIROUTE_PORT=20128`) — this
+  downloads and runs a third-party MIT package, so the **first** `start` shows a
+  confirmation dialog naming the command; approval is remembered for the session
+  only. `stop` kills the tracked pid (`taskkill /t` on Windows).
+- The spawned server binds loopback:20128; the renderer then talks to it only
+  through `ai:request` (loopback branch). Nothing new is exposed to the page.
+- Not workspace-scoped, so the trust list doesn't apply — the one-time dialog is
+  the gate.
+
 ## M2 hardening — execution & observation trust boundaries
 
 The automated execution loop and runtime observer are the two biggest new trust

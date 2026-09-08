@@ -1925,6 +1925,24 @@
   window.GoldenPaths      = GoldenPaths;
   window.Certificate      = Certificate;
   window.Benchmark        = Benchmark;
+  // AI-assisted repair: when the deterministic patch generators can't fix an
+  // issue, ask the connected model for a minimal whole-file rewrite. Opt-in —
+  // callers pass the issue; returns { kind:'replace', text } or null.
+  Recovery.aiSuggest = function (issue) {
+    var AI = window.Engine && window.Engine.AI;
+    if (!AI || !AI.ready || !AI.ready()) return Promise.resolve(null);
+    if (!issue || !issue.file || !Engine.FS.exists(issue.file)) return Promise.resolve(null);
+    var src = Engine.FS.read(issue.file) || '';
+    if (src.length > 24000) return Promise.resolve(null);
+    var msg = 'Fix this issue in the file below. Reply ONLY with the complete corrected file, no prose, no fences.\n\n' +
+      'File: ' + issue.file + '\nIssue: ' + (issue.message || issue.code || 'defect') + '\n\n----\n' + src + '\n----';
+    return AI.chat(msg, { temperature: 0, maxTokens: 4096 }).then(function (r) {
+      var t = String(r.text || '').replace(/^```[a-z]*\n?/i, '').replace(/```\s*$/i, '').trim();
+      if (!t || t === src || t.length < Math.min(20, src.length / 4)) return null;
+      return { kind: 'replace', text: t, via: 'ai:' + (r.provider || 'llm') };
+    }).catch(function () { return null; });
+  };
+
   try {
     if (window.Engine) {
       window.Engine.Recovery      = Recovery;

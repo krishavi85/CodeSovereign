@@ -14,6 +14,7 @@
  */
 const http = require('http');
 const https = require('https');
+const { spawn, execFile } = require('child_process');
 const { URL } = require('url');
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);
@@ -79,6 +80,20 @@ async function getJSON(url, timeoutMs) {
 /* ---- local runtime probes ---- */
 const RUNTIMES = [
   {
+    // OmniRoute — a self-hosted OpenAI-compatible gateway that fans out to 350+
+    // providers incl. ~150 free tiers. `model: "auto"` needs no key.
+    id: 'omniroute', label: 'OmniRoute (free gateway)', base: 'http://127.0.0.1:20128', free: true,
+    async models() {
+      const j = await getJSON('http://127.0.0.1:20128/v1/models');
+      if (!j) return null;
+      const list = Array.isArray(j.data) ? j.data.map((m) => ({ id: m.id, free: !!(m.free || /free/i.test(m.id)) })) : [];
+      // "auto" is always available and is the zero-config free default
+      if (!list.some((m) => m.id === 'auto')) list.unshift({ id: 'auto', free: true });
+      return list;
+    },
+    openaiBase: 'http://127.0.0.1:20128'
+  },
+  {
     id: 'ollama', label: 'Ollama', base: 'http://127.0.0.1:11434',
     async models() {
       const j = await getJSON('http://127.0.0.1:11434/api/tags');
@@ -132,10 +147,72 @@ async function discover() {
   await Promise.all(RUNTIMES.map(async (rt) => {
     try {
       const models = await rt.models();
-      if (models) found.push({ id: rt.id, label: rt.label, base: rt.base, openaiBase: rt.openaiBase, models: models });
+      if (models) found.push({ id: rt.id, label: rt.label, base: rt.base, openaiBase: rt.openaiBase, free: !!rt.free, models: models });
     } catch (_) { /* not running */ }
   }));
   return { at: Date.now(), runtimes: found, count: found.length };
 }
 
-module.exports = { discover, request, allowed, RUNTIMES };
+/* ---- OmniRoute: the zero-key free gateway ---- */
+let orProc = null;
+
+function cli(cmd, args, timeoutMs) {
+  return new Promise((resolve) => {
+    let done = false;
+    const c = execFile(cmd, args, { timeout: timeoutMs || 20000, windowsHide: true, shell: process.platform === 'win32', maxBuffer: 1 << 20 },
+      (err, out) => { if (!done) { done = true; resolve(err ? null : String(out || '')); } });
+    c.on('error', () => { if (!done) { done = true; resolve(null); } });
+  });
+}
+
+async function omniInstalled() {
+  const v = await cli('npx', ['--yes', 'omniroute', '--version'], 60000);
+  return v != null && /\d+\.\d+/.test(v) ? v.trim().split('\n').pop() : null;
+}
+
+function omniRunning() {
+  return getJSON('http://127.0.0.1:20128/v1/models', 1500).then((j) => !!j);
+}
+
+function omniStart() {
+  if (orProc && orProc.exitCode == null) return { ok: true, pid: orProc.pid, already: true };
+  try {
+    orProc = spawn('npx', ['--yes', 'omniroute', 'serve'], {
+      windowsHide: true, detached: false, stdio: 'ignore', shell: process.platform === 'win32',
+      env: Object.assign({}, process.env, { OMNIROUTE_PORT: '20128' })
+    });
+    orProc.on('exit', () => { orProc = null; });
+    return { ok: true, pid: orProc.pid };
+  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+}
+
+function omniStop() {
+  if (orProc && orProc.pid) {
+    try { if (process.platform === 'win32') spawn('taskkill', ['/pid', String(orProc.pid), '/f', '/t'], { windowsHide: true }); else process.kill(orProc.pid); } catch (_) {}
+  }
+  orProc = null;
+  return { ok: true };
+}
+
+async function omniEnsure(onStatus) {
+  if (await omniRunning()) return { ok: true, running: true, started: false, base: 'http://localhost:20128' };
+  const ver = await omniInstalled();
+  if (!ver) { if (onStatus) onStatus('installing omniroute (first run only)…'); }
+  const s = omniStart();
+  if (!s.ok) return { ok: false, error: s.error };
+  for (let i = 0; i < 60; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    if (await omniRunning()) return { ok: true, running: true, started: true, pid: s.pid, base: 'http://localhost:20128', version: ver || 'installed' };
+    if (onStatus && i % 5 === 0) onStatus('waiting for OmniRoute to come up (' + i + 's)…');
+  }
+  return { ok: false, error: 'OmniRoute did not answer on :20128 within 60s' };
+}
+
+async function omniroute(action, onStatus) {
+  if (action === 'status') return { installed: await omniInstalled(), running: await omniRunning() };
+  if (action === 'start' || action === 'ensure') return omniEnsure(onStatus);
+  if (action === 'stop') return omniStop();
+  return { ok: false, error: 'unknown action' };
+}
+
+module.exports = { discover, request, allowed, RUNTIMES, omniroute, omniRunning };

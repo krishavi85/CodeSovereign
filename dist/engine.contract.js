@@ -124,9 +124,9 @@
   // ---- optional LLM enrichment ----
   function deriveLLM(identity) {
     var LLM = Engine.LLM;
-    if (!LLM || !LLM.getConfig) return Promise.resolve(null);
-    var cfg = LLM.getConfig();
-    if (!cfg || !cfg.apiKey || cfg.enabled === false) return Promise.resolve(null);
+    if (!LLM || !LLM.complete) return Promise.resolve(null);
+    var ok = (LLM.isConfigured && LLM.isConfigured()) || (Engine.AI && Engine.AI.ready && Engine.AI.ready());
+    if (!ok) return Promise.resolve(null);
     var ask = 'Objective: ' + (identity.objective || identity.name) + '\n' +
       'Return ONLY JSON: {"requirements":[{"statement":"...","category":"functional|quality|security|delivery",' +
       '"acceptanceCriteria":["short testable sentence", ...]}]}. 6-14 requirements, concrete and verifiable.';

@@ -459,6 +459,27 @@ function registerIpc() {
   ipcMain.handle('ai:discover', async () => {
     try { return ok(await aihost.discover()); } catch (e) { return fail(e); }
   });
+  let _omniOkd = false;
+  ipcMain.handle('ai:omniroute', async (_e, action) => {
+    try {
+      if (action === 'start' || action === 'ensure') {
+        const running = await aihost.omniRunning();
+        if (!running && !_omniOkd) {
+          const r = await dialog.showMessageBox(win, {
+            type: 'info', noLink: true,
+            title: 'Start OmniRoute?',
+            message: 'Run the OmniRoute AI gateway locally?',
+            detail: 'This runs `npx omniroute serve` (downloads the MIT-licensed package on first use) and starts a local server on port 20128. It fans out to free AI provider tiers. Nothing leaves your machine except the model calls you make.',
+            buttons: ['Install & start', 'Cancel'], defaultId: 0, cancelId: 1
+          });
+          if (r.response !== 0) return { ok: false, error: 'declined' };
+          _omniOkd = true;
+        }
+      }
+      const res = await aihost.omniroute(action, (s) => { if (win && !win.isDestroyed()) win.webContents.send('proc:data', { id: 'omniroute', stream: 'stdout', data: s + '\n' }); });
+      return res;
+    } catch (e) { return fail(e); }
+  });
   // Locked-down HTTP: loopback only, or an LLM API host the CSP already allows.
   ipcMain.handle('ai:request', async (_e, opts) => {
     try {

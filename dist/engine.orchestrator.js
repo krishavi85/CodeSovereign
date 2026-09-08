@@ -232,17 +232,15 @@
     if (task.template && TEMPLATES[task.template]) {
       return function () { return TEMPLATES[task.template](function (p) { try { return FS.read(p) || ''; } catch (_) { return ''; } }); };
     }
-    if (task.prompt && Engine.LLM && Engine.LLM.getConfig) {
-      var cfg = Engine.LLM.getConfig();
-      if (cfg && cfg.apiKey && cfg.enabled !== false) {
-        return function () {
-          return Engine.LLM.complete(task.prompt, { classification: { primaryType: 'web_application' } }).then(function (r) {
-            var txt = (r && (r.content || r)) || '';
-            var jj = null; try { jj = JSON.parse(String(txt).replace(/^[\s\S]*?\{/, '{').replace(/\}[\s\S]*$/, '}')); } catch (_) {}
-            return (jj && jj.files) || [];
-          });
-        };
-      }
+    if (task.prompt && Engine.LLM && Engine.LLM.complete &&
+        ((Engine.LLM.isConfigured && Engine.LLM.isConfigured()) || (Engine.AI && Engine.AI.ready && Engine.AI.ready()))) {
+      return function () {
+        return Engine.LLM.complete(task.prompt, { classification: { primaryType: 'web_application' } }).then(function (r) {
+          var txt = (r && (r.content || r.text || r)) || '';
+          var jj = null; try { jj = JSON.parse(String(txt).replace(/^[\s\S]*?\{/, '{').replace(/\}[\s\S]*$/, '}')); } catch (_) {}
+          return (jj && jj.files) || [];
+        });
+      };
     }
     return null;
   }

@@ -34,8 +34,20 @@ module.exports = async function (t) {
   win.navigator = { hardwareConcurrency: 8, deviceMemory: 8, platform: 'Test' };
   win.document = { createElement: () => ({ getContext: () => null }) };
   win.fetch = () => Promise.reject(new Error('no network in test'));
+  // minimal Engine.LLM shim so the facade + router have something to talk to
+  let llmCfg = { providerId: '', apiKey: '', baseUrl: '', enabled: false, model: '' };
+  win.Engine.LLM = {
+    providers: [{ id: 'omniroute', keyless: true, baseUrl: 'http://localhost:20128' }],
+    getConfig: () => llmCfg, setConfig: (p) => (llmCfg = Object.assign({}, llmCfg, p)),
+    providerById: (id) => win.Engine.LLM.providers.find((x) => x.id === id) || null,
+    resolveProvider: (c) => win.Engine.LLM.providerById(c.providerId) || { baseUrl: c.baseUrl },
+    isConfigured: () => !!(llmCfg.enabled && (llmCfg.apiKey || /omniroute/.test(llmCfg.providerId) || /localhost|127\.0\.0\.1/.test(llmCfg.baseUrl))),
+    status: () => ({ configured: win.Engine.LLM.isConfigured(), providerId: llmCfg.providerId, model: llmCfg.model, baseUrl: llmCfg.baseUrl }),
+    chat: () => Promise.resolve({ text: '{}', model: 'x', provider: 'x' })
+  };
+
   vm.createContext(win);
-  for (const f of ['engine.hardware.js', 'engine.modelmanager.js', 'engine.airouter.js', 'engine.cost.js']) {
+  for (const f of ['engine.hardware.js', 'engine.modelmanager.js', 'engine.airouter.js', 'engine.ai.js', 'engine.cost.js']) {
     vm.runInContext(load(f), win, { filename: f });
   }
   const En = win.Engine;
@@ -43,7 +55,23 @@ module.exports = async function (t) {
   t.ok('Engine.Hardware present', !!En.Hardware);
   t.ok('Engine.ModelManager present', !!En.ModelManager);
   t.ok('Engine.AIRouter present', !!En.AIRouter);
+  t.ok('Engine.AI present', !!En.AI);
   t.ok('Engine.Cost present', !!En.Cost);
+
+  // ---- OmniRoute is a known runtime + LLM provider ----
+  t.ok('AIRouter knows the OmniRoute port', En.AIRouter.LOCAL_PORTS.some((p) => p.id === 'omniroute' && /20128/.test(p.url)));
+  t.ok('ModelManager catalog + AIRouter still expose OmniRoute as free',
+    En.AIRouter.LOCAL_PORTS.find((p) => p.id === 'omniroute').free === true);
+
+  // ---- Engine.AI facade + wiring audit ----
+  t.ok('Engine.AI.ready() is false before anything is configured', En.AI.ready() === false);
+  const w0 = En.AI.wiring();
+  t.ok('wiring audit lists >= 6 consumers', w0.consumers.length >= 6);
+  t.ok('wiring audit reports not-connected', w0.connected === false);
+  // wire OmniRoute (keyless) and re-check
+  En.AIRouter.apply({ runtime: { id: 'omniroute', openaiBase: 'http://localhost:20128', free: true }, model: 'auto' });
+  t.ok('applying OmniRoute connects the facade (keyless)', En.AI.ready() === true);
+  t.ok('status reports a free source', /free|OmniRoute/i.test(En.AI.status().source) || En.AI.status().free === true);
 
   // ---- ModelManager.estimate ----
   const e7 = En.ModelManager.estimate(7, 'q4_K_M', 8);

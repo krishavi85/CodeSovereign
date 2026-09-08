@@ -30,6 +30,19 @@
   // ----- Provider registry (OpenAI-compatible chat completions) -----
   const PROVIDERS = [
     {
+      id: "omniroute",
+      label: "OmniRoute — local gateway, free (no key)",
+      baseUrl: "http://localhost:20128",
+      chatPath: "/v1/chat/completions",
+      defaultModel: "auto",
+      modelOptions: ["auto", "opencode-free", "kilocode-free", "siliconflow-free"],
+      supportsJson: true,
+      keyHeader: "Authorization",
+      keyPrefix: "Bearer ",
+      keyless: true,
+      notes: "Self-hosted gateway (github.com/diegosouzapw/OmniRoute) that fans out to 350+ providers incl. ~150 free tiers. `auto` needs no key. Start it from the Local AI card."
+    },
+    {
       id: "minimax",
       label: "MiniMax (recommended)",
       baseUrl: "https://api.minimaxi.chat",
@@ -96,11 +109,19 @@
   function resolveProvider(cfg) {
     let p = providerById(cfg.providerId);
     if (!p) p = PROVIDERS[0];
-    // custom base URL override
-    if (p.id === "openai_compat" && cfg.baseUrl) {
+    // custom base URL override (openai_compat, or any local provider the router points elsewhere)
+    if (cfg.baseUrl && (p.id === "openai_compat" || /^https?:\/\/(localhost|127\.0\.0\.1)/.test(cfg.baseUrl))) {
       p = Object.assign({}, p, { baseUrl: cfg.baseUrl.replace(/\/+$/, "") });
     }
     return p;
+  }
+  // A provider is usable if it has a key, OR it is keyless (OmniRoute / a local
+  // runtime), OR it points at a loopback endpoint.
+  function isConfigured(cfg) {
+    if (!cfg || !cfg.enabled) return false;
+    if (cfg.apiKey) return true;
+    const p = resolveProvider(cfg);
+    return !!p.keyless || /^https?:\/\/(localhost|127\.0\.0\.1)/.test(cfg.baseUrl || p.baseUrl || "");
   }
 
   // ----- Build a code-generation system prompt -----
@@ -181,10 +202,36 @@
     return { url, headers, body };
   }
 
+  // Raw chat completion — a plain string reply, no file-plan JSON contract.
+  // messages: string | [{role,content}]. Returns { text, model, provider }.
+  async function chat(messages, opts) {
+    opts = opts || {};
+    const cfg = loadConfig();
+    if (!isConfigured(cfg)) throw new Error("LLM not configured.");
+    const provider = resolveProvider(cfg);
+    if (!provider.baseUrl) throw new Error("Provider has no baseUrl.");
+    const msgs = typeof messages === "string"
+      ? [{ role: "user", content: messages }]
+      : messages;
+    const url = provider.baseUrl.replace(/\/+$/, "") + (provider.chatPath || "/v1/chat/completions");
+    const headers = { "Content-Type": "application/json" };
+    if (cfg.apiKey) headers[provider.keyHeader || "Authorization"] = (provider.keyPrefix || "Bearer ") + cfg.apiKey;
+    else if (provider.keyless) headers["Authorization"] = "Bearer omniroute";
+    const body = { model: cfg.model || provider.defaultModel || "auto", messages: msgs,
+      temperature: opts.temperature == null ? 0.2 : opts.temperature, max_tokens: opts.maxTokens || 2048 };
+    if (opts.json && provider.supportsJson) body.response_format = { type: "json_object" };
+    const res = await httpText(url, { method: "POST", headers, body: JSON.stringify(body) });
+    const raw = await res.text();
+    if (!res.ok) throw new Error("HTTP " + res.status + " " + (raw || "").slice(0, 240));
+    let data = null; try { data = JSON.parse(raw); } catch (_) {}
+    const text = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || raw;
+    return { text: String(text || ""), model: body.model, provider: provider.id };
+  }
+
   async function complete(prompt, ctx) {
     const cfg = loadConfig();
-    if (!cfg.enabled || !cfg.apiKey) {
-      throw new Error("LLM not configured. Set provider + key in Settings.");
+    if (!isConfigured(cfg)) {
+      throw new Error("LLM not configured. Pick a provider (and key, unless keyless) in Settings.");
     }
     const provider = resolveProvider(cfg);
     if (!provider.baseUrl) {
@@ -257,7 +304,7 @@
   // ----- Connection test -----
   async function testConnection() {
     const cfg = loadConfig();
-    if (!cfg.apiKey) return { ok: false, error: "No API key set." };
+    if (!isConfigured(cfg)) return { ok: false, error: "Not configured — pick a provider (key optional for OmniRoute / local)." };
     const provider = resolveProvider(cfg);
     if (!provider.baseUrl) return { ok: false, error: "No base URL set." };
     const req = buildRequest(
@@ -289,7 +336,7 @@
   function status() {
     const cfg = loadConfig();
     return {
-      configured: !!(cfg.enabled && cfg.apiKey),
+      configured: isConfigured(cfg),
       providerId: cfg.providerId || "",
       model: cfg.model || "",
       baseUrl: cfg.baseUrl || "",
@@ -309,7 +356,7 @@
 
     Agent.run = function (prompt, onStep) {
       const cfg = loadConfig();
-      const useLLM = !!(cfg.enabled && cfg.apiKey);
+      const useLLM = isConfigured(cfg);
       if (!useLLM) {
         return originalRun(prompt, onStep);
       }
@@ -392,6 +439,8 @@
     setConfig,
     providerById,
     resolveProvider,
+    isConfigured: () => isConfigured(loadConfig()),
+    chat,
     complete,
     llmPlan,
     testConnection,

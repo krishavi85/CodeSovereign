@@ -21,6 +21,7 @@
   function LLM() { return Engine.LLM; }
 
   var LOCAL_PORTS = [
+    { id: 'omniroute', label: 'OmniRoute (free gateway)', url: 'http://localhost:20128/v1/models', openaiBase: 'http://localhost:20128', kind: 'openai', free: true },
     { id: 'ollama', label: 'Ollama', url: 'http://localhost:11434/api/tags', openaiBase: 'http://localhost:11434', kind: 'ollama' },
     { id: 'lmstudio', label: 'LM Studio', url: 'http://localhost:1234/v1/models', openaiBase: 'http://localhost:1234', kind: 'openai' },
     { id: 'vllm', label: 'vLLM', url: 'http://localhost:8000/v1/models', openaiBase: 'http://localhost:8000', kind: 'openai' },
@@ -106,14 +107,28 @@
     var llm = LLM();
     if (!llm || !llm.setConfig) return { ok: false, error: 'Engine.LLM not loaded' };
     if (!choice || !choice.runtime || !choice.model) return { ok: false, error: 'need { runtime, model }' };
+    var isOmni = choice.runtime.id === 'omniroute';
     llm.setConfig({
-      providerId: 'openai_compat',
+      providerId: isOmni ? 'omniroute' : 'openai_compat',
       baseUrl: choice.runtime.openaiBase || choice.runtime.base,
       model: choice.model,
-      apiKey: choice.runtime.id === 'ollama' ? 'ollama' : (choice.apiKey || 'local'),
+      apiKey: isOmni ? '' : (choice.runtime.id === 'ollama' ? 'ollama' : (choice.apiKey || 'local')),
       enabled: true
     });
-    return { ok: true, using: choice.model, via: choice.runtime.id, baseUrl: choice.runtime.openaiBase };
+    return { ok: true, using: choice.model, via: choice.runtime.id, baseUrl: choice.runtime.openaiBase, free: !!choice.runtime.free };
+  }
+
+  // Install (first run only) + start OmniRoute, then wire it in as `auto` (free, no key).
+  function ensureOmniRoute(onStatus) {
+    var D = window.desktop;
+    if (!(D && D.isDesktop && D.ai && D.ai.omniroute)) {
+      return Promise.resolve({ ok: false, error: 'OmniRoute launch needs the desktop app — or run `npx omniroute serve` yourself and click Scan' });
+    }
+    return D.ai.omniroute('ensure').then(function (r) {
+      if (!r || r.ok === false) return r || { ok: false, error: 'omniroute failed' };
+      var res = apply({ runtime: { id: 'omniroute', openaiBase: 'http://localhost:20128', free: true }, model: 'auto' });
+      return { ok: true, started: !!r.started, base: 'http://localhost:20128', wired: res.ok, using: 'auto' };
+    });
   }
 
   function route(opts) {
@@ -168,6 +183,6 @@
     return discover().then(function (d) { out.localRuntimes = (d.runtimes || []).map(function (r) { return { id: r.id, models: (r.models || []).length }; }); return out; });
   }
 
-  Engine.AIRouter = { discover: discover, recommend: recommend, apply: apply, route: route, status: status, LOCAL_PORTS: LOCAL_PORTS };
+  Engine.AIRouter = { discover: discover, recommend: recommend, apply: apply, route: route, status: status, ensureOmniRoute: ensureOmniRoute, LOCAL_PORTS: LOCAL_PORTS };
   console.info('[AIRouter] local inference router ready — Engine.AIRouter');
 })();
