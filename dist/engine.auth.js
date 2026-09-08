@@ -115,19 +115,19 @@
     return {
       html:
         '  <section id="authPanel" class="card" aria-labelledby="authHeading">\n' +
-        '    <h2 id="authHeading">Sign in</h2>\n' +
+        '    <h2 id="authHeading" data-i18n="auth.heading">Sign in</h2>\n' +
         '    <form id="authForm">\n' +
-        '      <label for="authEmail">Email</label>\n' +
-        '      <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required aria-label="email">\n' +
-        '      <label for="authPass">Password</label>\n' +
-        '      <input id="authPass" type="password" autocomplete="current-password" placeholder="password (8+ chars)" required aria-label="password">\n' +
-        '      <button type="submit" id="authSubmit">Sign in</button>\n' +
-        '      <button type="button" id="authToggle">Need an account?</button>\n' +
+        '      <label for="authEmail" data-i18n="auth.email">Email</label>\n' +
+        '      <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required aria-label="email" data-i18n-attr="aria-label:auth.email">\n' +
+        '      <label for="authPass" data-i18n="auth.password">Password</label>\n' +
+        '      <input id="authPass" type="password" autocomplete="current-password" placeholder="password (8+ chars)" required aria-label="password" data-i18n-attr="aria-label:auth.password">\n' +
+        '      <button type="submit" id="authSubmit" data-i18n="auth.signIn">Sign in</button>\n' +
+        '      <button type="button" id="authToggle" data-i18n="auth.register">Need an account?</button>\n' +
         '    </form>\n' +
         '    <div id="authError" class="error" hidden></div>\n' +
         '  </section>\n' +
         '  <section id="appPanel" hidden>\n' +
-        '    <div class="userbar"><span id="whoami"></span> <button id="logoutBtn" type="button">Log out</button></div>\n' +
+        '    <div class="userbar"><span id="whoami"></span> <button id="logoutBtn" type="button" data-i18n="auth.signOut">Log out</button></div>\n' +
         '  </section>\n',
       js: [
         "const AUTH = { token: localStorage.getItem('token') || null, mode: 'login' };",
@@ -139,10 +139,11 @@
         "  document.getElementById('appPanel').hidden = !on;",
         "  if (on) { document.getElementById('whoami').textContent = me.user.email + ' (' + me.user.role + ')'; if (window.onSignedIn) window.onSignedIn(me.user); }",
         "}",
+        "const _t = (k, en) => (window.t && window.i18n) ? window.t(k) : en;",
         "document.getElementById('authToggle').addEventListener('click', () => {",
         "  AUTH.mode = AUTH.mode === 'login' ? 'register' : 'login';",
-        "  document.getElementById('authSubmit').textContent = AUTH.mode === 'login' ? 'Sign in' : 'Create account';",
-        "  document.getElementById('authToggle').textContent = AUTH.mode === 'login' ? 'Need an account?' : 'Have an account?';",
+        "  document.getElementById('authSubmit').textContent = AUTH.mode === 'login' ? _t('auth.signIn', 'Sign in') : _t('auth.register', 'Create account');",
+        "  document.getElementById('authToggle').textContent = AUTH.mode === 'login' ? _t('auth.register', 'Need an account?') : _t('auth.signIn', 'Have an account?');",
         "});",
         "document.getElementById('authForm').addEventListener('submit', async (e) => {",
         "  e.preventDefault();",

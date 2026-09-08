@@ -617,6 +617,53 @@ module.exports = async function (t) {
     }
   }
 
+  /* ---------- 20. Localization engine (§48) — Engine.Localize ---------- */
+  {
+    const win = loadEngines(['engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.frontends.js', 'engine.graphql.js', 'engine.realtime.js', 'engine.pybackend.js', 'engine.microservices.js', 'engine.localize.js', 'engine.scaffold.js', 'engine.a11y.js']);
+    const spec = { name: 'shopdesk', auth: true, locales: ['fr', 'ar'],
+      entities: [{ name: 'product', fields: [{ name: 'title', type: 'text', required: true }, { name: 'inStock', type: 'bool', default: true }] }] };
+
+    const cat = win.Engine.Localize.catalog(spec);
+    t.ok('localize: en catalogue + fr/ar stubs + pseudo', cat['/public/i18n/en.json'] === undefined && cat['public/i18n/en.json'] && cat['public/i18n/fr.json'] && cat['public/i18n/ar.json'] && cat['public/i18n/pseudo.json']);
+    const en = JSON.parse(cat['public/i18n/en.json']);
+    t.ok('localize: en catalogue covers universal + entity + field keys', en['auth.signIn'] && en['entity.product'] && en['field.product.title'] && en['action.add'] === 'Add {entity}');
+    const fr = JSON.parse(cat['public/i18n/fr.json']);
+    t.ok('localize: fr stub has every en key, empty (honest coverage gap)', Object.keys(fr).length === Object.keys(en).length && Object.values(fr).every((v) => v === ''));
+    const ps = JSON.parse(cat['public/i18n/pseudo.json']);
+    t.ok('localize: pseudo-locale is accented + padded but keeps placeholders', /⟦/.test(ps['auth.signIn']) && /\{entity\}/.test(ps['action.add']) && /⟦/.test(ps['action.add']));
+
+    // the runtime: exercise the ICU + interpolation logic directly
+    const rt = win.Engine.Localize.runtime();
+    t.ok('localize: runtime defines window.t + dir + a DOMContentLoaded load', /window\.t = t;/.test(rt) && /function dir\(/.test(rt) && /setAttribute\('dir'/.test(rt));
+    const sandbox = { window: {}, document: { addEventListener() {}, readyState: 'complete', documentElement: { setAttribute() {} }, querySelectorAll: () => [] }, localStorage: { getItem: () => null, setItem() {} }, navigator: { language: 'en' }, location: { search: '' }, fetch: () => Promise.reject(new Error('offline')), URLSearchParams: global.URLSearchParams };
+    vm.runInNewContext(rt, sandbox);
+    const T = sandbox.window.i18n.t;
+    // unknown key -> the key string itself is treated as the template, so ICU + {var} still resolve
+    t.equal('localize: ICU plural (other) + # substitution', T('{n, plural, one {# item} other {# items}}', { n: 3 }), '3 items');
+    t.equal('localize: ICU plural (one)', T('{n, plural, one {# item} other {# items}}', { n: 1 }), '1 item');
+    t.equal('localize: {var} interpolation', T('Signed in as {email}', { email: 'a@b.co' }), 'Signed in as a@b.co');
+    t.equal('localize: RTL direction for Arabic', sandbox.window.i18n.dir('ar'), 'rtl');
+    t.equal('localize: LTR direction for French', sandbox.window.i18n.dir('fr'), 'ltr');
+
+    // full scaffold + audit
+    win.Engine.Scaffold.generate(spec).forEach((f) => win.Engine.FS.write(f.path, f.content));
+    t.ok('localize: scaffold bundles i18n.js + catalogue + tags the HTML', win.Engine.FS.isFile('/public/i18n.js') && win.Engine.FS.isFile('/public/i18n/en.json') && /data-i18n="entity\.product"/.test(win.Engine.FS.read('/public/index.html')) && /<script src="i18n\.js">/.test(win.Engine.FS.read('/public/index.html')));
+    const rep = win.Engine.Localize.analyze();
+    t.ok('localize: audit runs, reports fr/ar as incomplete (stubs)', rep.present && rep.locales.fr && rep.locales.fr.pct === 0 && rep.locales.ar.dir === 'rtl');
+    t.ok('localize: no missing-key finding — every data-i18n key is in the catalogue', !rep.findings.some((f) => f.rule === 'missing-key'));
+    t.ok('localize: not requested by this contract -> advisory only (healthy)', rep.requested === false && rep.healthy === true);
+
+    // a contract that asks for i18n makes incomplete locales a real (serious) gate
+    win.Engine.Sovereign.write('product-contract.json', { name: 'shopdesk', type: 'web-app', requirements: [{ statement: 'The app must support localization into French and Arabic' }] });
+    win.Engine.Contract = win.Engine.Contract || { load: () => win.Engine.Sovereign.read('product-contract.json') };
+    const rep2 = win.Engine.Localize.analyze();
+    t.ok('localize: when the contract asks for localization, empty stubs fail the health check', rep2.requested === true && rep2.healthy === false);
+
+    // generated frontend still passes the a11y gate with the i18n attributes
+    const a = win.Engine.A11y.audit();
+    t.ok('localize: i18n tagging does not regress accessibility', (a.byImpact.critical || 0) === 0 && a.score >= 90);
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

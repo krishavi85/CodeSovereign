@@ -49,6 +49,7 @@
     s.websocket = !!spec.websocket;
     s.microservices = !!spec.microservices;
     s.deployTargets = Array.isArray(spec.deployTargets) && spec.deployTargets.length ? spec.deployTargets : ['docker', 'compose'];
+    s.locales = Array.isArray(spec.locales) ? spec.locales : (Array.isArray(spec.languages) ? spec.languages : []);
     s.backend = spec.backend === 'python' || spec.pyBackend ? 'python' : 'node';   // idempotent
     s.pyBackend = s.backend === 'python';
     var names = s.entities.map(function (e) { return e.name; });
@@ -132,51 +133,54 @@
     var forms = s.entities.filter(function (e) { return ['user','session','job'].indexOf(e.name) < 0; }).map(function (e) {
       var editable = e.fields.filter(function (f) { return ['id', 'timestamp'].indexOf(f.type) < 0 && !(f.type === 'ref' && f.ref === 'user'); });
       var inputs = editable.map(function (f) {
-        if (f.type === 'bool') return '<label><input type="checkbox" data-f="' + f.name + '"> ' + f.name + '</label>';
+        var k = 'field.' + e.name + '.' + f.name;
+        if (f.type === 'bool') return '<label data-i18n="' + k + '"><input type="checkbox" data-f="' + f.name + '"> ' + f.name + '</label>';
         var t = (f.type === 'int' || f.type === 'float') ? 'number' : 'text';
         var lbl = f.name + (f.type === 'ref' ? ' (id)' : '');
         var iid = e.name + '-' + f.name;
-        return '<label for="' + iid + '">' + lbl + '</label>\n        ' +
-          '<input id="' + iid + '" data-f="' + f.name + '" type="' + t + '" placeholder="' + lbl + '" aria-label="' + lbl + '"' + (f.required ? ' required' : '') + '>';
+        return '<label for="' + iid + '" data-i18n="' + k + '">' + lbl + '</label>\n        ' +
+          '<input id="' + iid + '" data-f="' + f.name + '" type="' + t + '" placeholder="' + lbl + '" aria-label="' + lbl + '" data-i18n-attr="placeholder:' + k + ',aria-label:' + k + '"' + (f.required ? ' required' : '') + '>';
       }).join('\n        ');
       return {
         name: e.name, table: e.table,
         html: '  <section class="card" data-entity="' + e.name + '">\n' +
-          '    <h2>' + e.name + '</h2>\n' +
-          '    <form class="create">\n        ' + inputs + '\n        <button type="submit">Add ' + e.name + '</button>\n    </form>\n' +
+          '    <h2 data-i18n="entity.' + e.name + '">' + e.name + '</h2>\n' +
+          '    <form class="create">\n        ' + inputs + '\n        <button type="submit" data-i18n="action.add" data-i18n-vars=\'{"entity":"' + e.name + '"}\'>Add ' + e.name + '</button>\n    </form>\n' +
           '    <div class="err" hidden></div>\n    <ul class="list"></ul>\n  </section>\n',
         fields: editable.map(function (f) { return { name: f.name, type: f.type }; })
       };
     });
     var authFrag = s.auth ? A().uiFragment() : { html: '', js: '' };
     var html =
-      '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
-      '  <a href="#main" class="skip-link">Skip to content</a>\n' +
-      '  <header><h1>' + s.name + '</h1></header>\n' +
+      '<!doctype html>\n<html lang="en" dir="ltr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
+      '  <a href="#main" class="skip-link" data-i18n="app.skipToContent">Skip to content</a>\n' +
+      '  <header><h1 data-i18n="app.title">' + s.name + '</h1></header>\n' +
       '  <main id="main">\n' + authFrag.html +
       (s.auth ? '  <div id="entities" hidden>\n' : '  <div id="entities">\n') +
       forms.map(function (f) { return f.html; }).join('') +
-      '  </div>\n  </main>\n  <script src="app.js"></script>\n</body>\n</html>\n';
+      '  </div>\n  </main>\n  <script src="i18n.js"></script>\n  <script src="app.js"></script>\n</body>\n</html>\n';
     var js = [
       "'use strict';",
       s.auth ? authFrag.js : "function authHeaders() { return { 'content-type': 'application/json' }; }",
       "",
       "const ENTITIES = " + JSON.stringify(forms.map(function (f) { return { name: f.name, table: f.table, fields: f.fields }; })) + ";",
+      "// localisation fallback — real translations come from i18n.js / i18n/<lang>.json",
+      "function T(key, en) { return (typeof window !== 'undefined' && window.t && window.i18n) ? window.t(key) : en; }",
       "",
       "async function loadEntity(cfg) {",
       "  const sec = document.querySelector('[data-entity=\"' + cfg.name + '\"]');",
-      "  const list = sec.querySelector('.list'); list.innerHTML = '<li>Loading…</li>';",
+      "  const list = sec.querySelector('.list'); list.innerHTML = '<li>' + T('list.loading', 'Loading…') + '</li>';",
       "  try {",
       "    const res = await fetch('/api/' + cfg.table + '?limit=100', { headers: authHeaders() });",
       "    const j = await res.json();",
       "    const rows = j.rows || [];",
-      "    list.innerHTML = rows.length ? rows.map((r) => renderRow(cfg, r)).join('') : '<li class=\"empty\">Nothing yet</li>';",
+      "    list.innerHTML = rows.length ? rows.map((r) => renderRow(cfg, r)).join('') : '<li class=\"empty\">' + T('list.empty', 'Nothing yet') + '</li>';",
       "    list.querySelectorAll('[data-del]').forEach((b) => b.addEventListener('click', () => del(cfg, b.dataset.del)));",
-      "  } catch (e) { list.innerHTML = '<li class=\"error\">Could not load</li>'; }",
+      "  } catch (e) { list.innerHTML = '<li class=\"error\">' + T('list.error', 'Could not load') + '</li>'; }",
       "}",
       "function renderRow(cfg, r) {",
       "  const main = cfg.fields.map((f) => r[f.name]).filter((v) => v != null).slice(0, 3).join(' · ');",
-      "  return '<li>' + escapeHtml(String(main || ('#' + r.id))) + ' <button data-del=\"' + r.id + '\">delete</button></li>';",
+      "  return '<li>' + escapeHtml(String(main || ('#' + r.id))) + ' <button data-del=\"' + r.id + '\">' + T('action.delete', 'Delete') + '</button></li>';",
       "}",
       "function escapeHtml(s) { return s.replace(/[&<>\"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '\"': '&quot;' }[c])); }",
       "async function del(cfg, id) {",
@@ -419,6 +423,9 @@
         'name: CI\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with: { python-version: "3.12" }\n      - run: python -m compileall -q app\n      - run: python -m unittest discover -s tests\n';
       var an2 = S().analyze(s);
       files['/docs/DATA_MODEL.md'] = '# Data model\n\n' + s.entities.map(function (e) { return '## ' + e.name; }).join('\n\n') + '\n';
+      if (Engine.Localize && Engine.Localize.files) {
+        try { var loc2 = Engine.Localize.files(s); Object.keys(loc2).forEach(function (k) { files['/' + k] = loc2[k]; }); } catch (_) {}
+      }
       if (Engine.Docs && Engine.Docs.generate) {
         try { Engine.Docs.generate(s).forEach(function (d) { files[d.path] = d.content; }); } catch (_) {}
       }
@@ -491,6 +498,11 @@
         return '- `' + f.name + '` ' + f.type + (f.ref ? ' → ' + f.ref : '') + (f.required ? ' **required**' : '');
       }).join('\n');
     }).join('\n\n') + '\n\n## Analysis\n\n' + (an.hints.length ? an.hints.map(function (h) { return '- **' + h.kind + '** ' + (h.entity || '') + (h.field ? '.' + h.field : '') + (h.note ? ' — ' + h.note : ''); }).join('\n') : '- no issues') + '\n';
+
+    // localization substrate — i18n/en.json + per-locale stubs + pseudo + runtime (§48)
+    if (Engine.Localize && Engine.Localize.files) {
+      try { var loc = Engine.Localize.files(s); Object.keys(loc).forEach(function (k) { files['/' + k] = loc[k]; }); } catch (_) {}
+    }
 
     // documentation factory — README + docs/API|DATABASE|DEPLOYMENT|TROUBLESHOOTING (§49)
     if (Engine.Docs && Engine.Docs.generate) {

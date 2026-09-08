@@ -15,7 +15,7 @@ The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
 repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 662, `acceptance` 38, `acceptance:build` 22,
+(`node test/run.js` 678, `acceptance` 38, `acceptance:build` 22,
 `acceptance:ultramode` 53) prove it end to end in the real Electron renderer.
 
 **At / near 100% for the core loop:**
@@ -42,8 +42,10 @@ adjacent products, not core-loop gaps):
   **generated + gated** now (`engine.backend.js` tracing + crash handlers,
   `engine.perfcheck.js`). A hosted APM integration (OTel collector, Sentry) is
   still a config-only step for the user.
-- **Localization engine** (§48) — ⬜. *(Dependency intelligence (§10) and licence
-  intelligence (§52) are **done** — `engine.depintel.js`.)*
+- ~~**Localization engine** (§48)~~ — **done** — `engine.localize.js`: catalogue +
+  pseudo-locale + `window.t()` runtime (ICU plural, RTL) + a coverage audit that
+  gates when the contract asks for i18n. *(Dependency intelligence (§10) and
+  licence intelligence (§52) are also **done** — `engine.depintel.js`.)*
 - ~~**Delivery archive** (§19/20)~~ — **done** — `engine.delivery.js` assembles
   one self-contained bundle under `/delivery/` (MANIFEST + README + certificate +
   report + all evidence + continuation state + docs), exportable as a single
@@ -183,7 +185,7 @@ chase the 68 framework / platform features.
 | 45 | Performance engineering (profile CPU/RAM/GPU/IO/DB/render/startup/bundle) | ✅ generated `test/perf.test.js` drives a real load run (`CS_PERF_N` requests, default 250), asserts **p95 < 3000 ms**, records p50/p95/p99 + error rate + heap growth to `.sovereign/perf-report.json`. `dist/engine.perfcheck.js` (`Engine.PerfCheck`) reads it in `Sovereign.analyze()` and classifies findings (errors-under-load / slow-p95 / memory-leak / memory-growth). New DoD criterion **`performanceHealthy`** — any critical finding blocks release. `test/stacks.test.js` §16. |
 | 46 | Memory-leak detection | ✅ the generated perf test samples `process.memoryUsage().heapUsed` across the load run and runs a **linear least-squares fit** on the series; a sustained positive slope (> 200 KB/req) together with > 8 MB net growth is reported as a `memory-leak` critical finding by `Engine.PerfCheck`, failing `performanceHealthy`. |
 | 47 | Accessibility as a release gate | ✅ `dist/engine.a11y.js` — a WCAG 2.1 AA static audit over the project's HTML + CSS: image alt (1.1.1), form labels (1.3.1/3.3.2 — a placeholder is not a label), heading order, **colour contrast** (1.4.3 — real relative-luminance ratio), **keyboard operability** of click handlers (2.1.1), a `<main>` landmark + skip link (2.4.1), link/button names (2.4.4/4.1.2), **visible focus indicator** (2.4.7 — flags `outline:none` with no replacement), target size (2.5.5), positive `tabindex`, duplicate ids, invalid ARIA roles/states. `audit()` → `.sovereign/a11y-findings.json` + `a11y-report.md`; runs in `Sovereign.analyze()`. New DoD criterion `accessibilityPass` — **critical** barriers (missing alt / no accessible name / unlabelled control) block any release; **serious** ones block when the contract asked for accessibility. The generators were made compliant (labels + `<main>` + skip link + focus styles + AA-contrast palette) so every stack scores ≥ 96/100. `test/stacks.test.js` §12. |
-| 48 | Localization engine | ⬜ |
+| 48 | Localization engine | ✅ | `dist/engine.localize.js` (`Engine.Localize`). Every generated app gets a real i18n substrate: a source catalogue `public/i18n/en.json` (universal UI strings + one key per entity + per field), empty stubs for each requested locale, a deterministic **accented pseudo-locale** (`public/i18n/pseudo.json` — placeholders preserved, ~30% padding for truncation testing), and a dependency-free runtime `public/i18n.js` (`window.t()` with `{var}` interpolation + minimal ICU `{n, plural, one{…} other{…}}`, `[data-i18n]` / `[data-i18n-attr]` DOM binding, `?lang=` / `localStorage` / `navigator.language` selection, RTL — sets `<html dir>` for ar/he/fa/ur/…). The vanilla scaffold + auth fragment now tag every visible string (`data-i18n`) and route dynamic strings through `t()`, so English still renders with JS off. `analyze()` writes `.sovereign/localization-findings.json` — hard-coded-string leaks, `t()`/`data-i18n` keys missing from the catalogue, per-locale coverage %, interpolation-var mismatches, missing RTL wiring — and, **when the contract asks for localization**, folds into the DoD `acceptanceCriteriaPass` gate. `test/stacks.test.js` §20. *(Component-framework frontends still emit un-tagged strings — flagged as advisory.)* |
 | 49 | Documentation factory | ✅ `dist/engine.docs.js` (`Engine.Docs`) generates the full operator set from the scaffold spec + real `.sovereign/` evidence: **README.md** (project map, run steps, verification status folded in from the DoD + perf report), **docs/API.md** (every HTTP route — auth, CRUD per entity, list query params, status codes, request/response examples, rate limits, `/healthz` `/readyz` `/metrics` `/debug/traces`, GraphQL + WS when present), **docs/DATABASE.md** (tables, columns, types, refs, indexes, the real SQL migrations, JSON⇄Postgres note), **docs/DEPLOYMENT.md** (env-var table, build/migrate/start, one section per configured `Engine.Deploy` target with real commands), **docs/TROUBLESHOOTING.md** (symptom → cause → fix, each tied to something the repo actually does — `EADDRINUSE`, `429`, `503 /readyz`, `401/403`, slow p95, climbing `app_crashes_total`, heap growth). Wired into `engine.scaffold.js generate()`, the Ultra Mode `GENERATING` step, and `Sovereign.analyze()` (writes `documentation-index.json`). `test/stacks.test.js` §17. |
 
 ### H. Governance, Reverse Engineering & Evidence (§50–58)

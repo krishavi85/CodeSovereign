@@ -90,6 +90,8 @@
     'perf-report.json':           'Generated perf test output — p50/p95/p99 latency + heap-growth samples under a load burst',
     'perf-findings.json':         'Performance + memory-leak classification (spec §45-46)',
     'perf-report.md':             'Readable performance summary',
+    'localization-findings.json': 'Localization coverage — hard-coded strings, missing keys, per-locale % + RTL wiring (spec §48)',
+    'localization-report.md':     'Readable localization coverage summary',
     'documentation-index.json':   'Documentation factory — which docs were (re)generated + folded-in verification evidence (spec §49)',
     'documentation-report.md':    'Readable summary of the documentation factory run',
     'delivery-manifest.json':     'Delivery archive manifest — verdict, DoD result, per-file hashes, content hash (spec §19-20)',
@@ -630,6 +632,9 @@
 
     // ---- performance + memory-leak surfacing (spec §45-46) ----
     safe(function () { window.Engine.PerfCheck && window.Engine.PerfCheck.analyze(); });
+
+    // ---- localization coverage (spec §48) ----
+    safe(function () { window.Engine.Localize && window.Engine.Localize.analyze(); });
 
     // ---- user-journey coverage (spec §65) — from contract.journeys ----
     safe(function () { window.Engine.Journeys && window.Engine.Journeys.analyze(); });

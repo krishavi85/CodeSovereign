@@ -74,6 +74,7 @@
     'perf-findings.json',
     'perf-report.json',
     'journey-evidence.json',
+    'localization-findings.json',
     'security-findings.json',
     'privacy-findings.json',
     'architecture-findings.json',
