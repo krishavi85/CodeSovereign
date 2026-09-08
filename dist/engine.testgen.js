@@ -54,6 +54,9 @@
     if (eps.length && !/\/api\//.test(have)) gaps.push('no API tests for ' + eps.length + ' endpoint(s)');
     if (cts.length && !/click|querySelector/.test(have)) gaps.push('no UI tests for ' + cts.length + ' control(s)');
     if (!Engine.FS.exists('/test/chaos.test.js')) gaps.push('no adversarial / chaos tests');
+    if (!Engine.FS.exists('/test/e2e.test.js')) gaps.push('no end-to-end user-journey test');
+    if (!Engine.FS.exists('/test/install.test.js')) gaps.push('no clean-install test');
+    if (!Engine.FS.exists('/test/upgrade.test.js')) gaps.push('no upgrade / data-migration test');
     return { endpoints: eps, controls: cts.map(function (c) { return c.name; }), gaps: gaps };
   }
 
@@ -121,6 +124,228 @@
     ].filter(function (l) { return l !== ''; }).join('\n') + '\n';
   }
 
+  /* ---- e2e / install / upgrade (blueprint §19) ---- */
+
+  // a resource we can create with a self-contained body: no required ref to
+  // another entity (a required ref to `user` is fine — the service fills it).
+  function rootResource(sc) {
+    if (!sc) return null;
+    var ents = (sc.entities || []).filter(function (e) { return ['user', 'session', 'job'].indexOf(e.name) < 0; });
+    for (var i = 0; i < ents.length; i++) {
+      var e = ents[i];
+      var blockers = (e.fields || []).filter(function (f) {
+        return f.required && f.type === 'ref' && f.ref !== 'user';
+      });
+      if (!blockers.length) return e;
+    }
+    return null;
+  }
+
+  function litFor(f) {
+    switch (f.type) {
+      case 'int': return '7';
+      case 'float': return '1.5';
+      case 'bool': return (f.def != null ? String(!f.def) : 'true');
+      case 'json': return '{}';
+      case 'timestamp': return "'2026-01-01T00:00:00.000Z'";
+      default: return "'e2e-" + f.name + "'";
+    }
+  }
+  // the create body (required, non-id, non-user-ref fields) + a field we can
+  // safely mutate for the update assertion.
+  function bodyFor(e) {
+    var req = (e.fields || []).filter(function (f) {
+      return f.type !== 'id' && f.required && !(f.type === 'ref' && f.ref === 'user');
+    });
+    var pairs = req.map(function (f) { return JSON.stringify(f.name) + ': ' + litFor(f); });
+    var textField = (e.fields || []).filter(function (f) { return (f.type === 'text' || f.type === 'longtext') && f.name !== 'id'; })[0];
+    var boolField = (e.fields || []).filter(function (f) { return f.type === 'bool'; })[0];
+    var mut = textField ? { name: textField.name, before: "'e2e-" + textField.name + "'", after: "'e2e-updated'" }
+      : boolField ? { name: boolField.name, before: (boolField.def != null ? String(!boolField.def) : 'true'), after: (boolField.def != null ? String(!!boolField.def) : 'false') }
+        : null;
+    return { create: '{ ' + pairs.join(', ') + ' }', mut: mut };
+  }
+
+  function e2eSuite(sc, auth) {
+    var e = rootResource(sc);
+    var L = [
+      "'use strict';",
+      "process.env.DATA_DIR = require('node:path').join(require('node:os').tmpdir(), 'test-e2e-' + process.pid);",
+      "const test = require('node:test');",
+      "const assert = require('node:assert');",
+      "let server; try { ({ server } = require('../server')); } catch (_) {}",
+      "let db; try { db = require('../src/db'); } catch (_) {}",
+      "",
+      "test('e2e: a real user journey — sign in, create, read, update, delete', { skip: !server, timeout: 30000 }, async () => {",
+      "  if (db) { await db.reset(); await db.migrate(); }",
+      "  await new Promise((r) => server.listen(0, r));",
+      "  const base = 'http://localhost:' + server.address().port;",
+      "  const J = (m, p, b, h) => fetch(base + p, { method: m, headers: Object.assign({ 'content-type': 'application/json' }, h || {}), body: b === undefined ? undefined : JSON.stringify(b) }).then(async (x) => ({ s: x.status, j: await x.json().catch(() => null) }));",
+      "",
+      "  const health = await J('GET', '/healthz'); assert.equal(health.s, 200, 'healthz');",
+      "  const ready = await J('GET', '/readyz'); assert.equal(ready.s, 200, 'readyz');",
+      ""
+    ];
+    if (auth) L.push(
+      "  const reg = await J('POST', '/api/auth/register', { email: 'journey@t.co', password: 'password12' });",
+      "  assert.ok(reg.s === 201 && reg.j && reg.j.token, 'register -> token');",
+      "  let AH = { authorization: 'Bearer ' + reg.j.token };",
+      "  const login = await J('POST', '/api/auth/login', { email: 'journey@t.co', password: 'password12' });",
+      "  assert.ok(login.s === 200 && login.j.token, 'login -> token');",
+      "  AH = { authorization: 'Bearer ' + login.j.token };",
+      "  const me = await J('GET', '/api/auth/me', undefined, AH); assert.ok(me.j && me.j.user && me.j.user.email === 'journey@t.co', 'me() is the logged-in user');",
+      ""
+    );
+    else L.push("  const AH = {};", "");
+    if (e) {
+      var b = bodyFor(e);
+      var p = "/api/" + e.table;
+      L.push(
+        "  // create",
+        "  const created = await J('POST', '" + p + "', " + b.create + ", AH);",
+        "  assert.equal(created.s, 201, 'create -> 201'); const id = created.j && created.j.id; assert.ok(id != null, 'created row has an id');",
+        "  // list shows it",
+        "  const listed = await J('GET', '" + p + "', undefined, AH);",
+        "  const rows = Array.isArray(listed.j) ? listed.j : (listed.j && listed.j.rows) || [];",
+        "  assert.ok(rows.some((r) => String(r.id) === String(id)), 'the new row is in the list');",
+        "  // read one",
+        "  const one = await J('GET', '" + p + "/' + id, undefined, AH);",
+        "  assert.equal(one.s, 200, 'read one -> 200'); assert.equal(String(one.j.id), String(id), 'same row');"
+      );
+      if (b.mut) L.push(
+        "  // update",
+        "  const upd = await J('PUT', '" + p + "/' + id, { " + JSON.stringify(b.mut.name) + ": " + b.mut.after + " }, AH);",
+        "  assert.equal(upd.s, 200, 'update -> 200'); assert.equal(String(upd.j[" + JSON.stringify(b.mut.name) + "]), String(" + b.mut.after + "), 'the change persisted');"
+      );
+      L.push(
+        "  // delete",
+        "  const del = await J('DELETE', '" + p + "/' + id, undefined, AH);",
+        "  assert.equal(del.s, 200, 'delete -> 200');",
+        "  const gone = await J('GET', '" + p + "/' + id, undefined, AH);",
+        "  assert.equal(gone.s, 404, 'the row is gone');"
+      );
+    } else {
+      L.push("  // no self-contained resource in the schema — the auth + health journey above is the e2e path");
+    }
+    if (auth) L.push(
+      "",
+      "  const out = await J('POST', '/api/auth/logout', undefined, AH); assert.ok(out.s === 200, 'logout -> 200');",
+      "  const after = await J('GET', '/api/auth/me', undefined, AH); assert.ok(!after.j || !after.j.user, 'session no longer authenticates');"
+    );
+    L.push(
+      "",
+      "  try { if (server.closeAllConnections) server.closeAllConnections(); } catch (_) {}",
+      "  await Promise.race([ new Promise((r) => server.close(r)), new Promise((r) => setTimeout(r, 3000)) ]);",
+      "  if (db) await db.reset();",
+      "});",
+      ""
+    );
+    return L.filter(function (l) { return l !== undefined; }).join('\n');
+  }
+
+  function installSuite() {
+    return [
+      "'use strict';",
+      "process.env.DATA_DIR = require('node:path').join(require('node:os').tmpdir(), 'test-install-' + process.pid);",
+      "const test = require('node:test');",
+      "const assert = require('node:assert');",
+      "const fs = require('fs');",
+      "const path = require('path');",
+      "const root = path.join(__dirname, '..');",
+      "let server; try { ({ server } = require('../server')); } catch (_) {}",
+      "let db; try { db = require('../src/db'); } catch (_) {}",
+      "",
+      "test('install: package.json declares migrate + test + dev scripts', () => {",
+      "  const pj = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));",
+      "  for (const s of ['migrate', 'test', 'dev']) assert.ok(pj.scripts && pj.scripts[s], 'missing npm script: ' + s);",
+      "});",
+      "",
+      "test('install: no third-party runtime dependencies to install', () => {",
+      "  const pj = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));",
+      "  const deps = Object.keys(pj.dependencies || {});",
+      "  assert.equal(deps.length, 0, 'expected a dependency-free install, found: ' + deps.join(', '));",
+      "});",
+      "",
+      "test('install: a clean checkout migrates, boots and is healthy', { skip: !server, timeout: 25000 }, async () => {",
+      "  fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });",
+      "  if (db) { const tables = await db.migrate(); assert.ok(Array.isArray(tables) && tables.length, 'migrate created tables'); }",
+      "  await new Promise((r) => server.listen(0, r));",
+      "  const base = 'http://localhost:' + server.address().port;",
+      "  const h = await fetch(base + '/healthz').then((r) => r.json()).catch(() => ({}));",
+      "  assert.ok(h.ok === true, '/healthz reports ok on a fresh install');",
+      "  const rz = await fetch(base + '/readyz');",
+      "  assert.equal(rz.status, 200, '/readyz is 200 right after migrate');",
+      "  try { if (server.closeAllConnections) server.closeAllConnections(); } catch (_) {}",
+      "  await Promise.race([ new Promise((r) => server.close(r)), new Promise((r) => setTimeout(r, 3000)) ]);",
+      "});",
+      "",
+      "test('install: migrations are idempotent', { skip: !db }, async () => {",
+      "  const a = await db.migrate();",
+      "  const b = await db.migrate();",
+      "  assert.deepStrictEqual(a, b, 'running migrate twice yields the same schema');",
+      "});",
+      ""
+    ].join('\n');
+  }
+
+  function upgradeSuite(sc, auth) {
+    var e = rootResource(sc);
+    if (!e) {
+      return [
+        "'use strict';",
+        "const test = require('node:test');",
+        "const assert = require('node:assert');",
+        "let db; try { db = require('../src/db'); } catch (_) {}",
+        "test('upgrade: re-running migrations over an existing store is non-destructive', { skip: !db, timeout: 20000 }, async () => {",
+        "  await db.migrate();",
+        "  const before = await db.migrate();",
+        "  const after = await db.migrate();",
+        "  assert.deepStrictEqual(before, after, 'schema stable across upgrade migrations');",
+        "});",
+        ""
+      ].join('\n');
+    }
+    var b = bodyFor(e);
+    var p = "/api/" + e.table;
+    var L = [
+      "'use strict';",
+      "process.env.DATA_DIR = require('node:path').join(require('node:os').tmpdir(), 'test-upgrade-' + process.pid);",
+      "const test = require('node:test');",
+      "const assert = require('node:assert');",
+      "let server; try { ({ server } = require('../server')); } catch (_) {}",
+      "let db; try { db = require('../src/db'); } catch (_) {}",
+      "",
+      "test('upgrade: data written by the old version survives a re-migration + restart', { skip: !server || !db, timeout: 30000 }, async () => {",
+      "  await db.reset(); await db.migrate();",
+      "  await new Promise((r) => server.listen(0, r));",
+      "  const base = 'http://localhost:' + server.address().port;",
+      "  const J = (m, pth, body, h) => fetch(base + pth, { method: m, headers: Object.assign({ 'content-type': 'application/json' }, h || {}), body: body === undefined ? undefined : JSON.stringify(body) }).then(async (x) => ({ s: x.status, j: await x.json().catch(() => null) }));",
+      auth ? "  const reg = await J('POST', '/api/auth/register', { email: 'upgrade@t.co', password: 'password12' });" : "",
+      auth ? "  const AH = { authorization: 'Bearer ' + (reg.j && reg.j.token) };" : "  const AH = {};",
+      "  const created = await J('POST', '" + p + "', " + b.create + ", AH);",
+      "  assert.equal(created.s, 201, 'seed a row on the old version'); const id = created.j.id;",
+      "",
+      "  // --- simulate the upgrade: new version re-applies its migrations ---",
+      "  const a = await db.migrate();",
+      "  const c = await db.migrate();",
+      "  assert.deepStrictEqual(a, c, 'the upgrade migration is idempotent');",
+      "",
+      "  // the row is still in the data layer",
+      "  const rows = await db.list('" + e.name + "', {});",
+      "  assert.ok((rows.rows || rows).some((r) => String(r.id) === String(id)), 'the pre-upgrade row is still stored');",
+      "  // and still reachable over HTTP after the upgrade",
+      "  const got = await J('GET', '" + p + "/' + id, undefined, AH);",
+      "  assert.equal(got.s, 200, 'the pre-upgrade row is still served');",
+      "",
+      "  try { if (server.closeAllConnections) server.closeAllConnections(); } catch (_) {}",
+      "  await Promise.race([ new Promise((r) => server.close(r)), new Promise((r) => setTimeout(r, 3000)) ]);",
+      "  await db.reset();",
+      "});",
+      ""
+    ];
+    return L.filter(function (l) { return l !== ''; }).join('\n');
+  }
+
   function a11ySuite() {
     return [
       "'use strict';",
@@ -144,8 +369,13 @@
     var eps = endpoints();
     var auth = hasAuth();
     var out = {};
+    var sc = schema();
+    var hasServer = Engine.FS.exists('/server.js') || Engine.FS.exists('/src/server.js');
     if (eps.length && (opts.api !== false)) out['/test/generated-api.test.js'] = apiSuite(eps, auth);
     if (opts.chaos !== false) out['/test/chaos.test.js'] = chaosSuite(eps, auth);
+    if (opts.e2e !== false && hasServer) out['/test/e2e.test.js'] = e2eSuite(sc, auth);
+    if (opts.install !== false && hasServer) out['/test/install.test.js'] = installSuite();
+    if (opts.upgrade !== false && hasServer) out['/test/upgrade.test.js'] = upgradeSuite(sc, auth);
     var hasPublic = Engine.FS.exists('/public') || Object.keys(Engine.FS._data || {}).some(function (p) { return p.indexOf('/public/') === 0; });
     if (opts.a11y !== false && hasPublic) out['/test/a11y.test.js'] = a11ySuite();
     Object.keys(out).forEach(function (p) { Engine.FS.write(p, out[p]); });
@@ -153,6 +383,6 @@
     return Object.keys(out).map(function (p) { return { path: p, content: out[p] }; });
   }
 
-  Engine.TestGen = { plan: plan, generate: generate, chaosSuite: chaosSuite, endpoints: endpoints };
+  Engine.TestGen = { plan: plan, generate: generate, chaosSuite: chaosSuite, e2eSuite: e2eSuite, installSuite: installSuite, upgradeSuite: upgradeSuite, endpoints: endpoints, rootResource: rootResource };
   console.info('[TestGen] testing factory + chaos suite ready — Engine.TestGen');
 })();

@@ -542,6 +542,38 @@ module.exports = async function (t) {
     t.ok('docs: documentation-index.json recorded', win.Engine.Docs.load() && win.Engine.Docs.load().present === true);
   }
 
+  /* ---------- 18. e2e / install / upgrade test generation (§19) — Engine.TestGen ---------- */
+  {
+    const win = loadEngines(['engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.frontends.js', 'engine.graphql.js', 'engine.realtime.js', 'engine.pybackend.js', 'engine.microservices.js', 'engine.scaffold.js', 'engine.testgen.js']);
+    const spec = { name: 'journeyapp', auth: true,
+      entities: [{ name: 'project', fields: [{ name: 'name', type: 'text', required: true, max: 120 }, { name: 'archived', type: 'bool', default: false }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] },
+        { name: 'task', fields: [{ name: 'title', type: 'text', required: true }, { name: 'projectId', type: 'ref', ref: 'project', required: true }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] }] };
+    const repo = {}; win.Engine.Scaffold.generate(spec).forEach((f) => { repo[f.path] = f.content; win.Engine.FS.write(f.path, f.content); });
+    const gen = win.Engine.TestGen.generate({});
+    const genMap = {}; gen.forEach((f) => { genMap[f.path] = f.content; });
+    t.ok('testgen: emits e2e + install + upgrade suites', genMap['/test/e2e.test.js'] && genMap['/test/install.test.js'] && genMap['/test/upgrade.test.js']);
+    t.ok('testgen: e2e picks the ref-free root resource (project, not task)', /\/api\/projects/.test(genMap['/test/e2e.test.js']) && !/\/api\/tasks'/.test(genMap['/test/e2e.test.js']));
+    t.ok('testgen: e2e drives the full CRUD journey', /register -> token/.test(genMap['/test/e2e.test.js']) && /create -> 201/.test(genMap['/test/e2e.test.js']) && /the row is gone/.test(genMap['/test/e2e.test.js']));
+    t.ok('testgen: install checks a clean checkout boots + is healthy + deps are zero', /a clean checkout migrates, boots and is healthy/.test(genMap['/test/install.test.js']) && /dependency-free install/.test(genMap['/test/install.test.js']));
+    t.ok('testgen: upgrade proves pre-upgrade data survives a re-migration', /survives a re-migration/.test(genMap['/test/upgrade.test.js']) && /the pre-upgrade row is still served/.test(genMap['/test/upgrade.test.js']));
+    t.ok('testgen: plan gaps clear once generated', win.Engine.TestGen.plan().gaps.every((g) => !/end-to-end|clean-install|upgrade/.test(g)));
+
+    // RUN the generated suites against a real generated server
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stk-e2e-'));
+    try {
+      Object.assign(repo, genMap);
+      Object.keys(repo).forEach((p) => { const abs = path.join(dir, p.replace(/^\//, '')); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, repo[p]); });
+      cp.execFileSync('node', ['scripts/migrate.js'], { cwd: dir, stdio: 'pipe', timeout: 30000 });
+      const r = cp.spawnSync('node', ['--test', 'test/e2e.test.js', 'test/install.test.js', 'test/upgrade.test.js'], { cwd: dir, encoding: 'utf8', timeout: 90000 });
+      const out = (r.stdout || '') + (r.stderr || '');
+      const pass = Number((out.match(/(?:ℹ |# )?pass (\d+)/) || [])[1] || 0);
+      const fail = Number((out.match(/(?:ℹ |# )?fail (\d+)/) || [])[1] || 0);
+      t.equal('testgen: the generated e2e/install/upgrade suites pass against a real server', r.status, 0);
+      t.ok('testgen: real assertions ran (pass > 5, fail 0)', pass > 5 && fail === 0);
+      if (r.status !== 0) console.log(out.slice(-3000));
+    } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

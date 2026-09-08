@@ -15,7 +15,7 @@ The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
 repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 642, `acceptance` 38, `acceptance:build` 22,
+(`node test/run.js` 653, `acceptance` 38, `acceptance:build` 22,
 `acceptance:ultramode` 53) prove it end to end in the real Electron renderer.
 
 **At / near 100% for the core loop:**
@@ -53,8 +53,10 @@ adjacent products, not core-loop gaps):
   from the spec + real `.sovereign/` evidence.
 - **Refactoring / migration / upgrade engines** (§60, §62), **feature builder /
   completion graph** (§63–64), **user-journey testing** (§65) — ⬜.
-- **e2e / install / upgrade test generation** (§19) — 🟨. *(Accessibility as a
-  full gate (§47) is **done** — `engine.a11y.js`.)*
+- ~~**e2e / install / upgrade test generation** (§19)~~ — **done** —
+  `engine.testgen.js` emits `test/e2e.test.js` + `test/install.test.js` +
+  `test/upgrade.test.js`, all proven green against a real server.
+  *(Accessibility as a full gate (§47) is **done** — `engine.a11y.js`.)*
 
 None of these block the core "prompt → verified application" loop; they are
 breadth. The blueprint's own guidance (§ "Recommended Build Priority") is to
@@ -135,7 +137,7 @@ chase the 68 framework / platform features.
 |---|---|---|---|
 | 17 | Product security scanner (injection / XSS / CSRF / SSRF / secrets / headers / CORS / deps) on the *product* | ✅ | `dist/engine.security.js` — product security scanner over the workspace source: SQL/command injection, XSS (`innerHTML`/`document.write` with dynamic data), path traversal, hardcoded secrets (GitHub/OpenAI/Slack/AWS/PEM/JWT/credential literals), `eval`/`new Function`, weak crypto (md5/sha1, `Math.random` for security values), wildcard CORS, insecure cookies, committed `.env` values, **unauthenticated mutating routes**, missing rate limiting. `scan()` → `score = 100 − high·20 − medium·7 − low·2` → `.sovereign/security-findings.json` + `security-report.md`, folded into `decision-state.json`. Runs inside `Sovereign.analyze()`; `Engine.DoD` reads `bySeverity.high` as the authoritative security gate. `electron/SECURITY.md` still covers the shell's own IPC surface. |
 | 18 | Privacy engine (sensitive-data flow, retention, export) | ✅ | `dist/engine.privacy.js` — PII / data-protection scan over the generated workspace: secrets or whole request bodies in logs, personal data or credentials in a query string, a credential field serialised into a response, an unsanitised user row returned where the model has a `passwordHash` column, sensitive identifiers (SSN / card / passport) stored as plain columns, server-side data egress to a third-party host, a user model with no erasure path, a PII-collecting product with no consent surface. `scan()` → `.sovereign/privacy-findings.json` + `privacy-report.md`. Runs in `Sovereign.analyze()`; HIGH findings fail the `privacyRespected` DoD criterion. |
-| 19 | Testing factory (autogenerate unit/integration/e2e/a11y/install/upgrade/recovery tests) | 🟨 | `dist/engine.testgen.js` — reads the open project's route table + schema + interaction inventory and writes real `node:test` files into `test/` that `runEvidence()` then executes: one API test per detected endpoint (status + shape), an a11y suite (`<html lang>`, `<img alt>`, button text). **Not yet**: e2e / install / upgrade test generation. |
+| 19 | Testing factory (autogenerate unit/integration/e2e/a11y/install/upgrade/recovery tests) | ✅ | `dist/engine.testgen.js` — reads the open project's route table + schema + interaction inventory and writes real `node:test` files that `runEvidence()` executes: one API-contract test per endpoint, a chaos suite (§20), an a11y suite, **`test/e2e.test.js`** (a full user journey — health/ready → register → login → `me()` → create → list-contains → read → update → delete → 404 → logout → session dead, run against the booted server on the ref-free root resource), **`test/install.test.js`** (required npm scripts present, zero runtime deps, a clean checkout migrates + boots + `/healthz`+`/readyz` green, migrations idempotent), **`test/upgrade.test.js`** (seed a row on the "old" version → re-apply migrations → the row still stored **and** still served over HTTP). All proven green against a real generated server in `test/stacks.test.js` §18. |
 | 20 | Adversarial test engine (disconnect net / kill backend / corrupt DB / expired tokens / malformed payloads) | ✅ | `dist/engine.testgen.js` `chaosSuite()` — generates `test/chaos.test.js`: malformed JSON body, oversized body (→ 413), unknown id, wrong method, expired/bogus token must not authenticate, mutation without auth → 401, 8 concurrent writes don't corrupt. Runs under `node --test` as part of the evidence gates. |
 | 21 | Autonomous debugger (evidence → hypotheses → test → repair) | 🟨 | `engine.recovery.js` `rootCauseFor()` + plan/repair; hypothesis testing is implicit, not explicit. |
 | 22 | Root-cause engine (cause → cascade → fix → prevention) | 🟨 | `rootCauseFor()` produces cause/cascade/confidence; no "prevention" (add test + version gate) output. |
