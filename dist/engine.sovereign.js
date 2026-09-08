@@ -87,6 +87,9 @@
     'dependency-intel.json':      'Dependency intelligence — abandoned / duplicate-major / vulnerable pins / safe-upgrade (spec §10)',
     'license-report.json':        'Licence classification of every dependency + conflicts with the distribution model (spec §52)',
     'dependency-report.md':       'Readable dependency + licence findings',
+    'perf-report.json':           'Generated perf test output — p50/p95/p99 latency + heap-growth samples under a load burst',
+    'perf-findings.json':         'Performance + memory-leak classification (spec §45-46)',
+    'perf-report.md':             'Readable performance summary',
     'blockchain-evidence.json':   'EVM target — solc compile + local-chain deploy + transactions + receipts + static analysis',
     'mobile-evidence.json':       'Native-mobile target — gradle build + emulator install/launch + logcat + screenshot',
     'ml-evidence.json':           'ML-training target — dataset inspection + real training loss curve + checkpoint + eval metric',
@@ -618,6 +621,9 @@
 
     // ---- dependency + licence intelligence (spec §10 + §52) ----
     safe(function () { window.Engine.DepIntel && window.Engine.DepIntel.analyze(); });
+
+    // ---- performance + memory-leak surfacing (spec §45-46) ----
+    safe(function () { window.Engine.PerfCheck && window.Engine.PerfCheck.analyze(); });
 
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {

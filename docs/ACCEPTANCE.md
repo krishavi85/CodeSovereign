@@ -34,7 +34,7 @@ After the readiness gate, the harness exercises the P0 pipeline
 2. **`Engine.Ledger.build()`** checks every criterion against the `.sovereign/`
    evidence → `evidence-ledger.json` (claim → evidence → confidence + assertion
    count).
-3. **`Engine.DoD.evaluate()`** → `definition-of-done.json`: 13 criteria (adds architecture/layering, privacy/PII, WCAG accessibility, visual-integrity and licence-compatibility gates). It
+3. **`Engine.DoD.evaluate()`** → `definition-of-done.json`: 14 criteria (adds architecture/layering, privacy/PII, WCAG accessibility, visual-integrity, licence-compatibility and performance-health gates). It
    **refuses** while the fixture's planted MOCK `Export CSV`, MOCK `Help` and
    BROKEN `Clear all` controls exist.
 4. **`Engine.Orchestrator.run()`** executes a 3-task DAG. Each task's generator
@@ -72,7 +72,7 @@ build half of the loop:
 3. **Real `npm test` + `npm run build` + `npm run lint`** — all exit 0.
 4. `observe()` boots the generated server and crawls it — a real control observed,
    nothing observed fake.
-5. Evidence ledger + **Definition-of-Done gate: all 13 criteria PASS** →
+5. Evidence ledger + **Definition-of-Done gate: all 14 criteria PASS** →
    `release-certificate.md` = **SOVEREIGN VERIFIED**.
 
 This is the proof that CodeSovereign can *build* verified software from a spec,
@@ -100,7 +100,7 @@ flow — see `docs/ULTRAMODE_CLOSED_LOOP.md`:
 6. The defect is detected (validator findings), a **snapshot** is taken
    (`pre-generate`, `pre-repair-N`), `Recovery.run()` repairs it, the checks
    re-run, warnings drop.
-7. **All 10 Definition-of-Done gates PASS** → `release-certificate.md` =
+7. **All 14 Definition-of-Done gates PASS** → `release-certificate.md` =
    **SOVEREIGN VERIFIED**. History: `ANALYZING → … → GENERATING → VALIDATING →
    EXECUTING → OBSERVING → REPAIRING → REVERIFYING → VERIFIED (web); PLANNING → GENERATING → VALIDATING → EXECUTING → REVERIFYING → VERIFIED (runtime target)`.
 8. **Resume**: the persisted run is forced back to a mid-flight state and

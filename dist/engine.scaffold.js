@@ -276,6 +276,57 @@
         : (first ? "  const cr = await get('/api/" + first.table + "', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(" + sampleFor(first, '1') + ") });\n  assert.equal(cr.s, 201);\n" : "")) +
       "  await new Promise((r) => server.close(r));\n" +
       "  await db.reset();\n});\n";
+
+    // ---- performance + memory-leak probe (blueprint §45-46) ----
+    out['test/perf.test.js'] =
+      head('perf') +
+      "const db = require('../src/db');\nconst { server } = require('../server');\n\n" +
+      "test('perf: p95 latency + no runaway memory over a load burst', { timeout: 60000 }, async () => {\n" +
+      "  await db.reset(); await db.migrate();\n" +
+      "  await new Promise((r) => server.listen(0, r));\n" +
+      "  const base = 'http://localhost:' + server.address().port;\n" +
+      (s.auth
+        ? "  const reg = await fetch(base + '/api/auth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email: 'perf@x.co', password: 'password123' }) }).then((r) => r.json());\n" +
+          "  const H = { 'content-type': 'application/json', authorization: 'Bearer ' + reg.token };\n"
+        : "  const H = { 'content-type': 'application/json' };\n") +
+      (first
+        ? "  const body = JSON.stringify(" + sampleFor(first, (s.auth ? 'reg.user.id' : '1')) + ");\n" +
+          "  const hit = () => fetch(base + '/api/" + first.table + "', { method: 'POST', headers: H, body });\n"
+        : "  const hit = () => fetch(base + '/healthz');\n") +
+      "  const N = Number(process.env.CS_PERF_N || 250);\n" +
+      "  const lat = []; const heap = []; let errors = 0;\n" +
+      "  if (global.gc) global.gc();\n" +
+      "  const h0 = process.memoryUsage().heapUsed;\n" +
+      "  for (let i = 0; i < N; i++) {\n" +
+      "    const t = Date.now();\n" +
+      "    const res = await hit().catch(() => ({ status: 599 }));\n" +
+      "    lat.push(Date.now() - t);\n" +
+      "    if (res.status >= 500) errors++;\n" +
+      "    if (i % 50 === 49) { if (global.gc) global.gc(); heap.push(process.memoryUsage().heapUsed); }\n" +
+      "  }\n" +
+      "  lat.sort((a, b) => a - b);\n" +
+      "  const p50 = lat[Math.floor(lat.length * 0.5)];\n" +
+      "  const p95 = lat[Math.floor(lat.length * 0.95)];\n" +
+      "  const p99 = lat[Math.floor(lat.length * 0.99)];\n" +
+      "  // linear-fit slope of heapUsed across the samples (bytes per sample)\n" +
+      "  let slope = 0;\n" +
+      "  if (heap.length >= 4) {\n" +
+      "    const n = heap.length, xs = heap.map((_, i) => i);\n" +
+      "    const mx = xs.reduce((a, b) => a + b, 0) / n, my = heap.reduce((a, b) => a + b, 0) / n;\n" +
+      "    let num = 0, den = 0; for (let i = 0; i < n; i++) { num += (xs[i] - mx) * (heap[i] - my); den += (xs[i] - mx) ** 2; }\n" +
+      "    slope = den ? num / den : 0;\n" +
+      "  }\n" +
+      "  const heapGrowth = heap.length ? heap[heap.length - 1] - h0 : 0;\n" +
+      "  const report = { requests: N, errors, p50, p95, p99, heapStartBytes: h0, heapEndBytes: heap[heap.length - 1] || h0, heapGrowthBytes: heapGrowth, heapSlopeBytesPerSample: Math.round(slope) };\n" +
+      "  try { require('fs').mkdirSync('.sovereign', { recursive: true }); require('fs').writeFileSync('.sovereign/perf-report.json', JSON.stringify(report, null, 2)); } catch (_) {}\n" +
+      "  console.log('[perf]', JSON.stringify(report));\n" +
+      "  await new Promise((r) => server.close(r));\n" +
+      "  await db.reset();\n" +
+      "  assert.equal(errors, 0, 'the server returned no 5xx under load');\n" +
+      "  assert.ok(p95 < 3000, 'p95 latency ' + p95 + 'ms is under 3000ms');\n" +
+      "  // a strong positive slope AND large absolute growth on a fixed workload => a leak\n" +
+      "  assert.ok(!(slope > 200000 && heapGrowth > 8 * 1024 * 1024), 'no runaway heap growth (slope ' + Math.round(slope) + ' B/sample, +' + Math.round(heapGrowth / 1024) + 'KB)');\n" +
+      "});\n";
     return out;
   }
   function sampleFor(e, ownerExpr) {
@@ -319,7 +370,7 @@
         "  const src = fs.readFileSync(f, 'utf8');\n  try { new vm.Script(src, { filename: f }); } catch (e) { console.error('PARSE ' + f + ': ' + e.message); problems++; continue; }\n" +
         "  src.split('\\n').forEach((l, i) => { if (/^\\s*var\\s/.test(l)) { console.error('NO-VAR ' + f + ':' + (i + 1)); problems++; } });\n}\n" +
         "console.log(problems ? problems + ' lint problem(s)' : 'lint clean'); process.exit(problems ? 1 : 0);\n",
-      '.gitignore': 'node_modules/\ndist/\n.data/\n',
+      '.gitignore': 'node_modules/\ndist/\n.data/\n.sovereign/\nlogs/\n',
       '.env.example': '# ' + s.name + '\nPORT=4319\n# For production, point the data layer at Postgres:\n# DATABASE_URL=postgres://user:pass@host:5432/' + s.name + '\n',
       'Dockerfile':
         'FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev || true\nCOPY . .\nRUN node scripts/migrate.js\nEXPOSE 4319\n' +

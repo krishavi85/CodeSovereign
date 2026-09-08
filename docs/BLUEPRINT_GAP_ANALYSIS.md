@@ -13,19 +13,19 @@ Measures the current codebase against the two blueprints:
 
 The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
-repair → 13-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
+repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 556, `acceptance` 38, `acceptance:build` 22,
+(`node test/run.js` 607, `acceptance` 38, `acceptance:build` 22,
 `acceptance:ultramode` 53) prove it end to end in the real Electron renderer.
 
 **At / near 100% for the core loop:**
 
 | Area | Where it landed |
 |---|---|
-| Proof engine (contract · ledger · DoD · certificate) | **13 gates** incl. **architecture/layering** (`engine.archrules.js`), **privacy/PII** (`engine.privacy.js`), **WCAG accessibility** (`engine.a11y.js`) and **visual integrity** (`engine.visualcheck.js` — multi-breakpoint render, overflow/clipping/contrast/zero-size); zero-mock + no-fake enforced |
+| Proof engine (contract · ledger · DoD · certificate) | **14 gates** — the 8 core + **architecture/layering** (`engine.archrules.js`), **privacy/PII** (`engine.privacy.js`), **WCAG accessibility** (`engine.a11y.js`), **visual integrity** (`engine.visualcheck.js` — multi-breakpoint render), **licence compatibility** (`engine.depintel.js`), **performance health** (`engine.perfcheck.js` — p95 + memory-leak); zero-mock + no-fake enforced |
 | Repo-scale generation | Node **and** pure-stdlib Python backends; vanilla / React / Preact / Vue / Svelte / Angular frontends (vendored VDOM); GraphQL executor; RFC 6455 WebSockets; monolith **and** microservices (gateway + per-domain services + compose) |
 | Deployment IaC | 10 targets — docker · compose · **kubernetes** · **helm** · **terraform** · fly · render · railway · vps · static (does not push — needs creds, by design) |
-| Ops | every generated backend: `/healthz` · `/readyz` · `/metrics` (Prometheus) · JSON access logs |
+| Ops | every generated backend: `/healthz` · `/readyz` · `/metrics` (Prometheus — now with p50/p95/p99 latency, error + crash counters, heap gauge) · JSON access logs · **per-request tracing** (`x-trace-id`, span timings, `/debug/traces`) · **crash capture** (`uncaughtException`/`unhandledRejection` → `logs/crashes/`) |
 | Cross-platform packaging | Windows NSIS + portable · **macOS dmg/zip (x64+arm64)** · **Linux AppImage+deb** — CI jobs on native runners |
 | **Runtime-adapter targets** | **native Android** (real APK + headless emulator), **native iOS** (staged: source + static universal, build/sim via Xcode/xcross/Theos), **EVM contracts** (bundled solc + local chain — compile/deploy/transact/assert), **ML training** (real PyTorch run + checkpoint + metric). A missing host runtime → `BLOCKED <REASON>` / `PARTIAL`, never "unsupported" |
 
@@ -35,13 +35,13 @@ adjacent products, not core-loop gaps):
 - **Design input** (§11): UI-from-screenshot / Figma import — ⬜ (prompt-to-UI
   only). *Visual validation + screenshot fidelity (§12–13) are **done*** —
   `engine.visualcheck.js` + `observer.visualProbe()`.
-- **Prompt intake breadth** (stage 1): attachments / screenshots / audio / repo
-  import — 🟨 (text only).
 - **Prompt intake — non-text** (stage 1): attachments / screenshots / audio /
   repo import — 🟨. *(Model-driven intent for **text** (§2–3) is **done** —
   `engine.intent.js`.)*
-- **Ops depth** (§43–46): APM / traces / crash-reporting / performance profiling
-  / memory-leak detection — ⬜ (each a hosted-collector product).
+- **Ops depth** (§43–46): traces / crash-capture / p50-p95-p99 / memory-leak are
+  **generated + gated** now (`engine.backend.js` tracing + crash handlers,
+  `engine.perfcheck.js`). A hosted APM integration (OTel collector, Sentry) is
+  still a config-only step for the user.
 - **Localization engine** (§48) — ⬜. *(Dependency intelligence (§10) and licence
   intelligence (§52) are **done** — `engine.depintel.js`.)*
 - **Delivery archive** (§19/20): a single downloadable bundle (report + cert +
@@ -172,10 +172,10 @@ chase the 68 framework / platform features.
 |---|---|---|
 | 41 | Deployment engine (VPS / Docker / K8s / Vercel / Netlify / cloud / self-host / desktop-local) | ✅ `dist/engine.deploy.js` — 10 targets (docker · compose · **kubernetes** · **helm** · **terraform** · vps · fly · render · railway · static), each with label + cost + prerequisites. `preflight()` runs 7 readiness checks. `apply(target)` generates the IaC + a runnable `deploy/<target>.sh` and writes `.sovereign/deployment.json`. **Does not push** — that needs the user's credentials. |
 | 42 | Infrastructure as code (Dockerfile / compose / Terraform / K8s / proxy / TLS / DNS) | ✅ multi-stage Dockerfile (non-root, healthcheck), `docker-compose.prod.yml` (app + Postgres 16), `fly.toml`, `render.yaml`, systemd + Caddyfile (TLS) for VPS. **Kubernetes**: namespace + configmap + secret + deployment (probes, resources) + service + ingress + HPA + a postgres StatefulSet, all valid YAML. **Helm**: a templated chart (Chart.yaml + values.yaml + templates). **Terraform**: `main.tf` (uses `templatefile` for cloud-init, no fragile nested heredocs) + variables.tf + tfvars example + `deploy/terraform.sh`. Covered by `test/stacks.test.js`. |
-| 43 | Monitoring (logs / metrics / traces / health / crash / uptime / audit) | 🟨 every generated backend (Node monolith + microservice gateway + domain services + pure-stdlib Python) ships `/healthz` (liveness + uptime), `/readyz` (data-layer reachability, 503 on failure), `/metrics` (Prometheus text format — uptime, request counter, responses by status class, method breakdown, RSS), and a one-line JSON access log per request (`dist/engine.backend.js`, `dist/engine.pybackend.js`, `dist/engine.microservices.js`). No traces / crash-reporting / APM integration — those are separate products needing a hosted collector. |
-| 44 | Production diagnosis (correlate logs / code / version / DB / commits) | ⬜ |
-| 45 | Performance engineering (profile CPU/RAM/GPU/IO/DB/render/startup/bundle) | ⬜ |
-| 46 | Memory-leak detection | ⬜ |
+| 43 | Monitoring (logs / metrics / traces / health / crash / uptime / audit) | ✅ every generated Node backend (monolith + microservice gateway + domain services) ships `/healthz` (liveness + uptime), `/readyz` (data-layer reachability, 503 on failure), `/metrics` (Prometheus — uptime, request counter, responses by status class, method breakdown, RSS, **`app_request_latency_ms` p50/p95/p99**, **`app_errors_total`**, **`app_crashes_total`**, **`app_memory_heap_used_bytes`**), a one-line JSON access log per request, **per-request distributed tracing** (W3C `traceparent` in, `x-trace-id` out, per-span timings for every service call, a 100-entry `/debug/traces` ring buffer gated off in production), and **crash capture** (`process.on('uncaughtException'/'unhandledRejection')` → structured `logs/crashes/<ts>.json` + counter). `dist/engine.backend.js`; `test/stacks.test.js` ops(node) block. Pure-stdlib Python keeps health/metrics/logs. A hosted collector (OTel/Sentry) is still config-only for the user. |
+| 44 | Production diagnosis (correlate logs / code / version / DB / commits) | 🟨 trace ids correlate a request across every span + the JSON access log + any crash file; version/commit/DB correlation is not automated |
+| 45 | Performance engineering (profile CPU/RAM/GPU/IO/DB/render/startup/bundle) | ✅ generated `test/perf.test.js` drives a real load run (`CS_PERF_N` requests, default 250), asserts **p95 < 3000 ms**, records p50/p95/p99 + error rate + heap growth to `.sovereign/perf-report.json`. `dist/engine.perfcheck.js` (`Engine.PerfCheck`) reads it in `Sovereign.analyze()` and classifies findings (errors-under-load / slow-p95 / memory-leak / memory-growth). New DoD criterion **`performanceHealthy`** — any critical finding blocks release. `test/stacks.test.js` §16. |
+| 46 | Memory-leak detection | ✅ the generated perf test samples `process.memoryUsage().heapUsed` across the load run and runs a **linear least-squares fit** on the series; a sustained positive slope (> 200 KB/req) together with > 8 MB net growth is reported as a `memory-leak` critical finding by `Engine.PerfCheck`, failing `performanceHealthy`. |
 | 47 | Accessibility as a release gate | ✅ `dist/engine.a11y.js` — a WCAG 2.1 AA static audit over the project's HTML + CSS: image alt (1.1.1), form labels (1.3.1/3.3.2 — a placeholder is not a label), heading order, **colour contrast** (1.4.3 — real relative-luminance ratio), **keyboard operability** of click handlers (2.1.1), a `<main>` landmark + skip link (2.4.1), link/button names (2.4.4/4.1.2), **visible focus indicator** (2.4.7 — flags `outline:none` with no replacement), target size (2.5.5), positive `tabindex`, duplicate ids, invalid ARIA roles/states. `audit()` → `.sovereign/a11y-findings.json` + `a11y-report.md`; runs in `Sovereign.analyze()`. New DoD criterion `accessibilityPass` — **critical** barriers (missing alt / no accessible name / unlabelled control) block any release; **serious** ones block when the contract asked for accessibility. The generators were made compliant (labels + `<main>` + skip link + focus styles + AA-contrast palette) so every stack scores ≥ 96/100. `test/stacks.test.js` §12. |
 | 48 | Localization engine | ⬜ |
 | 49 | Documentation factory | 🟨 `architecture.md` + `product-brief.md` + `analysis-summary.md` generated; not the full README/API/DB/deploy/troubleshooting set from real repo+runtime |

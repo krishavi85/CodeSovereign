@@ -6,10 +6,10 @@
    A feature/product is DONE only when every criterion below is true —
    never because code exists. Computed purely from `.sovereign/` evidence
    and the Evidence Ledger (blueprint §56, §67, §68). This generalises the
-   gate that electron/acceptance.js proves on the fixture: 13 criteria —
+   gate that electron/acceptance.js proves on the fixture: 14 criteria —
    implementation exists, dependencies connected, build, tests, runtime
    action, no fake implementation, security, architecture/layering,
-   privacy/PII, accessibility (WCAG), visual integrity, licence compatibility, acceptance criteria.
+   privacy/PII, accessibility (WCAG), visual integrity, licence compatibility, performance health, acceptance criteria.
 
    window.Engine.DoD
      evaluate()     -> dod object (writes .sovereign/definition-of-done.json)
@@ -217,6 +217,8 @@
     var depReport = j('dependency-intel.json');
     var licensesCompatible = depReport ? depReport.licensesCompatible !== false : true;
     var depCritical = depReport ? ((depReport.byImpact && depReport.byImpact.critical) || 0) : 0;
+    var perfReport = j('perf-findings.json');
+    var perfHealthy = !perfReport || perfReport.present === false ? true : (perfReport.healthy !== false && (perfReport.byImpact ? !perfReport.byImpact.critical : true));
     var secReport = j('security-findings.json');
     var highSec;
     if (secReport) {
@@ -262,6 +264,10 @@
       // distribution, a known-vulnerable pin, or an unlicensed commercial dep
       // is a real legal / security blocker.
       licensesCompatible: gate(!depReport ? true : (licensesCompatible && depCritical === 0)),
+      // performance + memory: the generated perf test already asserts the
+      // thresholds (so testsSucceed catches a regression); this surfaces it as
+      // its own gate — a 5xx under load or a memory leak blocks release.
+      performanceHealthy: gate(perfHealthy),
       acceptanceCriteriaPass: gate(ledgerFailing === 0 && !!ledger)
     };
     var PASS = Object.keys(criteria).every(function (k) { return criteria[k] === true; });
@@ -287,6 +293,7 @@
         dependencyScore: depReport ? depReport.score : null,
         licenseConflicts: depReport ? (depReport.licenseConflicts || []) : [],
         dependencyBlocking: depReport ? (depReport.findings || []).filter(function (f) { return f.impact === 'critical'; }).map(function (f) { return f.kind + (f.dependency ? ' ' + f.dependency : ''); }) : [],
+        perf: perfReport && perfReport.present ? { p50: perfReport.p50, p95: perfReport.p95, p99: perfReport.p99, errors: perfReport.errors, heapGrowthKB: perfReport.heapGrowthKB, leak: perfReport.leak } : null,
         ledgerFailing: ledgerFailing,
         openManualClaims: openManual,
         assertions: (ledger && ledger.totals && ledger.totals.assertions) || 0
@@ -383,7 +390,9 @@
       line('Accessibility', c.accessibilityPass) + '\n' +
       line('Visual integrity', c.visualIntegrityPass) + '\n' +
       line('Licences compatible', c.licensesCompatible) + '\n' +
+      line('Performance healthy', c.performanceHealthy) + '\n' +
       line('Acceptance criteria', c.acceptanceCriteriaPass) + '\n\n' +
+      (dod.detail && dod.detail.perf ? '_Perf: p50 ' + dod.detail.perf.p50 + 'ms · p95 ' + dod.detail.perf.p95 + 'ms · p99 ' + dod.detail.perf.p99 + 'ms · ' + dod.detail.perf.errors + ' errors · heap +' + dod.detail.perf.heapGrowthKB + 'KB' + (dod.detail.perf.leak ? ' · LEAK' : '') + '_\n\n' : '') +
       (ledger ? '## Claims\n\n| Requirement | Confidence | Assertions |\n|---|---|---|\n' +
         (ledger.claims || []).map(function (cl) {
           return '| ' + String(cl.claim).slice(0, 70) + ' | ' + cl.confidence + ' | ' + cl.assertions + ' |';

@@ -332,7 +332,11 @@ module.exports = async function (t) {
     const server = map['/server.js'];
     t.ok('ops(node): server exposes /healthz, /readyz and /metrics', /'\/healthz'/.test(server) && /'\/readyz'/.test(server) && /'\/metrics'/.test(server));
     t.ok('ops(node): Prometheus text format + a request counter', /app_requests_total/.test(server) && /text\/plain; version=0\.0\.4/.test(server));
-    t.ok('ops(node): structured JSON access log, silenced under test', /JSON\.stringify\(\{ t: new Date\(\)\.toISOString\(\)/.test(server) && /LOG_SILENT/.test(server));
+    t.ok('ops(node): structured JSON access log, silenced under test', /msg: 'request'/.test(server) && /LOG_SILENT/.test(server));
+    t.ok('ops(node): per-request tracing — spans, a trace id header, a /debug/traces ring buffer', /function span\(req, name, fn\)/.test(server) && /res\.setHeader\('x-trace-id'/.test(server) && /'\/debug\/traces'/.test(server) && /span\(req, r\.ent \+ '\.list'/.test(server));
+    t.ok('ops(node): crash capture — uncaughtException/unhandledRejection -> a structured record + counter', /process\.on\('uncaughtException'/.test(server) && /function recordCrash/.test(server) && /app_crashes_total/.test(server));
+    t.ok('ops(node): p50/p95/p99 latency in /metrics', /app_request_latency_ms\{quantile="0\.95"\}/.test(server));
+    t.ok('ops(node): a generated perf + memory-leak test', map['/test/perf.test.js'] && /heapSlopeBytesPerSample|no runaway heap growth/.test(map['/test/perf.test.js']));
 
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stk-ops-'));
     try {
@@ -484,6 +488,27 @@ module.exports = async function (t) {
     t.ok('contract: uses the model-inferred entities', (c.entities || []).some((e) => e.name === 'recipe') && (c.entities || []).some((e) => e.name === 'ingredient'));
     t.equal('contract: records the intent source', c.intent && c.intent.source, 'model+rules');
     t.ok('contract: still deterministic + safe (verdict buildable, no fake auth)', c.verdict === 'buildable');
+  }
+
+  /* ---------- 16. Perf + memory-leak surfacing (§45-46) — Engine.PerfCheck -> DoD ---------- */
+  {
+    const win = loadEngines(['engine.perfcheck.js', 'engine.contract.js', 'engine.ledger.js', 'engine.dod.js']);
+    // no report yet -> not applicable, gate passes
+    t.equal('perfcheck: with no perf-report.json, performanceHealthy passes (not applicable)', win.Engine.DoD.evaluate().criteria.performanceHealthy, true);
+    // a healthy report
+    win.Engine.Sovereign.write('perf-report.json', { requests: 300, errors: 0, p50: 4, p95: 18, p99: 40, heapStartBytes: 5e6, heapEndBytes: 6e6, heapGrowthBytes: 1e6, heapSlopeBytesPerSample: 12000 });
+    const ok = win.Engine.PerfCheck.analyze();
+    t.ok('perfcheck: a healthy run scores 100 + healthy', ok.score === 100 && ok.healthy === true);
+    t.equal('DoD: performanceHealthy passes for a healthy run', win.Engine.DoD.evaluate().criteria.performanceHealthy, true);
+    // 5xx under load -> critical
+    win.Engine.Sovereign.write('perf-report.json', { requests: 300, errors: 7, p50: 4, p95: 18, p99: 40, heapGrowthBytes: 1e6, heapSlopeBytesPerSample: 12000 });
+    win.Engine.PerfCheck.analyze();
+    t.equal('DoD: performanceHealthy FAILS when the server 5xx-ed under load', win.Engine.DoD.evaluate().criteria.performanceHealthy, false);
+    // a memory leak -> critical
+    win.Engine.Sovereign.write('perf-report.json', { requests: 300, errors: 0, p50: 4, p95: 18, p99: 40, heapGrowthBytes: 30 * 1024 * 1024, heapSlopeBytesPerSample: 900000 });
+    const leaky = win.Engine.PerfCheck.analyze();
+    t.ok('perfcheck: a positive heap slope + large growth on a fixed workload is a leak', leaky.leak === true && leaky.findings.some((f) => f.rule === 'memory-leak'));
+    t.equal('DoD: performanceHealthy FAILS on a detected memory leak', win.Engine.DoD.evaluate().criteria.performanceHealthy, false);
   }
 
   function tryYaml() {
