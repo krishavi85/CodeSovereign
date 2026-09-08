@@ -432,6 +432,9 @@ function registerIpc() {
   ipcMain.handle('obs:screenshot', async () => {
     try { return ok({ dataUrl: await observer.screenshot() }); } catch (e) { return fail(e); }
   });
+  ipcMain.handle('obs:visualProbe', async (_e, opts) => {
+    try { return ok(await observer.visualProbe(opts || {})); } catch (e) { return fail(e); }
+  });
   ipcMain.handle('obs:stop', () => { observer.stop(); return ok(); });
 
   /* ---- git ---- */

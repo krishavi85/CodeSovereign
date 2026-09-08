@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('desktop', {
     read: () => invoke('obs:read'),
     crawl: (opts) => invoke('obs:crawl', opts),
     screenshot: () => invoke('obs:screenshot'),
+    visualProbe: (opts) => invoke('obs:visualProbe', opts),
     stop: () => invoke('obs:stop')
   },
 

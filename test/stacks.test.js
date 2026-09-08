@@ -392,6 +392,28 @@ module.exports = async function (t) {
     t.equal('DoD: accessibilityPass PASSES once the frontend is clean', win.Engine.DoD.evaluate().criteria.accessibilityPass, true);
   }
 
+  /* ---------- 13. Visual validation (§12-13): generated frontends are clean; defects gate the DoD ---------- */
+  {
+    const win = loadEngines(['engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.frontends.js', 'engine.graphql.js', 'engine.realtime.js', 'engine.pybackend.js', 'engine.microservices.js', 'engine.scaffold.js', 'engine.visualcheck.js', 'engine.contract.js', 'engine.ledger.js', 'engine.dod.js']);
+    win.document = { createElement: () => ({ getContext: () => ({}) }) };
+    const clr = () => Object.keys(win.Engine.FS._data).forEach((k) => delete win.Engine.FS._data[k]);
+    for (const fw of ['vanilla', 'react', 'vue']) {
+      clr();
+      win.Engine.Scaffold.generate({ name: 'vis', auth: true, frontend: fw === 'vanilla' ? undefined : fw, entities: [{ name: 'note', fields: [{ name: 'body', type: 'text', required: true }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] }] }).forEach((f) => win.Engine.FS.write(f.path, f.content));
+      const r = win.Engine.VisualCheck.analyze();
+      t.equal('visual(' + fw + '): the generated frontend has zero critical/serious visual defects', ((r.byImpact.critical || 0) + (r.byImpact.serious || 0)), 0);
+    }
+    // ingest a live observer probe with a runtime critical, then a clean one
+    clr();
+    win.Engine.Scaffold.generate({ name: 'vis', auth: true, entities: [{ name: 'note', fields: [{ name: 'body', type: 'text', required: true }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] }] }).forEach((f) => win.Engine.FS.write(f.path, f.content));
+    win.Engine.VisualCheck.ingest({ breakpoints: [{ name: 'mobile', viewport: { w: 375, h: 812 }, findings: [{ rule: 'page-horizontal-overflow', impact: 'critical', detail: 'document is 900px wide at a 375px viewport' }, { rule: 'zero-size-control', impact: 'critical', el: 'button#add', detail: 'interactive element rendered 0x0' }], elementCount: 30 }] });
+    const withDefect = win.Engine.VisualCheck.load();
+    t.ok('visual: a runtime page-overflow + a zero-size control are CRITICAL', (withDefect.byImpact.critical || 0) >= 2);
+    t.equal('DoD: visualIntegrityPass FAILS on a critical visual defect', win.Engine.DoD.evaluate().criteria.visualIntegrityPass, false);
+    win.Engine.VisualCheck.ingest({ breakpoints: [{ name: 'mobile', viewport: { w: 375, h: 812 }, findings: [], elementCount: 30 }, { name: 'desktop', viewport: { w: 1280, h: 900 }, findings: [], elementCount: 30 }] });
+    t.equal('DoD: visualIntegrityPass PASSES once the render is clean at every breakpoint', win.Engine.DoD.evaluate().criteria.visualIntegrityPass, true);
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

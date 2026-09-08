@@ -20,7 +20,7 @@ prompt
   → Engine.Sovereign.observe            (runtime crawl of the running app)
   → Engine.Ledger.build                 (claim → evidence → confidence)
   → Engine.Recovery.run                 (snapshot → repair → verify)
-  → Engine.DoD.evaluate + certificate   (11 blocking gates)
+  → Engine.DoD.evaluate + certificate   (12 blocking gates)
   → SOVEREIGN VERIFIED  |  PARTIAL  |  BLOCKED  |  FAILED
 ```
 

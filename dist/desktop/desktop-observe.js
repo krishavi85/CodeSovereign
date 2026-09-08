@@ -104,6 +104,21 @@
         var trace = res;
         trace.serverUrl = srv.url;
         trace.serverStartedByUs = srv.started;
+        // visual validation (§12-13): a multi-breakpoint render pass, feeds Engine.VisualCheck
+        if (opts.visual !== false && D.observer.visualProbe) {
+          return D.observer.visualProbe({}).then(function (vp) {
+            var probe = (vp && vp.ok === false) ? null : (vp && vp.data !== undefined ? vp.data : vp);
+            if (probe) {
+              try {
+                // don't persist the base64 screenshots into the evidence json
+                var slim = Object.assign({}, probe); delete slim.screenshots;
+                if (window.Engine && window.Engine.VisualCheck) window.Engine.VisualCheck.ingest(slim);
+                trace.visual = { breakpoints: (slim.breakpoints || []).map(function (b) { return b.name; }), findings: (slim.breakpoints || []).reduce(function (n, b) { return n + ((b.findings || []).length); }, 0) };
+              } catch (_) {}
+            }
+            return { ok: true, trace: trace };
+          }).catch(function () { return { ok: true, trace: trace }; });
+        }
         return { ok: true, trace: trace };
       });
     }).catch(function (e) { return { ok: false, reason: e.message }; });

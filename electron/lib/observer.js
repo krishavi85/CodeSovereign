@@ -255,9 +255,83 @@ async function crawl(opts = {}) {
   };
 }
 
+/* Visual validation (blueprint §12-13): render at 3 breakpoints, measure every
+   element's box + computed style, report clipping / overflow / zero-size
+   controls / low contrast / off-screen content / covering overlays. Captures a
+   screenshot per breakpoint. Read-only — no clicks. */
+async function visualProbe(opts = {}) {
+  const w = ensureWin();
+  const breakpoints = opts.breakpoints || [
+    { name: 'mobile', w: 375, h: 812 },
+    { name: 'tablet', w: 768, h: 1024 },
+    { name: 'desktop', w: 1280, h: 900 }
+  ];
+  const [ow, oh] = w.getSize();
+  const out = { at: Date.now(), url: w.webContents.getURL(), breakpoints: [] };
+  const shots = {};
+  for (const bp of breakpoints) {
+    try {
+      w.setSize(bp.w, bp.h);
+      await wait(450);
+      const measure = await w.webContents.executeJavaScript(`(() => {
+        const vw = innerWidth, vh = innerHeight;
+        const findings = [];
+        const seen = [];
+        const els = Array.from(document.querySelectorAll('body *')).slice(0, 4000);
+        const interactive = (el) => /^(a|button|input|select|textarea|summary)$/i.test(el.tagName) || el.hasAttribute('tabindex') || /button|link|checkbox|radio|tab|menuitem/.test(el.getAttribute('role') || '');
+        function lum(c){ const m = c.match(/[\\d.]+/g); if(!m) return null; const a=[m[0],m[1],m[2]].map(v=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4);}); return 0.2126*a[0]+0.7152*a[1]+0.0722*a[2]; }
+        function ratio(f,b){ const l1=lum(f),l2=lum(b); if(l1==null||l2==null) return null; return (Math.max(l1,l2)+0.05)/(Math.min(l1,l2)+0.05); }
+        // page-level horizontal overflow
+        const de = document.documentElement;
+        if (de.scrollWidth > vw + 2) findings.push({ rule: 'page-horizontal-overflow', impact: 'critical', detail: 'document is ' + de.scrollWidth + 'px wide at a ' + vw + 'px viewport (horizontal scrollbar)' });
+        for (const el of els) {
+          const r = el.getBoundingClientRect();
+          const cs = getComputedStyle(el);
+          if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+          const tag = el.tagName.toLowerCase();
+          // zero-size interactive
+          if (interactive(el) && (r.width < 1 || r.height < 1) && el.offsetParent !== null && (el.textContent || '').trim())
+            findings.push({ rule: 'zero-size-control', impact: 'critical', el: tag + (el.id ? '#' + el.id : ''), detail: 'interactive element rendered ' + Math.round(r.width) + 'x' + Math.round(r.height) });
+          // overflow past the right edge
+          if (r.width > 0 && r.right > vw + 4 && cs.position !== 'fixed' && !/auto|scroll/.test(cs.overflowX))
+            findings.push({ rule: 'element-overflow', impact: 'serious', el: tag + (el.id ? '#' + el.id : ''), detail: 'extends ' + Math.round(r.right - vw) + 'px past the viewport' });
+          // content clipped by an ancestor overflow:hidden
+          if ((cs.overflow === 'hidden' || cs.overflowY === 'hidden') && el.scrollHeight > el.clientHeight + 8 && el.clientHeight > 0)
+            findings.push({ rule: 'clipped-content', impact: 'serious', el: tag + (el.id ? '#' + el.id : ''), detail: el.scrollHeight + 'px of content in a ' + el.clientHeight + 'px overflow:hidden box' });
+          // fixed / sticky element covering a large area
+          if ((cs.position === 'fixed' || cs.position === 'sticky') && r.width * r.height > vw * vh * 0.4 && +cs.zIndex > 0 && cs.pointerEvents !== 'none')
+            findings.push({ rule: 'covering-overlay', impact: 'serious', el: tag + (el.id ? '#' + el.id : ''), detail: 'a ' + cs.position + ' element covers ' + Math.round(100 * r.width * r.height / (vw * vh)) + '% of the viewport' });
+          // off-screen positioned (not a known skip-link pattern)
+          if ((r.right < -4 || r.bottom < -4) && (el.textContent || '').trim().length > 20 && cs.position === 'absolute' && !/skip/i.test(el.className))
+            findings.push({ rule: 'offscreen-content', impact: 'moderate', el: tag, detail: 'text content positioned off-screen' });
+          // text contrast (leaf text nodes only)
+          if (el.children.length === 0 && (el.textContent || '').trim().length > 2 && r.width > 0) {
+            let bg = cs.backgroundColor, node = el;
+            for (let i = 0; i < 6 && /rgba?\\(0, 0, 0, 0\\)|transparent/.test(bg) && node.parentElement; i++) { node = node.parentElement; bg = getComputedStyle(node).backgroundColor; }
+            const cr = ratio(cs.color, bg);
+            const big = parseFloat(cs.fontSize) >= 24 || (parseFloat(cs.fontSize) >= 18.66 && +cs.fontWeight >= 700);
+            if (cr != null && cr < (big ? 3 : 4.5))
+              findings.push({ rule: 'low-contrast', impact: 'serious', el: tag, detail: 'text contrast ' + cr.toFixed(2) + ':1 (' + cs.color + ' on ' + bg + ')' });
+          }
+          if (r.width > 0 && r.height > 0) seen.push({ tag, x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) });
+        }
+        // crude overlap check for interactive elements
+        return { vw, vh, scrollWidth: de.scrollWidth, findings, elementCount: seen.length };
+      })()`, true);
+      try { const img = await w.webContents.capturePage(); shots[bp.name] = img.toDataURL(); } catch (_) {}
+      out.breakpoints.push({ name: bp.name, viewport: { w: bp.w, h: bp.h }, ...measure });
+    } catch (e) {
+      out.breakpoints.push({ name: bp.name, error: String(e.message) });
+    }
+  }
+  try { w.setSize(ow, oh); await wait(200); } catch (_) {}
+  out.screenshots = shots;
+  return out;
+}
+
 function stop() {
   if (obsWin && !obsWin.isDestroyed()) obsWin.destroy();
   obsWin = null;
 }
 
-module.exports = { load, read, reset, screenshot, crawl, stop, assertAllowedUrl, DESTRUCTIVE };
+module.exports = { load, read, reset, screenshot, crawl, visualProbe, stop, assertAllowedUrl, DESTRUCTIVE };

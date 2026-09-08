@@ -81,6 +81,9 @@
     'privacy-report.md':          'Readable privacy findings + score',
     'a11y-findings.json':         'WCAG 2.1 AA accessibility audit — alt / labels / contrast / keyboard / focus / ARIA (spec §47)',
     'a11y-report.md':             'Readable accessibility findings + score',
+    'visual-observations.json':   'Observer render at mobile/tablet/desktop — box + computed-style measurements + screenshots (spec §12-13)',
+    'visual-findings.json':       'Visual validation — overflow / clipping / covering overlays / zero-size controls / low contrast',
+    'visual-report.md':           'Readable visual-integrity findings + score',
     'blockchain-evidence.json':   'EVM target — solc compile + local-chain deploy + transactions + receipts + static analysis',
     'mobile-evidence.json':       'Native-mobile target — gradle build + emulator install/launch + logcat + screenshot',
     'ml-evidence.json':           'ML-training target — dataset inspection + real training loss curve + checkpoint + eval metric',
@@ -606,6 +609,9 @@
 
     // ---- accessibility audit (spec §47) ----
     safe(function () { window.Engine.A11y && window.Engine.A11y.audit(); });
+
+    // ---- visual validation (spec §12-13; static here, live via the observer) ----
+    safe(function () { window.Engine.VisualCheck && window.Engine.VisualCheck.analyze(); });
 
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {

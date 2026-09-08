@@ -13,7 +13,7 @@ Measures the current codebase against the two blueprints:
 
 The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
-repair → 11-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
+repair → 12-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
 (`node test/run.js` 556, `acceptance` 38, `acceptance:build` 22,
 `acceptance:ultramode` 53) prove it end to end in the real Electron renderer.
@@ -22,7 +22,7 @@ repair → 11-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` 
 
 | Area | Where it landed |
 |---|---|
-| Proof engine (contract · ledger · DoD · certificate) | 11 gates incl. **architecture/layering** (`engine.archrules.js`), **privacy/PII** (`engine.privacy.js`) and **WCAG accessibility** (`engine.a11y.js`); zero-mock + no-fake enforced |
+| Proof engine (contract · ledger · DoD · certificate) | **12 gates** incl. **architecture/layering** (`engine.archrules.js`), **privacy/PII** (`engine.privacy.js`), **WCAG accessibility** (`engine.a11y.js`) and **visual integrity** (`engine.visualcheck.js` — multi-breakpoint render, overflow/clipping/contrast/zero-size); zero-mock + no-fake enforced |
 | Repo-scale generation | Node **and** pure-stdlib Python backends; vanilla / React / Preact / Vue / Svelte / Angular frontends (vendored VDOM); GraphQL executor; RFC 6455 WebSockets; monolith **and** microservices (gateway + per-domain services + compose) |
 | Deployment IaC | 10 targets — docker · compose · **kubernetes** · **helm** · **terraform** · fly · render · railway · vps · static (does not push — needs creds, by design) |
 | Ops | every generated backend: `/healthz` · `/readyz` · `/metrics` (Prometheus) · JSON access logs |
@@ -32,9 +32,9 @@ repair → 11-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` 
 **Genuinely still open** (roughly, by the blueprint's own sections — most are
 adjacent products, not core-loop gaps):
 
-- **Vision / design input** (§11–13): UI-from-screenshot/Figma, visual validation
-  (render → clipping/overflow/contrast), screenshot-fidelity mode — ⬜. The
-  observer window could host these.
+- **Design input** (§11): UI-from-screenshot / Figma import — ⬜ (prompt-to-UI
+  only). *Visual validation + screenshot fidelity (§12–13) are **done*** —
+  `engine.visualcheck.js` + `observer.visualProbe()`.
 - **Prompt intake breadth** (stage 1): attachments / screenshots / audio / repo
   import — 🟨 (text only).
 - **Model-driven intent** (§2–3): the normalizer/classifier are keyword rules +
@@ -50,8 +50,8 @@ adjacent products, not core-loop gaps):
   set from repo + runtime — 🟨 (README + DATA_MODEL + architecture diagrams).
 - **Refactoring / migration / upgrade engines** (§60, §62), **feature builder /
   completion graph** (§63–64), **user-journey testing** (§65) — ⬜.
-- **e2e / install / upgrade test generation** (§19), **accessibility as a full
-  gate** — keyboard/focus/ARIA/contrast (§47) — 🟨.
+- **e2e / install / upgrade test generation** (§19) — 🟨. *(Accessibility as a
+  full gate (§47) is **done** — `engine.a11y.js`.)*
 
 None of these block the core "prompt → verified application" loop; they are
 breadth. The blueprint's own guidance (§ "Recommended Build Priority") is to
@@ -120,8 +120,8 @@ chase the 68 framework / platform features.
 |---|---|---|---|
 | 10 | Dependency intelligence (compare / abandoned / vuln / license / dedupe / safe-upgrade) | 🟨 | `npm audit` surfaced in CI; license notes in `dist/vendor/README.md`; requirements pack flags some. No comparison / abandonment / conflict / safe-upgrade engine. |
 | 11 | UI generation from prompt / screenshot / Figma / wireframe | 🟨 | Prompt-to-UI only (LLM/templates). No vision input, no reconstruction. |
-| 12 | Visual validation (render → inspect clipping/overflow/contrast) | ⬜ | Not built. The observer window could host this. |
-| 13 | Screenshot fidelity mode | ⬜ | Not built. |
+| 12 | Visual validation (render → inspect clipping/overflow/contrast) | ✅ | `dist/engine.visualcheck.js` + `observer.visualProbe()`. The observer renders the running app at **mobile (375) / tablet (768) / desktop (1280)**, measures every element's box + computed style, and reports: page horizontal overflow, elements past the viewport edge, content clipped by `overflow:hidden`, covering fixed/sticky overlays, off-screen text, **zero-size interactive controls**, computed **contrast** below AA — with a screenshot per breakpoint. A static layer (no renderer) catches `overflow:hidden` on html/body, fixed pixel widths ≥ 500px, 100vw×100vh z-indexed overlays, missing viewport meta. `analyze()` → `.sovereign/visual-findings.json` + `visual-report.md`; new DoD criterion `visualIntegrityPass` — a **critical** defect (whole-page overflow, zero-size control, full-screen overlay) blocks release. `test/stacks.test.js` §13. |
+| 13 | Screenshot fidelity mode | ✅ | `Engine.VisualCheck.fidelity(a, b)` — pixel diff of two PNG data URLs (offscreen canvas) → `{ changedPixels, ratio }`. `observer.visualProbe()` captures the reference set; a re-run compares. Used for "did the repair change the layout" and drift checks. |
 | 14 | Backend builder (routes / services / validation / error handling / async infra) | ✅ | `dist/engine.backend.js` — real zero-dep HTTP server: routing table, JSON body parsing, per-entity CRUD service layer, ownership scoping, structured errors, static serving, in-memory rate limiter (120/min/IP → 429). `dist/engine.jobs.js` — durable job queue (`enqueue`/`claim`/`complete`/`fail`, 5 attempts, exponential backoff, dead-letter), a polling worker (`src/worker.js`, dispatches `src/jobs/<type>.js`), and an SSE hub (`src/events.js`, `/api/events`). `Engine.Scaffold` emits all of it + a passing `test/worker.test.js` when `spec.jobs`. **Not yet**: websockets (SSE only), uploads/payments/webhooks. |
 | 15 | Database architect (schema / migrations / constraints / indexes / query analysis / N+1) | ✅ | `dist/engine.schema.js` — entity model → real SQL migrations (CREATE TABLE, FK + `ON DELETE`, `CREATE [UNIQUE] INDEX`, up+down) + a schema-enforcing data layer (types, required, max, defaults, auto-inc, FK existence, unique indexes, cascade delete) + N+1 / missing-FK-index analysis. JSON-backed for portability; the SQL is the real artefact for Postgres. |
 | 16 | Auth & authz engine (password + RBAC + sessions + tenant scoping) | 🟨 | `dist/engine.auth.js` — generates a real auth module: scrypt hashing (`node:crypto`, timing-safe), opaque session tokens, `requireAuth` / `requireRole`, per-request user, first-user-is-admin, a login/register UI. **Not yet**: OAuth / passkeys / MFA / authorization attack tests. |
