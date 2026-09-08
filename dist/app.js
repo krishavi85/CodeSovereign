@@ -3402,10 +3402,15 @@ function bindUniversal() {
     renderAll();
   });
   const buildBtn = a('universalBuild');
-  if (buildBtn) buildBtn.onclick = () => {
+  if (buildBtn) buildBtn.onclick = async () => {
     const pcs = Universal.PromptComposer;
     if (!pcs.isValid()) { toast('Describe the application first', '#f59e0b'); return; }
-    const state = Universal.buildState(pcs.fields);
+    const aiOn = !!(window.Engine && window.Engine.AI && window.Engine.AI.ready && window.Engine.AI.ready());
+    if (aiOn && Universal.buildStateAsync) { buildBtn.disabled = true; buildBtn.textContent = 'Understanding with AI…'; }
+    const state = (aiOn && Universal.buildStateAsync)
+      ? await Universal.buildStateAsync(pcs.fields).catch(() => Universal.buildState(pcs.fields))
+      : Universal.buildState(pcs.fields);
+    buildBtn.disabled = false;
     Universal.writeProjectDocs(state);
     S.univ = S.univ || {};
     S.univ.state = state;

@@ -71,7 +71,8 @@
     'release-certificate.md':    'Cross-gate SOVEREIGN VERIFIED certificate',
     'orchestrator-run.json':     'Last GodMode pipeline run (tasks, generators, DoD before/after)',
     'cost-analysis.json':        'Per-dependency cost tier + zero-cost alternatives (spec §30)',
-    'cost-sovereignty.md':       'Readable mandatory vs optional cost breakdown'
+    'cost-sovereignty.md':       'Readable mandatory vs optional cost breakdown',
+    'requirements-ai.json':      'Model-found archetypes + implied requirements (when AI is connected)'
   };
 
   function rel(p) { return ROOT + '/' + String(p).replace(/^\/+/, ''); }
@@ -795,7 +796,29 @@
     write('decision-state.json', ds);
     appendChanges('requirements — archetypes [' + archetypes.map(function (a) { return a.archetype; }).join(',') + '], ' + missing.length + ' mandatory items not found, ' + contradictions.length + ' contradictions');
 
+    // Model-assisted enrichment (non-blocking): archetypes + implied requirements
+    // the prompt didn't state. Written to a supplementary file and folded back in.
+    if (R.aiAssist && window.Engine.AI && window.Engine.AI.ready && window.Engine.AI.ready()) {
+      R.aiAssist(reqCtxOf(ctx)).then(function (ai) {
+        if (!ai || (!(ai.added || []).length && !(ai.archetypes || []).length)) return;
+        var merged = Object.assign({}, model, {
+          aiArchetypes: ai.archetypes || [],
+          aiImpliedRequirements: ai.added || [],
+          aiRisks: ai.risks || [],
+          aiAt: Date.now()
+        });
+        write('requirements.json', merged);
+        write('requirements-ai.json', { generatedAt: Date.now(), source: 'ai', archetypes: ai.archetypes || [], impliedRequirements: ai.added || [], risks: ai.risks || [] });
+        appendChanges('requirements (AI) — +' + (ai.archetypes || []).length + ' archetype(s), +' + (ai.added || []).length + ' implied requirement(s)');
+      }).catch(function () {});
+    }
+
     return { ok: true, model: model };
+  }
+  function reqCtxOf(ctx) {
+    var c = Object.assign({}, ctx || {});
+    if (!c.prompt) { try { c.prompt = (FS.read('/README.md') || FS.read('/SPEC.md') || '').slice(0, 1500); } catch (_) {} }
+    return c;
   }
 
   var HISTORY_KEEP = 15;

@@ -243,9 +243,36 @@
       .slice(0, 6).map(function (q) { return { key: q[0], question: q[2] }; });
   }
 
+  // Model-assisted enrichment: given the objective, name the domain archetype(s)
+  // and the requirements a competent engineer would add that the prompt implied
+  // but did not state. Rule-based detection stays the source of truth; this only
+  // adds. Resolves to { archetypes:[id...], added:[...], notes } — or nulls.
+  function aiAssist(ctx) {
+    ctx = ctx || {};
+    var AI = Engine.AI;
+    if (!AI || !AI.ready || !AI.ready() || !AI.json) return Promise.resolve({ archetypes: [], added: [], skipped: 'ai-not-connected' });
+    var known = Object.keys(PACKS).join(', ');
+    var objective = ctx.prompt || ctx.objective || '';
+    if (!objective) { try { objective = (FS.read('/README.md') || FS.read('/SPEC.md') || '').slice(0, 1500); } catch (_) {} }
+    var ask = 'Software objective:\n' + objective + '\n\n' +
+      'Return ONLY JSON: {"archetypes":[<subset of: ' + known + '>],' +
+      '"impliedRequirements":["specific, testable requirement the objective implies but does not state", ...],' +
+      '"topRisks":["risk to design against", ...]}. Be concrete, 6-12 impliedRequirements.';
+    return AI.json(ask, { maxTokens: 1000 }).then(function (j) {
+      if (!j) return { archetypes: [], added: [] };
+      var arch = (j.archetypes || []).filter(function (a) { return PACKS[a]; });
+      return {
+        archetypes: arch,
+        added: (j.impliedRequirements || []).slice(0, 14).map(function (s) { return String(s).slice(0, 200); }),
+        risks: (j.topRisks || []).slice(0, 10),
+        source: 'ai'
+      };
+    }).catch(function () { return { archetypes: [], added: [] }; });
+  }
+
   Engine.Requirements = {
-    PACKS: PACKS, WEIGHTS: WEIGHTS,
-    detectArchetypes: detectArchetypes, activate: activate,
+    PACKS: PACKS, WEIGHTS: WEIGHTS, __aiAssist: true,
+    detectArchetypes: detectArchetypes, activate: activate, aiAssist: aiAssist,
     contradictions: contradictions, classify: classify,
     scoreStack: scoreStack, questions: questions
   };

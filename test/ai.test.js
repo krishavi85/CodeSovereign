@@ -68,6 +68,14 @@ module.exports = async function (t) {
   const w0 = En.AI.wiring();
   t.ok('wiring audit lists >= 6 consumers', w0.consumers.length >= 6);
   t.ok('wiring audit reports not-connected', w0.connected === false);
+  // simulate the analysis engines being present with AI hooks -> all consumers wired
+  win.Engine.Agent = { __llmPatched: true };
+  win.Engine.Orchestrator = {}; win.Engine.Contract = {}; win.Engine.Recovery = { aiSuggest: () => {} };
+  win.Engine.Requirements = { aiAssist: () => {} };
+  win.Engine.Universal = { buildStateAsync: () => {} };
+  const wAll = En.AI.wiring();
+  t.ok('every AI consumer is wired once the engines expose their hooks',
+    wAll.wiredCount === wAll.total, wAll.wiredCount + '/' + wAll.total);
   // wire OmniRoute (keyless) and re-check
   En.AIRouter.apply({ runtime: { id: 'omniroute', openaiBase: 'http://localhost:20128', free: true }, model: 'auto' });
   t.ok('applying OmniRoute connects the facade (keyless)', En.AI.ready() === true);

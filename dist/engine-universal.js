@@ -740,10 +740,49 @@ const Universal = {
   ProjectMemory,
   CompletionScorer,
 
+  __aiAssist: true,
+
+  // Model-assisted normalize: same shape as Normalizer.normalize, but the model
+  // reads the objective. Falls back to the rule-based normalizer on any failure.
+  aiNormalize(input){
+    const AI = window.Engine && window.Engine.AI;
+    const composed = PromptComposer.collect(input);
+    const fallback = () => Normalizer.normalize(composed);
+    if (!AI || !AI.ready || !AI.ready() || !AI.json) return Promise.resolve(fallback());
+    const ask = 'Analyse this software objective and return ONLY JSON:\n' +
+      '{"projectGoal":"one sentence","applicationCategory":"static_website|web_application|saas_platform|ecommerce|marketplace|social_platform|mobile_application|desktop_application|browser_extension|api_service|ai_application|data_platform|game|automation_system|developer_tool|iot_application|cross_platform_application",' +
+      '"targetPlatforms":["web"|"android"|"ios"|"windows"|"macos"|"linux"|"cli"],' +
+      '"primaryActors":["role", ...],"coreCapabilities":["verb-noun", ...],' +
+      '"unknownRequirements":["decision the user must still make that changes cost/security/architecture", ...]}\n\n' +
+      'Objective: ' + (composed.prompt || '');
+    return AI.json(ask, { maxTokens: 900 }).then((j) => {
+      if (!j || !j.applicationCategory) return fallback();
+      const base = fallback();
+      return Object.assign(base, {
+        projectGoal: String(j.projectGoal || base.projectGoal).slice(0, 240),
+        applicationCategory: j.applicationCategory || base.applicationCategory,
+        targetPlatforms: (Array.isArray(j.targetPlatforms) && j.targetPlatforms.length ? j.targetPlatforms : base.targetPlatforms).slice(0, 8),
+        primaryActors: (Array.isArray(j.primaryActors) && j.primaryActors.length ? j.primaryActors : base.primaryActors).slice(0, 8),
+        coreCapabilities: Array.from(new Set((j.coreCapabilities || []).concat(base.coreCapabilities))).slice(0, 24),
+        unknownRequirements: Array.from(new Set((j.unknownRequirements || []).concat(base.unknownRequirements))).slice(0, 12),
+        selectedPlatforms: input.selectedPlatforms && input.selectedPlatforms.length ? input.selectedPlatforms : (j.targetPlatforms || base.targetPlatforms),
+        _source: 'ai'
+      });
+    }).catch(fallback);
+  },
+
+  buildStateAsync(input){
+    return this.aiNormalize(input).then((normalized) => this._assemble(PromptComposer.collect(input), normalized));
+  },
+
   // High-level flow: takes a composer input and produces a complete BuildState
   buildState(input){
     const composed = PromptComposer.collect(input);
     const normalized = Normalizer.normalize(composed);
+    return this._assemble(composed, normalized);
+  },
+
+  _assemble(composed, normalized){
     const classification = Classifier.classify(normalized);
     const requirements = RequirementsEngine.expand(normalized, classification);
     const feasibility = FeasibilityEngine.analyze(requirements, classification, composed);

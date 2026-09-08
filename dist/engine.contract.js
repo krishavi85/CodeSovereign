@@ -117,6 +117,10 @@
         c.status === 'present-ish' ? [] : [],
         { source: 'domain-pack', note: c.status }));
     });
+    // model-found implied requirements (Engine.Requirements.aiAssist)
+    ((rq && rq.aiImpliedRequirements) || []).slice(0, 14).forEach(function (s) {
+      out.push(req(String(s).slice(0, 200), 'functional', [{ kind: 'manual', check: String(s).slice(0, 200) }], { source: 'ai' }));
+    });
 
     return out;
   }
