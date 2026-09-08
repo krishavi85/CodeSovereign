@@ -86,6 +86,8 @@
     // high-severity security signals — the dedicated product scanner is
     // authoritative; the mock-signal heuristic is a fallback.
     var known = t('known-issues.md');
+    var archReport = j('architecture-findings.json');
+    var archHigh = archReport ? ((archReport.bySeverity && archReport.bySeverity.high) || 0) : 0;
     var secReport = j('security-findings.json');
     var highSec;
     if (secReport) {
@@ -117,6 +119,7 @@
       runtimeActionSucceeds: gate(realCount > 0),
       noFakeImplementation: gate(fakeControls.length === 0 && Object.keys(controls).length > 0),
       securityGatesPass: gate(highSec === 0),
+      architectureSound: gate(archHigh === 0),
       acceptanceCriteriaPass: gate(ledgerFailing === 0 && !!ledger)
     };
     var PASS = Object.keys(criteria).every(function (k) { return criteria[k] === true; });
@@ -131,6 +134,8 @@
         fakeControls: fakeControls,
         brokenProductEdges: realBrokenEdges.slice(0, 12).map(function (e) { return (e.from || '?') + ' -> ' + (e.to || '?'); }),
         highSeveritySecurity: highSec,
+        architectureViolations: archReport ? (archReport.findings || []).filter(function (f) { return f.severity === 'high'; }).slice(0, 8).map(function (f) { return f.rule + ' @ ' + f.file + (f.line ? ':' + f.line : ''); }) : [],
+        architectureScore: archReport ? archReport.score : null,
         ledgerFailing: ledgerFailing,
         openManualClaims: openManual,
         assertions: (ledger && ledger.totals && ledger.totals.assertions) || 0
@@ -169,6 +174,7 @@
       line('Runtime action succeeds', c.runtimeActionSucceeds) + '\n' +
       line('No fake implementation', c.noFakeImplementation) + '\n' +
       line('Security gates', c.securityGatesPass) + '\n' +
+      line('Architecture sound', c.architectureSound) + '\n' +
       line('Acceptance criteria', c.acceptanceCriteriaPass) + '\n\n' +
       (ledger ? '## Claims\n\n| Requirement | Confidence | Assertions |\n|---|---|---|\n' +
         (ledger.claims || []).map(function (cl) {

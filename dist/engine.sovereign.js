@@ -67,7 +67,7 @@
     // P0 pipeline (spec §55/§56/§68)
     'product-contract.json':     'Requirements with machine-checkable acceptance criteria',
     'evidence-ledger.json':      'Every claim -> evidence -> confidence, with assertion counts',
-    'definition-of-done.json':   'The DoD gate: 8 criteria computed from the evidence',
+    'definition-of-done.json':   'The DoD gate: 9 criteria computed from the evidence',
     'release-certificate.md':    'Cross-gate SOVEREIGN VERIFIED certificate',
     'orchestrator-run.json':     'Last Ultra pipeline run (tasks, generators, DoD before/after)',
     'cost-analysis.json':        'Per-dependency cost tier + zero-cost alternatives (spec §30)',
@@ -75,6 +75,8 @@
     'requirements-ai.json':      'Model-found archetypes + implied requirements (when AI is connected)',
     'security-findings.json':    'Product security scan — injection / XSS / secrets / auth (spec §17)',
     'security-report.md':        'Readable security findings + score',
+    'architecture-findings.json': 'Layering / boundary scan — wrong-layer imports, inverted deps, cross-service reach (spec §5)',
+    'architecture-rules.md':      'Readable architecture violations + score',
     'deployment.json':           'Last generated deployment target + IaC + preflight (spec §41)'
   };
 
@@ -587,6 +589,9 @@
 
     // ---- product security scan (spec §17) ----
     safe(function () { window.Engine.Security && window.Engine.Security.scan(); });
+
+    // ---- architecture / layering scan (spec §5) ----
+    safe(function () { window.Engine.ArchRules && window.Engine.ArchRules.scan(); });
 
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {

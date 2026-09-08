@@ -138,7 +138,7 @@ chase the 68 framework / platform features.
 | 53 | Existing-app reverse engineering (what is it / how complete / shippable?) | ✅ | This is essentially what `Engine.Sovereign.analyze()` + observe + evidence *is*, for an imported repo. |
 | 54 | Completion auditor (evidence-backed per-dimension %) | 🟨 | The evidence ledger's per-category pass/fail is the substrate now; a per-dimension % roll-up still reads `engine-universal.js CompletionScorer` (plan-based). |
 | 55 | Evidence ledger (CLAIM → EVIDENCE → CONFIDENCE, per claim) | ✅ | `dist/engine.ledger.js` → `.sovereign/evidence-ledger.json` — every requirement's claim with its evidence rows, assertion count, failure count and confidence. |
-| 56 | Definition of Done engine | ✅ | `dist/engine.dod.js` → `.sovereign/definition-of-done.json` (8 criteria that block) + `release-certificate.md`. |
+| 56 | Definition of Done engine | ✅ | `dist/engine.dod.js` → `.sovereign/definition-of-done.json` (9 criteria that block) + `release-certificate.md`. |
 | 57 | Sovereign memory (arch decisions / user decisions / rejected approaches / conventions / design language / security rules) | 🟨 | `.sovereign/decision-state.json` + `project.json` + `changes.md` + `assumptions.md`. No ADR ledger, no "rejected approaches", no conventions capture. |
 | 58 | Decision ledger (ADR-style) | ⬜ | `decisions.md` is referenced by the build-flow doc; not produced. |
 
@@ -213,7 +213,7 @@ already exists; none requires new frameworks.
    criteria are coverage gaps, not failures.
 
 3. ✅ **Definition-of-Done gate** — `dist/engine.dod.js` → `.sovereign/definition-of-done.json`
-   (8 criteria) + `release-certificate.md` (SOVEREIGN VERIFIED). Judges "no fake
+   (9 criteria) + `release-certificate.md` (SOVEREIGN VERIFIED). Judges "no fake
    implementation" from what runtime observation actually *exercised*, not from
    static guesses. Works on any open project.
 

@@ -230,6 +230,32 @@ module.exports = async function (t) {
     } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
   }
 
+  /* ---------- 7. Architecture rules: generated repos are layer-clean; violations are caught + gate the DoD ---------- */
+  {
+    const win = loadEngines(['engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.frontends.js', 'engine.graphql.js', 'engine.realtime.js', 'engine.pybackend.js', 'engine.microservices.js', 'engine.scaffold.js', 'engine.archrules.js', 'engine.contract.js', 'engine.ledger.js', 'engine.dod.js']);
+    const spec = { name: 'a', auth: true, frontend: 'react', microservices: true, entities: [
+      { name: 'product', fields: [{ name: 'title', type: 'text', required: true }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] },
+      { name: 'review', fields: [{ name: 'body', type: 'text', required: true }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] }
+    ] };
+    win.Engine.Scaffold.generate(spec).forEach((f) => win.Engine.FS.write(f.path, f.content));
+    const clean = win.Engine.ArchRules.scan();
+    t.equal('archrules: a generated react + microservices repo has zero layering violations', clean.findings.length, 0);
+    t.ok('archrules: it detected the real layers', clean.layers.presentation > 0 && clean.layers.data > 0 && clean.layers.service > 0 && clean.layers.gateway > 0);
+
+    // inject a genuine boundary break: the browser layer importing server code + reading server env
+    win.Engine.FS.write('/public/leak.js', "import db from '../src/db';\nconst url = process.env.DATABASE_URL;\n");
+    const bad = win.Engine.ArchRules.scan();
+    t.ok('archrules: frontend importing the data layer is a HIGH finding', (bad.bySeverity.high || 0) >= 1 && bad.findings.some((f) => f.rule === 'frontend-imports-server-code'));
+    t.ok('archrules: frontend reading a server env var is flagged', bad.findings.some((f) => f.rule === 'frontend-reads-server-env'));
+
+    // the DoD gate must now fail on architecture
+    const dod = win.Engine.DoD.evaluate();
+    t.equal('DoD: architectureSound FAILS while the boundary break exists', dod.criteria.architectureSound, false);
+    win.Engine.FS.remove('/public/leak.js'); delete win.Engine.FS._data['/public/leak.js'];
+    win.Engine.ArchRules.scan();
+    t.equal('DoD: architectureSound PASSES once the layer-clean repo is restored', win.Engine.DoD.evaluate().criteria.architectureSound, true);
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');
