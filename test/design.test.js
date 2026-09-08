@@ -78,14 +78,18 @@ module.exports = async function (t) {
     t.ok('design(html): css tokens extracted', spec.tokens.colors.includes('#1d4ed8') && spec.tokens.fontFamilies.some((f) => /Georgia/.test(f)) && spec.tokens.radii.includes(7));
   }
 
-  /* ---------- screenshot — honestly staged ---------- */
+  /* ---------- screenshot — honestly staged (offline heuristic + vision path) ---------- */
   {
     const win = makeWin();
     const spec = win.Engine.Design.ingest({ kind: 'screenshot', dataUrl: 'data:image/png;base64,AAAA', name: 'shot' });
-    t.equal('design(screenshot): status BLOCKED without a vision model', spec.status, 'BLOCKED');
-    t.equal('design(screenshot): machine-readable reason', spec.reason, 'VISION_MODEL_REQUIRED');
+    t.equal('design(screenshot): status PARTIAL without a vision model (offline heuristic applied)', spec.status, 'PARTIAL');
+    t.equal('design(screenshot): machine-readable reason still names the missing capability', spec.reason, 'VISION_MODEL_REQUIRED');
     t.ok('design(screenshot): the image is stored as the visual-fidelity reference', win.Engine.Sovereign.read('design-reference.txt') && spec.reference.stored === true);
-    t.ok('design(screenshot): the note explains it is SUPPORTED, not unsupported', /SUPPORTED WITH VISION MODEL REQUIRED/.test(spec.notes.join(' ')));
+    t.ok('design(screenshot): the note says SUPPORTED, not unsupported', /SUPPORTED/.test(spec.notes.join(' ')) && !/unsupported/i.test(spec.notes.join(' ')));
+    // the async pixel pass runs but there is no canvas in the test VM -> records that honestly
+    await win.Engine.Design.analyzeScreenshot('data:image/png;base64,AAAA').then((s2) => {
+      t.ok('design(screenshot): the offline pixel pass records its result (no canvas here)', s2 && s2.pixelAnalyzed === false && /pixel analysis unavailable/.test(s2.notes.join(' ')));
+    });
   }
 
   /* ---------- bad input ---------- */

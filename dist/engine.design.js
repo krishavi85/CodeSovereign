@@ -133,22 +133,111 @@
   }
 
   /* ---------------- screenshot ---------------- */
+  // offline pixel analysis via an offscreen canvas (same primitive as
+  // Engine.VisualCheck.fidelity) — no model, no library.
+  function pixelAnalyze(dataUrl) {
+    return new Promise(function (resolve) {
+      try {
+        if (typeof document === 'undefined' || !document.createElement) { resolve(null); return; }
+        var img = new Image();
+        img.onerror = function () { resolve(null); };
+        img.onload = function () {
+          try {
+            var W = Math.min(img.width, 320), H = Math.min(img.height, 640);
+            var scale = Math.min(W / img.width, H / img.height) || 1;
+            var w = Math.max(1, Math.round(img.width * scale)), h = Math.max(1, Math.round(img.height * scale));
+            var c = document.createElement('canvas'); c.width = w; c.height = h;
+            var ctx = c.getContext('2d'); ctx.drawImage(img, 0, 0, w, h);
+            var d = ctx.getImageData(0, 0, w, h).data;
+            // colour histogram — quantise to a 5-bit-per-channel bucket
+            var hist = {};
+            for (var i = 0; i < d.length; i += 4) {
+              if (d[i + 3] < 128) continue;
+              var key = (d[i] >> 3) + ',' + (d[i + 1] >> 3) + ',' + (d[i + 2] >> 3);
+              hist[key] = (hist[key] || 0) + 1;
+            }
+            var sorted = Object.keys(hist).sort(function (a, b) { return hist[b] - hist[a]; });
+            var toHex = function (k) {
+              var p = k.split(',').map(function (n) { return Math.min(255, (+n << 3) + 4); });
+              return '#' + p.map(function (n) { return ('0' + n.toString(16)).slice(-2); }).join('');
+            };
+            var colors = sorted.slice(0, 6).map(toHex);
+            var bg = toHex(sorted[0] || '31,31,31');
+            // horizontal bands — rows whose mean colour differs sharply from the
+            // previous row mark a section boundary
+            var rowMean = [];
+            for (var y = 0; y < h; y++) {
+              var r = 0, g = 0, bl = 0, n = 0;
+              for (var x = 0; x < w; x++) { var o = (y * w + x) * 4; r += d[o]; g += d[o + 1]; bl += d[o + 2]; n++; }
+              rowMean.push([r / n, g / n, bl / n]);
+            }
+            var bands = [], start = 0;
+            for (var yy = 1; yy < h; yy++) {
+              var dd = Math.abs(rowMean[yy][0] - rowMean[yy - 1][0]) + Math.abs(rowMean[yy][1] - rowMean[yy - 1][1]) + Math.abs(rowMean[yy][2] - rowMean[yy - 1][2]);
+              if (dd > 60 && yy - start > h * 0.05) {
+                bands.push({ topPct: Math.round(start / h * 100), bottomPct: Math.round(yy / h * 100), kind: start === 0 ? 'header' : 'section' });
+                start = yy;
+              }
+            }
+            bands.push({ topPct: Math.round(start / h * 100), bottomPct: 100, kind: bands.length ? 'footer-or-section' : 'single-region' });
+            resolve({ width: img.width, height: img.height, colors: colors, background: bg, bands: bands.slice(0, 10) });
+          } catch (e) { resolve(null); }
+        };
+        img.src = dataUrl;
+      } catch (e) { resolve(null); }
+    });
+  }
+
   function fromScreenshot(dataUrl, name) {
     var spec = emptySpec('screenshot', name);
     spec.reference = { stored: true, bytes: dataUrl ? dataUrl.length : 0 };
-    // wire it as the fidelity target for Engine.VisualCheck
-    try {
-      if (S() && dataUrl) S().write('design-reference.txt', dataUrl);
-    } catch (_) {}
+    try { if (S() && dataUrl) S().write('design-reference.txt', dataUrl); } catch (_) {}
     var vision = null;
-    try { vision = Engine.AI && Engine.AI.vision; } catch (_) {}
+    try { vision = Engine.AI && (Engine.AI.vision || (Engine.AI.status && Engine.AI.status().vision)); } catch (_) {}
     spec.needsVision = !vision;
-    spec.notes.push(vision
-      ? 'a vision model is connected — run Engine.Design.describe() to infer sections/components'
-      : 'SUPPORTED WITH VISION MODEL REQUIRED — layout inference needs a multimodal model; the screenshot is stored as the visual-fidelity reference so the built UI is pixel-diffed against it (Engine.VisualCheck.fidelity)');
-    spec.status = vision ? 'READY' : 'BLOCKED';
-    spec.reason = vision ? null : 'VISION_MODEL_REQUIRED';
+    spec.notes.push(
+      'The screenshot is stored as the visual-fidelity reference — the built UI is pixel-diffed against it (Engine.VisualCheck.fidelity).');
+    // offline heuristic: palette + coarse layout bands from the raw pixels
+    spec._pixelPending = !!dataUrl;
+    if (vision) {
+      spec.notes.push('A vision model is connected — call Engine.Design.describe() for full section/component inference.');
+      spec.status = 'READY';
+      spec.reason = null;
+    } else {
+      spec.notes.push('SUPPORTED — full layout inference needs a multimodal model (VISION_MODEL_REQUIRED); an offline palette + banding heuristic is applied.');
+      spec.status = 'PARTIAL';
+      spec.reason = 'VISION_MODEL_REQUIRED';
+    }
     return spec;
+  }
+
+  // async second pass: run the pixel analysis + fold it into the stored spec
+  function analyzeScreenshot(dataUrl) {
+    return pixelAnalyze(dataUrl || (S() && S().read('design-reference.txt'))).then(function (px) {
+      var spec = load();
+      if (!spec || spec.source !== 'screenshot') return spec;
+      if (px) {
+        spec.viewport = { width: px.width, height: px.height };
+        (px.colors || []).forEach(function (c) { dedupePush(spec.tokens.colors, c); });
+        spec.tokens.colors = spec.tokens.colors.slice(0, 8);
+        spec.background = px.background;
+        spec.sections = (px.bands || []).map(function (b) { return { name: b.kind, box: null, topPct: b.topPct, bottomPct: b.bottomPct }; });
+        spec.pixelAnalyzed = true;
+        spec.notes.push('Offline analysis: ' + (px.colors || []).length + ' dominant colours, ' + (px.bands || []).length + ' layout band(s).');
+      } else {
+        spec.notes.push('Offline pixel analysis unavailable in this environment (no canvas) — palette/bands not extracted.');
+        spec.pixelAnalyzed = false;
+      }
+      delete spec._pixelPending;
+      if (S()) {
+        S().write('design-spec.json', spec);
+        if (spec.tokens.colors.length) S().write('design-language.json', {
+          palette: spec.tokens.colors, type: [], scale: [], radii: [], spacing: [],
+          components: [], source: 'screenshot-heuristic'
+        });
+      }
+      return spec;
+    });
   }
 
   /* ---------------- public ---------------- */
@@ -165,6 +254,9 @@
       spec.status = 'READY';
     } else if (input.kind === 'screenshot') {
       spec = fromScreenshot(input.dataUrl || input.data, input.name);
+      if (S()) S().write('design-spec.json', spec);
+      // kick the offline pixel pass (async — folds palette + bands into the spec)
+      try { analyzeScreenshot(input.dataUrl || input.data); } catch (_) {}
     } else {
       spec = emptySpec(input.kind || 'unknown', input.name);
       spec.status = 'FAILED'; spec.reason = 'UNKNOWN_INPUT_KIND';
@@ -244,6 +336,6 @@
     return report;
   }
 
-  Engine.Design = { ingest: ingest, applyTokens: applyTokens, analyze: analyze, load: load, _fromFigma: fromFigma, _fromHtml: fromHtml };
+  Engine.Design = { ingest: ingest, applyTokens: applyTokens, analyze: analyze, load: load, analyzeScreenshot: analyzeScreenshot, _fromFigma: fromFigma, _fromHtml: fromHtml, _pixelAnalyze: pixelAnalyze };
   console.info('[Design] design / vision input ready — Engine.Design');
 })();

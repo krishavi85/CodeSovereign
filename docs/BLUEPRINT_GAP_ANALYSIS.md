@@ -15,7 +15,7 @@ The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
 repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 768, `acceptance` 38, `acceptance:build` 26,
+(`node test/run.js` 769, `acceptance` 38, `acceptance:build` 26,
 `acceptance:ultramode` 57) prove it end to end in the real Electron renderer.
 
 The last several sessions closed the breadth items from the blueprint's own
@@ -42,20 +42,23 @@ cross-gate certificate. Each ships as one `dist/engine.*.js`, wired into
 **Genuinely still open** (none block the core loop — they need a resource the
 factory can't provide offline, or they are adjacent products):
 
-- **Screenshot → UI layout** (§11): needs a multimodal model. The image is
-  ingested and wired as the visual-fidelity reference; layout inference returns
-  `BLOCKED / VISION_MODEL_REQUIRED` until one is connected. *(Figma-export + HTML
-  ingestion → design spec + token CSS is **done** — `engine.design.js`.)*
+- **Screenshot → UI layout** (§11): **full** component inference needs a
+  multimodal model — without one, `engine.design.js` still runs an offline pass
+  (canvas colour histogram → palette, row-luminance banding → coarse sections)
+  and wires the image as the visual-fidelity reference; status `PARTIAL`,
+  reason `VISION_MODEL_REQUIRED`. *(Figma-export + HTML ingestion → design spec +
+  token CSS is **done**.)*
 - **Prompt intake — non-text** (stage 1): repo import / audio / attachments — 🟨.
   *(Model-driven intent for **text** (§2–3) is **done** — `engine.intent.js`.)*
-- **Hosted APM / release infra** (§43-46, §37-39): an OTel collector, a Sentry
-  DSN, changelog + signed releases, a full GitHub delivery workflow — all
-  config-only steps that need the user's accounts / credentials. The generated
-  code already emits the traces, metrics, crash records and CI these plug into.
-- **First-class UI surface breadth** (§1, §27, §33-36): the factory generates
+- **Hosted-service wiring** (§38-39, §43-46 integration): an OTel collector, a
+  Sentry DSN, `npm publish` / a signed GitHub release, a GitHub delivery
+  workflow — config-only steps that need the user's accounts / credentials. The
+  generated code already emits the traces, metrics, crash records, changelog,
+  checksums and 5 CI providers these plug into.
+- **First-class UI surface breadth** (§1, §27, §34-36): the factory generates
   full-stack web + native Android/iOS + EVM + ML-training targets; native
-  desktop apps, browser extensions, MSI / npm-publish / wheel / VST3 packaging,
-  and an environment bootstrapper are not built.
+  desktop apps, browser extensions, and MSI / wheel / VST3 packaging are not
+  built.
 
 The blueprint's own guidance (§ "Recommended Build Priority") is to
 **deepen the loop around the proof engine, not chase the 68 framework features** —
@@ -102,7 +105,7 @@ chase the 68 framework / platform features.
 
 | § | Capability | State | Notes |
 |---|---|---|---|
-| 1 | Universal project creation (every surface) | 🟨 | Generation = one LLM round-trip → flat HTML/CSS/JS SPA (`engine.llm.js`) or ~15 single-page templates (`engine.js`). No repo-scale / backend / mobile / desktop output. |
+| 1 | Universal project creation (every surface) | ✅ (web + mobile + contract + ML) / ⬜ (desktop / extension) | `Engine.Scaffold` generates a complete full-stack **web** repo from the contract; the runtime-adapter path (§70b) generates + verifies **native Android**, **native iOS** (staged), **EVM contracts** and **ML training** projects. The single-file `engine.llm.js` / `engine.js` template path still exists for a quick flat SPA. Native desktop (Electron/Tauri) and browser-extension generators are not built. |
 | 2 | Intent engine | ✅ (text) | `dist/engine.intent.js` `Engine.Intent.resolve()` — **model-first**: when a provider is connected the model reads the request and returns a structured understanding (typo-corrected text, project goal, application category, target platforms, actors, capabilities, an **entity-model hint**, decisions still owed, design language). The rule-based `Normalizer` + `Classifier` always runs as the backbone — the model can only *refine* the fuzzy fields, never remove a safety or stack decision. `Engine.Contract.deriveFromPrompt` consumes it (`contract.intent.source` = `model+rules` / `rules`; the model's data model, deduped + typed, feeds the entities). Deterministic + offline with no key. `test/stacks.test.js` §15. Still text-only — no attachment/screenshot parsing. |
 | 3 | Requirement completeness (requested→implied→missing→verified) | 🟨 | `engine.requirements.js` has 13 domain packs, archetypes, contradictions, weighted scoring, progressive questions. `engine-universal.js RequirementsEngine` expands a prompt to a functional/non-functional list. Neither is tied to a per-requirement **verification** record. |
 | 4 | Autonomous architecture engine | 🟧 | `engine-universal.js` produces an architecture *object* (client/gateway/backend/data components) + `architecture.md`. Rule-based; not used to drive generation. |
@@ -122,7 +125,7 @@ chase the 68 framework / platform features.
 | § | Capability | State | Notes |
 |---|---|---|---|
 | 10 | Dependency intelligence (compare / abandoned / vuln / license / dedupe / safe-upgrade) | ✅ | `dist/engine.depintel.js` — over `package.json` + `package-lock.json` (+ `requirements.txt`): **abandonment** (a bundled table of ~25 superseded/sabotaged packages → the modern replacement: `request`→fetch, `moment`→dayjs, `node-sass`→sass, `colors`/`faker`→safe forks…), **duplicate/conflicting major versions** across the resolved tree (`npm dedupe`), **known-vulnerable pins** (a bundled advisory table for the common ones; `npm audit` in CI is authoritative), **safe-upgrade** (semver-aware: in-range vs a major bump). `analyze()` → `.sovereign/dependency-intel.json` + `dependency-report.md`; runs in `Sovereign.analyze()`. `test/stacks.test.js` §14. |
-| 11 | UI generation from prompt / screenshot / Figma / wireframe | ✅ (offline paths) / 🟨 (screenshot) | `dist/engine.design.js` (`Engine.Design`). `ingest({kind, …})` normalises a reference design into a **design spec** (sections, components, colour/type/spacing tokens, text): **Figma frame JSON** — the user's own export, no API token, no network — parsed to viewport + component roles (button/input/nav/card from layer names) + tokens from fills/`style`/`cornerRadius`; **HTML/CSS markup** — sections + `<button>`/`<input>` + tokens from inline CSS. `applyTokens()` writes `public/design-tokens.css` (CSS custom properties) which the scaffold now links; `design-language.json` feeds the contract + `Engine.VisualCheck`. **Screenshot** → the image is stored as the visual-fidelity reference (so the built UI is pixel-diffed against it) and returned `BLOCKED / VISION_MODEL_REQUIRED` — SUPPORTED, needs a multimodal model, never silently dropped. `analyze()` → `.sovereign/design-spec.json` + report. `test/design.test.js` (18 checks). |
+| 11 | UI generation from prompt / screenshot / Figma / wireframe | ✅ (offline paths) / 🟨 (screenshot) | `dist/engine.design.js` (`Engine.Design`). `ingest({kind, …})` normalises a reference design into a **design spec** (sections, components, colour/type/spacing tokens, text): **Figma frame JSON** — the user's own export, no API token, no network — parsed to viewport + component roles (button/input/nav/card from layer names) + tokens from fills/`style`/`cornerRadius`; **HTML/CSS markup** — sections + `<button>`/`<input>` + tokens from inline CSS. `applyTokens()` writes `public/design-tokens.css` (CSS custom properties) which the scaffold now links; `design-language.json` feeds the contract + `Engine.VisualCheck`. **Screenshot** → the image is stored as the visual-fidelity reference (so the built UI is pixel-diffed against it) **and** an offline pass runs — an offscreen-canvas colour histogram → dominant palette + a row-luminance banding → coarse layout sections (header / section / footer as % of height). Result: `PARTIAL` offline (palette + bands + `design-language.json`), `READY` when a multimodal model is connected (`Engine.Design.analyzeScreenshot()` for full inference), reason `VISION_MODEL_REQUIRED` names the missing capability — never silently dropped. Proven in a real browser (a synthetic 3-band image is segmented exactly). `analyze()` → `.sovereign/design-spec.json` + report. `test/design.test.js` (19 checks). |
 | 12 | Visual validation (render → inspect clipping/overflow/contrast) | ✅ | `dist/engine.visualcheck.js` + `observer.visualProbe()`. The observer renders the running app at **mobile (375) / tablet (768) / desktop (1280)**, measures every element's box + computed style, and reports: page horizontal overflow, elements past the viewport edge, content clipped by `overflow:hidden`, covering fixed/sticky overlays, off-screen text, **zero-size interactive controls**, computed **contrast** below AA — with a screenshot per breakpoint. A static layer (no renderer) catches `overflow:hidden` on html/body, fixed pixel widths ≥ 500px, 100vw×100vh z-indexed overlays, missing viewport meta. `analyze()` → `.sovereign/visual-findings.json` + `visual-report.md`; new DoD criterion `visualIntegrityPass` — a **critical** defect (whole-page overflow, zero-size control, full-screen overlay) blocks release. `test/stacks.test.js` §13. |
 | 13 | Screenshot fidelity mode | ✅ | `Engine.VisualCheck.fidelity(a, b)` — pixel diff of two PNG data URLs (offscreen canvas) → `{ changedPixels, ratio }`. `observer.visualProbe()` captures the reference set; a re-run compares. Used for "did the repair change the layout" and drift checks. |
 | 14 | Backend builder (routes / services / validation / error handling / async infra) | ✅ | `dist/engine.backend.js` — real zero-dep HTTP server: routing table, JSON body parsing, per-entity CRUD service layer, ownership scoping, structured errors, static serving, in-memory rate limiter (120/min/IP → 429). `dist/engine.jobs.js` — durable job queue (`enqueue`/`claim`/`complete`/`fail`, 5 attempts, exponential backoff, dead-letter), a polling worker (`src/worker.js`, dispatches `src/jobs/<type>.js`), and an SSE hub (`src/events.js`, `/api/events`). `Engine.Scaffold` emits all of it + a passing `test/worker.test.js` when `spec.jobs`. **Not yet**: websockets (SSE only), uploads/payments/webhooks. |
