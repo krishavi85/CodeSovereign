@@ -300,6 +300,18 @@ module.exports = async function (t) {
     t.ok('buildPlan: microservices -> gateway + compose in the file plan', mp.files.some((f) => /gateway\/server\.js/.test(f)) && mp.files.some((f) => /docker-compose\.prod\.yml/.test(f)) && /gateway/.test(mp.stack.architecture));
   }
 
+  /* ---------- 10. Cross-platform packaging: win + mac + linux targets + scripts ---------- */
+  {
+    const pj = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+    t.ok('packaging: dist scripts for win + mac + linux + all', ['dist:win', 'dist:mac', 'dist:linux', 'dist:all'].every((s) => pj.scripts[s]));
+    t.ok('packaging: build config targets all three OSes', pj.build && pj.build.win && pj.build.mac && pj.build.linux);
+    t.ok('packaging: mac builds x64 + arm64', JSON.stringify(pj.build.mac.target).includes('arm64') && JSON.stringify(pj.build.mac.target).includes('x64'));
+    t.equal('packaging: mac is configured for an unsigned build (identity null)', pj.build.mac.identity, null);
+    t.ok('packaging: linux emits AppImage + deb', JSON.stringify(pj.build.linux.target).includes('AppImage') && JSON.stringify(pj.build.linux.target).includes('deb'));
+    const wf = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'desktop.yml'), 'utf8');
+    t.ok('packaging: CI has build-mac + build-linux jobs on their native runners', /build-mac:/.test(wf) && /macos-latest/.test(wf) && /build-linux:/.test(wf));
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

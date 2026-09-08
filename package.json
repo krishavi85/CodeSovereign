@@ -18,6 +18,9 @@
     "test": "node test/run.js",
     "web": "npx --yes serve dist -l 4173",
     "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "dist:all": "electron-builder -mwl --publish never",
     "dist:dir": "electron-builder --dir --publish never",
     "postinstall": "electron-builder install-app-deps || exit 0"
   },
@@ -65,12 +68,25 @@
       "artifactName": "${productName}-${version}-portable.${ext}"
     },
     "mac": {
-      "target": ["dmg", "zip"],
-      "category": "public.app-category.developer-tools"
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "category": "public.app-category.developer-tools",
+      "identity": null,
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "writeUpdateInfo": false
     },
     "linux": {
-      "target": ["AppImage", "deb"],
-      "category": "Development"
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "category": "Development",
+      "maintainer": "krishavi85",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     }
   }
 }

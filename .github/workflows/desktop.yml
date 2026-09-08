@@ -151,3 +151,74 @@ jobs:
             release/latest.yml
           if-no-files-found: error
           retention-days: 14
+
+  build-mac:
+    name: macOS app (unsigned)
+    runs-on: macos-latest
+    needs: [test, smoke, acceptance, acceptance-build, acceptance-ultramode]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Cache Electron + builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/.electron-cache
+            ~/Library/Caches/electron-builder
+          key: ebuilder-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
+      - name: Build DMG + zip (x64 + arm64, unsigned)
+        run: npm run dist:mac
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: List artifacts
+        run: ls -la release/ || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codesovereign-macos-app
+          path: |
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: error
+          retention-days: 14
+
+  build-linux:
+    name: Linux app (AppImage + deb)
+    runs-on: ubuntu-latest
+    needs: [test, smoke, acceptance, acceptance-build, acceptance-ultramode]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Cache Electron + builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/.electron-cache
+            ~/.cache/electron-builder
+          key: ebuilder-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
+      - name: Build AppImage + deb (x64)
+        run: npm run dist:linux
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
+      - name: List artifacts
+        run: ls -la release/ || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: codesovereign-linux-app
+          path: |
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
+          retention-days: 14
