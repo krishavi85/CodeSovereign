@@ -22,6 +22,7 @@ prompt
   → Engine.Ledger.build                 (claim → evidence → confidence)
   → Engine.Recovery.run                 (snapshot → repair → verify)
   → Engine.DoD.evaluate + certificate   (14 blocking gates)
+  → Engine.Delivery.write               (one /delivery/ bundle: manifest + cert + evidence + continuation + docs)
   → SOVEREIGN VERIFIED  |  PARTIAL  |  BLOCKED  |  FAILED
 ```
 
@@ -126,6 +127,17 @@ ledger assertion count, validator errors/warnings. The successive readings
 (`post-validate` → `post-execute` → `post-observe` → `post-repair-N` →
 `post-reverify`) show the loop's real progress — there are no simulated
 percentages or timings anywhere.
+
+## Delivery archive
+
+At every terminal state (`VERIFIED` / `PARTIAL` / `BLOCKED` / `FAILED` /
+`CANCELLED`) `Engine.Delivery.write()` assembles a single self-contained bundle
+under `/delivery/`: `MANIFEST.json` (verdict, DoD summary, per-file + whole-bundle
+FNV-1a hashes), a human `README.md`, the certificate + run report, every
+`.sovereign/` evidence file under `evidence/`, `continuation/ultramode-run.json` +
+`ultramode-plan.json` (so `Engine.UltraMode.resume()` works on any machine), and
+the generated `docs/`. The desktop `ws:exportDelivery` IPC zips it to a file the
+user chooses. Nothing is pushed.
 
 ## Supported stack
 

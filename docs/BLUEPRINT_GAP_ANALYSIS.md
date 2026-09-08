@@ -15,7 +15,7 @@ The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
 repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 607, `acceptance` 38, `acceptance:build` 22,
+(`node test/run.js` 642, `acceptance` 38, `acceptance:build` 22,
 `acceptance:ultramode` 53) prove it end to end in the real Electron renderer.
 
 **At / near 100% for the core loop:**
@@ -44,9 +44,10 @@ adjacent products, not core-loop gaps):
   still a config-only step for the user.
 - **Localization engine** (§48) — ⬜. *(Dependency intelligence (§10) and licence
   intelligence (§52) are **done** — `engine.depintel.js`.)*
-- **Delivery archive** (§19/20): a single downloadable bundle (report + cert +
-  evidence + continuation state) — 🟨 (the pieces exist as separate
-  `.sovereign/` files + `ultramode-report.md`).
+- ~~**Delivery archive** (§19/20)~~ — **done** — `engine.delivery.js` assembles
+  one self-contained bundle under `/delivery/` (MANIFEST + README + certificate +
+  report + all evidence + continuation state + docs), exportable as a single
+  `.zip` (`workspace.exportDelivery()`).
 - ~~**Documentation factory** (§49)~~ — **done** — `engine.docs.js` generates
   README + docs/API + docs/DATABASE + docs/DEPLOYMENT + docs/TROUBLESHOOTING
   from the spec + real `.sovereign/` evidence.
@@ -245,7 +246,7 @@ chase the 68 framework / platform features.
 | 16 Quality gate (requirements met / no mocks / no broken routes / UX verified) | ✅ | `Engine.DoD.evaluate()` — 8 blocking criteria (implementation exists · dependencies connected · build succeeds · tests succeed · runtime action succeeds · no fake implementation · security gates · acceptance criteria) computed from real evidence; `Engine.UltraMode` will not emit `VERIFIED` without it + a real certificate. |
 | 17 Packaging | ✅ | electron-builder: Windows NSIS + portable, **macOS** dmg + zip (x64 + arm64, unsigned), **Linux** AppImage + deb. `dist:win` / `dist:mac` / `dist:linux` / `dist:all` scripts; CI jobs `build`, `build-mac` (macos-latest), `build-linux` (ubuntu-latest) each upload the artifact. |
 | 18 Deployment | 🟨 | `engine.deploy.js` generates IaC + deploy script + preflight for 10 targets (incl. Kubernetes / Helm / Terraform); does not push (needs creds) |
-| 19/20 Delivery contract (code + build + tests + package + guide + evidence + known limits + continuation state) | 🟨 | `Engine.UltraMode` produces `ultramode-report.md` (request, state, assumptions, blocking questions, unsupported/unsafe items, the evidence timeline, requirement traceability) + the full `.sovereign/` set (contract, plan, ledger, DoD, certificate). Not yet a single downloadable delivery archive. |
+| 19/20 Delivery contract (code + build + tests + package + guide + evidence + known limits + continuation state) | ✅ | `Engine.UltraMode` produces `ultramode-report.md` + the full `.sovereign/` set, **and** `dist/engine.delivery.js` (`Engine.Delivery`) assembles it all into **one bundle** under `/delivery/`: `MANIFEST.json` (verdict, DoD result, per-file FNV-1a hashes, a whole-bundle content hash), `README.md` (human index + how to verify + how to resume), `release-certificate.md`, `ultramode-report.md`, `evidence/*.json` (contract · ledger · DoD · execution · runtime trace · a11y · visual · deps+licences · perf · security · privacy · architecture · target-adapter evidence · documentation index), `continuation/ultramode-run.json`+`ultramode-plan.json` (secret-scrubbed — `Engine.UltraMode.resume()` on any machine), `docs/*.md`. Written on every `Sovereign.analyze()` and at every Ultra Mode terminal state; exported as a single `.zip` via the `ws:exportDelivery` IPC (`workspace.exportDelivery()`). `test/delivery.test.js` (22 checks). |
 
 ---
 

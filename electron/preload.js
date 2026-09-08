@@ -33,7 +33,8 @@ contextBridge.exposeInMainWorld('desktop', {
     createProject: (opts) => invoke('ws:createProject', opts),
     readTree: () => invoke('ws:readTree'),
     reveal: (rel) => invoke('ws:reveal', rel),
-    exportZip: () => invoke('ws:exportZip')
+    exportZip: () => invoke('ws:exportZip'),
+    exportDelivery: () => invoke('ws:exportDelivery')
   },
 
   fs: {

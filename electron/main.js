@@ -291,6 +291,37 @@ function registerIpc() {
     } catch (e) { return fail(e); }
   });
 
+  ipcMain.handle('ws:exportDelivery', async () => {
+    const root = workspace.getRoot();
+    if (!root) return fail('No workspace');
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Export delivery archive',
+      defaultPath: path.join(app.getPath('downloads'), workspace.name() + '-delivery.zip'),
+      filters: [{ name: 'ZIP archive', extensions: ['zip'] }]
+    });
+    if (r.canceled || !r.filePath) return null;
+    try {
+      const tree = await workspace.readTree();
+      // the delivery archive is the /delivery subtree the renderer assembled;
+      // fall back to bundling the raw .sovereign evidence if it isn't there yet.
+      let src = tree.files.filter((f) => f.path.indexOf('/delivery/') === 0);
+      let prefix = '/delivery/';
+      if (!src.length) { src = tree.files.filter((f) => f.path.indexOf('/.sovereign/') === 0); prefix = '/.sovereign/'; }
+      if (!src.length) return fail('Nothing to deliver — run an analysis or Ultra Mode pass first');
+      const entries = [];
+      for (const f of src) {
+        const name = f.path.slice(prefix.length);
+        if (f.binary || f.content == null) {
+          entries.push({ name, data: await fsp.readFile(workspace.resolveInside(f.path)) });
+        } else {
+          entries.push({ name, data: f.content });
+        }
+      }
+      await fsp.writeFile(r.filePath, zip.build(entries));
+      return ok({ path: r.filePath, fileCount: entries.length, bundled: prefix });
+    } catch (e) { return fail(e); }
+  });
+
   /* ---- fs ---- (every path is validated against the workspace root in workspace.js) */
   const asPath = (p) => { if (typeof p !== 'string') throw new Error('path must be a string'); return p; };
   ipcMain.handle('fs:read', async (_e, p) => {

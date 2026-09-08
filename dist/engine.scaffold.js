@@ -370,7 +370,7 @@
         "  const src = fs.readFileSync(f, 'utf8');\n  try { new vm.Script(src, { filename: f }); } catch (e) { console.error('PARSE ' + f + ': ' + e.message); problems++; continue; }\n" +
         "  src.split('\\n').forEach((l, i) => { if (/^\\s*var\\s/.test(l)) { console.error('NO-VAR ' + f + ':' + (i + 1)); problems++; } });\n}\n" +
         "console.log(problems ? problems + ' lint problem(s)' : 'lint clean'); process.exit(problems ? 1 : 0);\n",
-      '.gitignore': 'node_modules/\ndist/\n.data/\n.sovereign/\nlogs/\n',
+      '.gitignore': 'node_modules/\ndist/\n.data/\n.sovereign/\nlogs/\ndelivery/\n',
       '.env.example': '# ' + s.name + '\nPORT=4319\n# For production, point the data layer at Postgres:\n# DATABASE_URL=postgres://user:pass@host:5432/' + s.name + '\n',
       'Dockerfile':
         'FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev || true\nCOPY . .\nRUN node scripts/migrate.js\nEXPOSE 4319\n' +

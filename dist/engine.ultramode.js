@@ -802,6 +802,9 @@
     if (run.state === 'PARTIAL') run.resultReason = run.resultReason ||
       (run.target + ' — SUPPORTED WITH TARGET-SPECIFIC EXECUTION. Everything this host can verify passed; the remaining stages need tooling it lacks.');
     writeReport(run);
+    // assemble the single delivery archive under /delivery (report + certificate
+    // + all evidence + continuation state) so acceptance is one bundle (§19-20)
+    try { if (Engine.Delivery && Engine.Delivery.write) Engine.Delivery.write(); } catch (_) {}
     return persist(run).then(function () { return run; });
   }
 

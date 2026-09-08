@@ -92,6 +92,7 @@
     'perf-report.md':             'Readable performance summary',
     'documentation-index.json':   'Documentation factory — which docs were (re)generated + folded-in verification evidence (spec §49)',
     'documentation-report.md':    'Readable summary of the documentation factory run',
+    'delivery-manifest.json':     'Delivery archive manifest — verdict, DoD result, per-file hashes, content hash (spec §19-20)',
     'blockchain-evidence.json':   'EVM target — solc compile + local-chain deploy + transactions + receipts + static analysis',
     'mobile-evidence.json':       'Native-mobile target — gradle build + emulator install/launch + logcat + screenshot',
     'ml-evidence.json':           'ML-training target — dataset inspection + real training loss curve + checkpoint + eval metric',
@@ -635,6 +636,9 @@
 
     // ---- documentation factory (spec §49) — after the gate so it folds in evidence ----
     safe(function () { window.Engine.Docs && window.Engine.Docs.analyze(); });
+
+    // ---- delivery archive (spec §19-20) — one self-contained acceptance bundle ----
+    safe(function () { window.Engine.Delivery && window.Engine.Delivery.write(); });
 
     return {
       ok: true,
