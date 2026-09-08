@@ -51,17 +51,19 @@
   }
 
   function ensureServer(url) {
-    // 1. explicit url or an already-running detected server
-    var candidates = url ? [url] : [];
     var det = detectDevServer();
-    if (det) candidates.push(det.url);
-    COMMON_PORTS.forEach(function (p) { candidates.push('http://localhost:' + p); });
+    // 1. an explicit URL, or THIS project's own dev port, is authoritative —
+    //    never crawl a stray server on a shared common port (that server could
+    //    be a completely different app and would silently invalidate the run).
+    //    The common-port scan is a last resort only when the project declares no
+    //    dev/start script and no URL was given.
+    var candidates = url ? [url] : (det ? [det.url] : COMMON_PORTS.map(function (p) { return 'http://localhost:' + p; }));
 
     return chainFirst(candidates.map(function (u) {
       return function () { return tryLoad(u, 0, 0).then(function (r) { return r.ok ? { url: u, started: false } : null; }); };
     })).then(function (hit) {
       if (hit) return hit;
-      // 2. nothing running — start the dev server
+      // 2. nothing running on our own port — start the dev script
       if (!det) return Promise.reject(new Error('No dev/start script in package.json and nothing serving on common ports. Pass a URL.'));
       try { window.toast && window.toast('Starting dev server (' + det.script + ')…', '#a78bfa'); } catch (_) {}
       return D.proc.spawnAllowed({ cmd: (pkg() && detectPm()) || 'npm', args: ['run', det.script], cwd: '.' }).then(function (r) {
