@@ -202,6 +202,34 @@ module.exports = async function (t) {
       tf.some((f) => /variables\.tf$/.test(f.path)) && tf.some((f) => /tfvars\.example$/.test(f.path)) && tf.some((f) => /deploy\/terraform\.sh$/.test(f.path)));
   }
 
+  /* ---------- 6. Microservices: gateway + per-domain services, real cross-process round trip ---------- */
+  {
+    const win = loadEngines(['engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.frontends.js', 'engine.graphql.js', 'engine.realtime.js', 'engine.pybackend.js', 'engine.microservices.js', 'engine.scaffold.js']);
+    const spec = { name: 'shop', auth: true, microservices: true, entities: [
+      { name: 'product', fields: [{ name: 'title', type: 'text', required: true }, { name: 'priceCents', type: 'int', required: true }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] },
+      { name: 'review', fields: [{ name: 'body', type: 'text', required: true }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] }
+    ] };
+    const g = win.Engine.Scaffold.generate(spec);
+    const map = {}; g.forEach((f) => { map[f.path] = f.content; });
+    t.ok('microservices: emits a gateway + one service per domain + compose + integration test',
+      ['/gateway/server.js', '/gateway/registry.js', '/services/product/server.js', '/services/review/server.js', '/docker-compose.prod.yml', '/test/microservices.test.js'].every((p) => p in map));
+    const yaml = tryYaml();
+    if (yaml) {
+      let ok = true, doc = null;
+      try { doc = yaml.load(map['/docker-compose.prod.yml']); } catch (e) { ok = false; t.ok('microservices: compose is valid YAML — ' + e.message, false); }
+      if (ok) t.ok('microservices: compose wires gateway + product + review + postgres',
+        doc && doc.services && ['gateway', 'product', 'review', 'postgres'].every((k) => k in doc.services));
+    }
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stk-msvc-'));
+    try {
+      Object.keys(map).forEach((p) => { const abs = path.join(dir, p.replace(/^\//, '')); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, map[p]); });
+      try { cp.execFileSync('node', ['scripts/migrate.js'], { cwd: dir, stdio: 'pipe', timeout: 30000 }); } catch (_) {}
+      const r = cp.spawnSync('node', ['--test', 'test/microservices.test.js'], { cwd: dir, encoding: 'utf8', timeout: 40000 });
+      t.equal('microservices: gateway proxies a real request to a separate service process (register -> create -> list)', r.status, 0);
+      if (r.status !== 0) console.log(r.stdout + '\n' + r.stderr);
+    } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

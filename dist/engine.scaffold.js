@@ -407,6 +407,20 @@
     add(tests(s));
     add(meta(s));
 
+    // split the running system into gateway + per-domain services (REST monolith
+    // is still emitted as the single-process fallback / dev target)
+    if (s.microservices && Engine.Microservices) {
+      var ms = Engine.Microservices.generate(s);
+      Object.keys(ms).forEach(function (k) { files['/' + k] = ms[k]; });
+      try {
+        var pj = JSON.parse(files['/package.json']);
+        pj.scripts.dev = 'node gateway/server.js --port=4319';
+        pj.scripts.start = 'node gateway/server.js --port=4319';
+        pj.scripts['start:monolith'] = 'node server.js --port=4319';
+        files['/package.json'] = JSON.stringify(pj, null, 2) + '\n';
+      } catch (_) {}
+    }
+
     var an = S().analyze(s);
     files['/docs/DATA_MODEL.md'] = '# Data model\n\n' + s.entities.map(function (e) {
       return '## ' + e.name + ' (`' + e.table + '`)\n\n' + e.fields.map(function (f) {
