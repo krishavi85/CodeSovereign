@@ -256,6 +256,29 @@ module.exports = async function (t) {
     t.equal('DoD: architectureSound PASSES once the layer-clean repo is restored', win.Engine.DoD.evaluate().criteria.architectureSound, true);
   }
 
+  /* ---------- 8. Privacy / PII: generated repos are clean; leaks are caught + gate the DoD ---------- */
+  {
+    const win = loadEngines(['engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.frontends.js', 'engine.graphql.js', 'engine.realtime.js', 'engine.pybackend.js', 'engine.microservices.js', 'engine.scaffold.js', 'engine.privacy.js', 'engine.contract.js', 'engine.ledger.js', 'engine.dod.js']);
+    const spec = { name: 'crm', auth: true, frontend: 'react', entities: [
+      { name: 'customer', fields: [{ name: 'email', type: 'text', required: true }, { name: 'phone', type: 'text' }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] }
+    ] };
+    win.Engine.Scaffold.generate(spec).forEach((f) => win.Engine.FS.write(f.path, f.content));
+    const clean = win.Engine.Privacy.scan();
+    t.equal('privacy: a generated auth + PII-collecting repo has zero PII-handling findings', clean.findings.filter((f) => f.severity !== 'low').length, 0);
+
+    win.Engine.FS.write('/src/track.js', "console.log('signup', req.body);\nfetch('https://ads.example.com/p?email=' + user.email);\n");
+    const bad = win.Engine.Privacy.scan();
+    t.ok('privacy: a whole request body in a log is HIGH', bad.findings.some((f) => f.rule === 'pii-in-logs' && f.severity === 'high'));
+    t.ok('privacy: PII in a query string is HIGH', bad.findings.some((f) => f.rule === 'pii-in-url'));
+    t.ok('privacy: server-side egress to a third-party host is flagged', bad.findings.some((f) => f.rule === 'third-party-egress'));
+
+    const dod = win.Engine.DoD.evaluate();
+    t.equal('DoD: privacyRespected FAILS while PII leaks exist', dod.criteria.privacyRespected, false);
+    delete win.Engine.FS._data['/src/track.js'];
+    win.Engine.Privacy.scan();
+    t.equal('DoD: privacyRespected PASSES once the leaks are gone', win.Engine.DoD.evaluate().criteria.privacyRespected, true);
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

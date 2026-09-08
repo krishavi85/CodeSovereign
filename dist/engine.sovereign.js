@@ -77,6 +77,8 @@
     'security-report.md':        'Readable security findings + score',
     'architecture-findings.json': 'Layering / boundary scan — wrong-layer imports, inverted deps, cross-service reach (spec §5)',
     'architecture-rules.md':      'Readable architecture violations + score',
+    'privacy-findings.json':      'PII / data-protection scan — data in logs, PII in URLs, secrets in responses, egress (spec §18)',
+    'privacy-report.md':          'Readable privacy findings + score',
     'deployment.json':           'Last generated deployment target + IaC + preflight (spec §41)'
   };
 
@@ -592,6 +594,9 @@
 
     // ---- architecture / layering scan (spec §5) ----
     safe(function () { window.Engine.ArchRules && window.Engine.ArchRules.scan(); });
+
+    // ---- privacy / PII scan (spec §18) ----
+    safe(function () { window.Engine.Privacy && window.Engine.Privacy.scan(); });
 
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {

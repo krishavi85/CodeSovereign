@@ -6,7 +6,10 @@
    A feature/product is DONE only when every criterion below is true —
    never because code exists. Computed purely from `.sovereign/` evidence
    and the Evidence Ledger (blueprint §56, §67, §68). This generalises the
-   9-criterion gate that electron/acceptance.js proves on the fixture.
+   gate that electron/acceptance.js proves on the fixture: 10 criteria —
+   implementation exists, dependencies connected, build, tests, runtime
+   action, no fake implementation, security, architecture/layering,
+   privacy/PII, acceptance criteria.
 
    window.Engine.DoD
      evaluate()     -> dod object (writes .sovereign/definition-of-done.json)
@@ -88,6 +91,8 @@
     var known = t('known-issues.md');
     var archReport = j('architecture-findings.json');
     var archHigh = archReport ? ((archReport.bySeverity && archReport.bySeverity.high) || 0) : 0;
+    var privReport = j('privacy-findings.json');
+    var privHigh = privReport ? ((privReport.bySeverity && privReport.bySeverity.high) || 0) : 0;
     var secReport = j('security-findings.json');
     var highSec;
     if (secReport) {
@@ -120,6 +125,7 @@
       noFakeImplementation: gate(fakeControls.length === 0 && Object.keys(controls).length > 0),
       securityGatesPass: gate(highSec === 0),
       architectureSound: gate(archHigh === 0),
+      privacyRespected: gate(privHigh === 0),
       acceptanceCriteriaPass: gate(ledgerFailing === 0 && !!ledger)
     };
     var PASS = Object.keys(criteria).every(function (k) { return criteria[k] === true; });
@@ -136,6 +142,8 @@
         highSeveritySecurity: highSec,
         architectureViolations: archReport ? (archReport.findings || []).filter(function (f) { return f.severity === 'high'; }).slice(0, 8).map(function (f) { return f.rule + ' @ ' + f.file + (f.line ? ':' + f.line : ''); }) : [],
         architectureScore: archReport ? archReport.score : null,
+        privacyViolations: privReport ? (privReport.findings || []).filter(function (f) { return f.severity === 'high'; }).slice(0, 8).map(function (f) { return f.rule + ' @ ' + f.file + (f.line ? ':' + f.line : ''); }) : [],
+        privacyScore: privReport ? privReport.score : null,
         ledgerFailing: ledgerFailing,
         openManualClaims: openManual,
         assertions: (ledger && ledger.totals && ledger.totals.assertions) || 0
@@ -175,6 +183,7 @@
       line('No fake implementation', c.noFakeImplementation) + '\n' +
       line('Security gates', c.securityGatesPass) + '\n' +
       line('Architecture sound', c.architectureSound) + '\n' +
+      line('Privacy respected', c.privacyRespected) + '\n' +
       line('Acceptance criteria', c.acceptanceCriteriaPass) + '\n\n' +
       (ledger ? '## Claims\n\n| Requirement | Confidence | Assertions |\n|---|---|---|\n' +
         (ledger.claims || []).map(function (cl) {
