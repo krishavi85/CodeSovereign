@@ -219,6 +219,11 @@
     var depCritical = depReport ? ((depReport.byImpact && depReport.byImpact.critical) || 0) : 0;
     var perfReport = j('perf-findings.json');
     var perfHealthy = !perfReport || perfReport.present === false ? true : (perfReport.healthy !== false && (perfReport.byImpact ? !perfReport.byImpact.critical : true));
+    // user journeys (§65): when the contract defines journeys and the test gate
+    // has run, every journey must be covered (green) for acceptance to pass.
+    var journeyReport = j('journey-evidence.json');
+    var journeysOk = !journeyReport || journeyReport.present === false ? true
+      : (scripts.test ? (journeyReport.uncovered === 0) : true);
     var secReport = j('security-findings.json');
     var highSec;
     if (secReport) {
@@ -268,7 +273,7 @@
       // thresholds (so testsSucceed catches a regression); this surfaces it as
       // its own gate — a 5xx under load or a memory leak blocks release.
       performanceHealthy: gate(perfHealthy),
-      acceptanceCriteriaPass: gate(ledgerFailing === 0 && !!ledger)
+      acceptanceCriteriaPass: gate(ledgerFailing === 0 && !!ledger && journeysOk)
     };
     var PASS = Object.keys(criteria).every(function (k) { return criteria[k] === true; });
 
@@ -294,6 +299,7 @@
         licenseConflicts: depReport ? (depReport.licenseConflicts || []) : [],
         dependencyBlocking: depReport ? (depReport.findings || []).filter(function (f) { return f.impact === 'critical'; }).map(function (f) { return f.kind + (f.dependency ? ' ' + f.dependency : ''); }) : [],
         perf: perfReport && perfReport.present ? { p50: perfReport.p50, p95: perfReport.p95, p99: perfReport.p99, errors: perfReport.errors, heapGrowthKB: perfReport.heapGrowthKB, leak: perfReport.leak } : null,
+        journeys: journeyReport && journeyReport.present ? { total: journeyReport.total, covered: journeyReport.covered, uncovered: journeyReport.uncovered } : null,
         ledgerFailing: ledgerFailing,
         openManualClaims: openManual,
         assertions: (ledger && ledger.totals && ledger.totals.assertions) || 0

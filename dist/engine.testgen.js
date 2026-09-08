@@ -379,10 +379,16 @@
     var hasPublic = Engine.FS.exists('/public') || Object.keys(Engine.FS._data || {}).some(function (p) { return p.indexOf('/public/') === 0; });
     if (opts.a11y !== false && hasPublic) out['/test/a11y.test.js'] = a11ySuite();
     Object.keys(out).forEach(function (p) { Engine.FS.write(p, out[p]); });
+    // contract-driven user-journey suite (§65)
+    var extra = [];
+    if (opts.journeys !== false && hasServer && Engine.Journeys && Engine.Journeys.generate) {
+      try { extra = Engine.Journeys.generate() || []; } catch (_) {}
+    }
+    extra.forEach(function (f) { out[f.path] = f.content; });
     if (S()) S().write('testgen.json', { generatedAt: Date.now(), wrote: Object.keys(out), endpoints: eps.length, plan: plan() });
     return Object.keys(out).map(function (p) { return { path: p, content: out[p] }; });
   }
 
-  Engine.TestGen = { plan: plan, generate: generate, chaosSuite: chaosSuite, e2eSuite: e2eSuite, installSuite: installSuite, upgradeSuite: upgradeSuite, endpoints: endpoints, rootResource: rootResource };
+  Engine.TestGen = { plan: plan, generate: generate, chaosSuite: chaosSuite, e2eSuite: e2eSuite, installSuite: installSuite, upgradeSuite: upgradeSuite, endpoints: endpoints, rootResource: rootResource, bodyFor: bodyFor, schema: schema };
   console.info('[TestGen] testing factory + chaos suite ready — Engine.TestGen');
 })();

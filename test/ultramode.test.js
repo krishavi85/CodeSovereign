@@ -88,7 +88,7 @@ function makeEnv(world) {
   vm.createContext(win);
   for (const f of ['engine-universal.js', 'engine.schema.js', 'engine.auth.js', 'engine.jobs.js',
                    'engine.backend.js', 'engine.scaffold.js', 'engine.testgen.js', 'engine.deploy.js', 'engine.docs.js', 'engine.delivery.js',
-                   'engine.intent.js', 'engine.contract.js', 'engine.runtime-router.js', 'engine.blockchain.js',
+                   'engine.intent.js', 'engine.contract.js', 'engine.journeys.js', 'engine.runtime-router.js', 'engine.blockchain.js',
                    'engine.mobile.ios.js', 'engine.mobile.js', 'engine.ml.js']) {
     vm.runInContext(load(f), win, { filename: f });
   }

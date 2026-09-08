@@ -73,6 +73,7 @@
     'license-report.json',
     'perf-findings.json',
     'perf-report.json',
+    'journey-evidence.json',
     'security-findings.json',
     'privacy-findings.json',
     'architecture-findings.json',

@@ -574,6 +574,49 @@ module.exports = async function (t) {
     } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
   }
 
+  /* ---------- 19. User-journey testing (§65) — Engine.Journeys ---------- */
+  {
+    const win = loadEngines(['engine-universal.js', 'engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.frontends.js', 'engine.graphql.js', 'engine.realtime.js', 'engine.pybackend.js', 'engine.microservices.js', 'engine.scaffold.js', 'engine.intent.js', 'engine.contract.js', 'engine.testgen.js', 'engine.ledger.js', 'engine.dod.js', 'engine.journeys.js']);
+    {
+      const contract = await win.Engine.Contract.deriveFromPrompt('A project tracker where a user signs up, signs in, creates projects and deletes them', { useLLM: false });
+      win.Engine.Sovereign.write('product-contract.json', contract);
+      t.ok('journeys: the contract carries journeys', (contract.journeys || []).length >= 1);
+
+      const spec = win.Engine.Scaffold.specFromContract(contract);
+      const repo = {}; win.Engine.Scaffold.generate(spec).forEach((f) => { repo[f.path] = f.content; win.Engine.FS.write(f.path, f.content); });
+      const compiled = win.Engine.Journeys.compile(contract);
+      t.ok('journeys: each journey compiles to an ordered op list', compiled.length >= 1 && compiled.every((j) => Array.isArray(j.ops) && j.ops.length));
+      t.ok('journeys: auth journey maps register/login/assertMe', compiled.some((j) => j.ops.some((o) => o.op === 'login') && j.ops.some((o) => o.op === 'assertMe')));
+      t.ok('journeys: an entity journey maps create/listContains/delete', compiled.some((j) => j.ops.some((o) => o.op === 'create') && j.ops.some((o) => o.op === 'delete')));
+
+      const gen = win.Engine.Journeys.generate();
+      const src = gen[0] && gen[0].content;
+      t.ok('journeys: emits test/journeys.test.js referencing requirement ids', /JRN-/.test(src) && /REQ-/.test(src));
+      const ev = win.Engine.Journeys.load();
+      t.ok('journeys: journey-evidence.json written, planned before the gate runs', ev && ev.present && ev.total === compiled.length && ev.covered === 0);
+
+      // DoD acceptance gate reflects uncovered journeys once tests exist
+      win.Engine.Sovereign.write('execution-evidence.json', { gates: { test: { ok: true } }, note: 'ran test/journeys.test.js pass 20 fail 0' });
+      const ev2 = win.Engine.Journeys.analyze();
+      t.ok('journeys: a clean test run marks journeys covered', ev2.covered === ev2.total && ev2.uncovered === 0);
+
+      // RUN the generated journey suite against a real server
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stk-jrn-'));
+      try {
+        Object.assign(repo, { '/test/journeys.test.js': src });
+        Object.keys(repo).forEach((p) => { const abs = path.join(dir, p.replace(/^\//, '')); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, repo[p]); });
+        cp.execFileSync('node', ['scripts/migrate.js'], { cwd: dir, stdio: 'pipe', timeout: 30000 });
+        const r = cp.spawnSync('node', ['--test', 'test/journeys.test.js'], { cwd: dir, encoding: 'utf8', timeout: 90000 });
+        const out = (r.stdout || '') + (r.stderr || '');
+        const pass = Number((out.match(/(?:ℹ |# )?pass (\d+)/) || [])[1] || 0);
+        const fail = Number((out.match(/(?:ℹ |# )?fail (\d+)/) || [])[1] || 0);
+        t.equal('journeys: the generated journey suite passes against a real server', r.status, 0);
+        t.ok('journeys: every journey ran green', pass >= compiled.length && fail === 0);
+        if (r.status !== 0) console.log(out.slice(-3000));
+      } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
+    }
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

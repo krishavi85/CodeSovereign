@@ -15,7 +15,7 @@ The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
 repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 653, `acceptance` 38, `acceptance:build` 22,
+(`node test/run.js` 662, `acceptance` 38, `acceptance:build` 22,
 `acceptance:ultramode` 53) prove it end to end in the real Electron renderer.
 
 **At / near 100% for the core loop:**
@@ -52,7 +52,9 @@ adjacent products, not core-loop gaps):
   README + docs/API + docs/DATABASE + docs/DEPLOYMENT + docs/TROUBLESHOOTING
   from the spec + real `.sovereign/` evidence.
 - **Refactoring / migration / upgrade engines** (§60, §62), **feature builder /
-  completion graph** (§63–64), **user-journey testing** (§65) — ⬜.
+  completion graph** (§63–64) — ⬜. *(User-journey testing (§65) is **done** —
+  `engine.journeys.js` compiles `contract.journeys` into a runnable
+  `test/journeys.test.js` + a coverage gate.)*
 - ~~**e2e / install / upgrade test generation** (§19)~~ — **done** —
   `engine.testgen.js` emits `test/e2e.test.js` + `test/install.test.js` +
   `test/upgrade.test.js`, all proven green against a real server.
@@ -208,7 +210,7 @@ chase the 68 framework / platform features.
 | 62 | Autonomous upgrade engine (framework/runtime/SDK w/ migration) | ⬜ (we did this *by hand* for electron 33→43 this session) |
 | 63 | Feature builder (implement the entire functional dependency surface) | ⬜ |
 | 64 | Feature completion graph | ⬜ |
-| 65 | User-journey testing | ⬜ |
+| 65 | User-journey testing | ✅ | `dist/engine.journeys.js` (`Engine.Journeys`) compiles every `contract.journeys` entry (`"sign in → create a project → see it in the list → delete it"`) into an ordered op list, emits **`test/journeys.test.js`** — one `test()` per journey, named with its `JRN-` id + the `REQ-` ids it exercises, driving the **booted server** through the exact calls its frontend makes (register/login/`me()`/create/list-contains/delete/404/logout). A journey that starts at "sign in" gets an implicit register; a journey whose entity needs an unseeded related record falls back to endpoint-liveness. `analyze()` writes `.sovereign/journey-evidence.json` (covered / uncovered + requirements exercised); the DoD `acceptanceCriteriaPass` gate now also requires **every journey covered** once the test gate has run. Proven green against a real server in `test/stacks.test.js` §19. |
 | 66 | Chaos mode | ✅ `dist/engine.testgen.js` `chaosSuite()` — see §20; generated `test/chaos.test.js` runs as a real gate |
 | 67 | Zero-Mock release gate | 🟨 detection exists (`mockscan`); not enforced as a gate |
 | 68 | Sovereign release certificate (cross-gate, evidence-backed) | 🟧 `engine.recovery.v4.js` has a "certificate" concept scoped to recovery runs; not the multi-gate SOVEREIGN VERIFIED cert |

@@ -93,6 +93,9 @@
     'documentation-index.json':   'Documentation factory — which docs were (re)generated + folded-in verification evidence (spec §49)',
     'documentation-report.md':    'Readable summary of the documentation factory run',
     'delivery-manifest.json':     'Delivery archive manifest — verdict, DoD result, per-file hashes, content hash (spec §19-20)',
+    'journeys.json':              'Compiled user journeys from the contract — ordered ops + requirement ids (spec §65)',
+    'journey-evidence.json':      'User-journey coverage — covered / uncovered + which requirements each exercises',
+    'journey-report.md':          'Readable user-journey coverage summary',
     'blockchain-evidence.json':   'EVM target — solc compile + local-chain deploy + transactions + receipts + static analysis',
     'mobile-evidence.json':       'Native-mobile target — gradle build + emulator install/launch + logcat + screenshot',
     'ml-evidence.json':           'ML-training target — dataset inspection + real training loss curve + checkpoint + eval metric',
@@ -627,6 +630,9 @@
 
     // ---- performance + memory-leak surfacing (spec §45-46) ----
     safe(function () { window.Engine.PerfCheck && window.Engine.PerfCheck.analyze(); });
+
+    // ---- user-journey coverage (spec §65) — from contract.journeys ----
+    safe(function () { window.Engine.Journeys && window.Engine.Journeys.analyze(); });
 
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {
