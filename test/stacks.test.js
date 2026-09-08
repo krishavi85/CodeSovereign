@@ -140,6 +140,34 @@ module.exports = async function (t) {
     t.ok('ws: generated handshake + echo + broadcast test passes', r.exit === 0 && r.pass >= 1 && r.fail === 0);
   }
 
+  /* ---------- 4b. Python (stdlib) backend generates + pytest/unittest passes ---------- */
+  {
+    const hasPy = (() => { try { return cp.spawnSync('python', ['--version'], { encoding: 'utf8' }).status === 0; } catch (_) { return false; } })();
+    const win = loadEngines(['engine.pybackend.js']);
+    const spec = { name: 'shop', auth: true, entities: [
+      { name: 'user', fields: [] }, { name: 'session', fields: [] },
+      { name: 'order', fields: [{ name: 'amountCents', type: 'int', required: true }, { name: 'ownerId', type: 'ref', ref: 'user' }], table: 'orders' }
+    ] };
+    const g = win.Engine.PyBackend.generate(spec);
+    t.ok('python: emits app/main.py + app/db.py + app/auth.py + a per-entity service + tests',
+      ['app/main.py', 'app/db.py', 'app/auth.py', 'app/services/order.py', 'tests/test_api.py'].every((p) => p in g));
+    t.match('python: package.json test script shells to unittest', g['package.json'], /python -m unittest discover/);
+    if (hasPy) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'stk-py-'));
+      try {
+        Object.keys(g).forEach((p) => { const abs = path.join(dir, p); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, g[p]); });
+        fs.mkdirSync(path.join(dir, 'public'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'public', 'index.html'), '<!doctype html><html lang=en><body>ok</body></html>');
+        const comp = cp.spawnSync('python', ['-m', 'compileall', '-q', 'app'], { cwd: dir, encoding: 'utf8', timeout: 20000 });
+        t.equal('python: every generated module compiles', comp.status, 0);
+        const r = cp.spawnSync('python', ['-m', 'unittest', 'discover', '-s', 'tests', '-t', '.'], { cwd: dir, encoding: 'utf8', timeout: 40000 });
+        t.equal('python: the generated end-to-end test passes (real HTTP + sqlite + auth)', r.status, 0);
+      } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
+    } else {
+      t.ok('python: not installed on this runner — generation verified, execution skipped', true);
+    }
+  }
+
   /* ---------- 5. Deploy: kubernetes / helm / terraform IaC ---------- */
   {
     const win = loadEngines(['engine.deploy.js']);
