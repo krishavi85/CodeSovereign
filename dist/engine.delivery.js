@@ -78,6 +78,10 @@
     'security-findings.json',
     'privacy-findings.json',
     'architecture-findings.json',
+    'feature-graph.json',
+    'refactor-plan.json',
+    'upgrade-plan.json',
+    'design-spec.json',
     'mobile-evidence.json',
     'mobile-ios-evidence.json',
     'blockchain-evidence.json',
@@ -87,7 +91,8 @@
 
   var DOC_FILES = [
     '/README.md', '/docs/API.md', '/docs/DATABASE.md',
-    '/docs/DEPLOYMENT.md', '/docs/TROUBLESHOOTING.md', '/docs/DATA_MODEL.md'
+    '/docs/DEPLOYMENT.md', '/docs/TROUBLESHOOTING.md', '/docs/DATA_MODEL.md',
+    '/docs/TS_MIGRATION.md'
   ];
 
   function collect() {
