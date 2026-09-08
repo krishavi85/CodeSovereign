@@ -13,7 +13,7 @@ Measures the current codebase against the two blueprints:
 
 The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
-repair → 10-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
+repair → 11-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
 (`node test/run.js` 556, `acceptance` 38, `acceptance:build` 22,
 `acceptance:ultramode` 53) prove it end to end in the real Electron renderer.
@@ -22,7 +22,7 @@ repair → 10-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` 
 
 | Area | Where it landed |
 |---|---|
-| Proof engine (contract · ledger · DoD · certificate) | 10 gates incl. **architecture/layering** (`engine.archrules.js`) and **privacy/PII** (`engine.privacy.js`); zero-mock + no-fake enforced |
+| Proof engine (contract · ledger · DoD · certificate) | 11 gates incl. **architecture/layering** (`engine.archrules.js`), **privacy/PII** (`engine.privacy.js`) and **WCAG accessibility** (`engine.a11y.js`); zero-mock + no-fake enforced |
 | Repo-scale generation | Node **and** pure-stdlib Python backends; vanilla / React / Preact / Vue / Svelte / Angular frontends (vendored VDOM); GraphQL executor; RFC 6455 WebSockets; monolith **and** microservices (gateway + per-domain services + compose) |
 | Deployment IaC | 10 targets — docker · compose · **kubernetes** · **helm** · **terraform** · fly · render · railway · vps · static (does not push — needs creds, by design) |
 | Ops | every generated backend: `/healthz` · `/readyz` · `/metrics` (Prometheus) · JSON access logs |
@@ -175,7 +175,7 @@ chase the 68 framework / platform features.
 | 44 | Production diagnosis (correlate logs / code / version / DB / commits) | ⬜ |
 | 45 | Performance engineering (profile CPU/RAM/GPU/IO/DB/render/startup/bundle) | ⬜ |
 | 46 | Memory-leak detection | ⬜ |
-| 47 | Accessibility as a release gate | 🟨 validator flags missing alt/lang; not a gate, no keyboard/focus/ARIA/contrast audit |
+| 47 | Accessibility as a release gate | ✅ `dist/engine.a11y.js` — a WCAG 2.1 AA static audit over the project's HTML + CSS: image alt (1.1.1), form labels (1.3.1/3.3.2 — a placeholder is not a label), heading order, **colour contrast** (1.4.3 — real relative-luminance ratio), **keyboard operability** of click handlers (2.1.1), a `<main>` landmark + skip link (2.4.1), link/button names (2.4.4/4.1.2), **visible focus indicator** (2.4.7 — flags `outline:none` with no replacement), target size (2.5.5), positive `tabindex`, duplicate ids, invalid ARIA roles/states. `audit()` → `.sovereign/a11y-findings.json` + `a11y-report.md`; runs in `Sovereign.analyze()`. New DoD criterion `accessibilityPass` — **critical** barriers (missing alt / no accessible name / unlabelled control) block any release; **serious** ones block when the contract asked for accessibility. The generators were made compliant (labels + `<main>` + skip link + focus styles + AA-contrast palette) so every stack scores ≥ 96/100. `test/stacks.test.js` §12. |
 | 48 | Localization engine | ⬜ |
 | 49 | Documentation factory | 🟨 `architecture.md` + `product-brief.md` + `analysis-summary.md` generated; not the full README/API/DB/deploy/troubleshooting set from real repo+runtime |
 

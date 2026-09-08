@@ -134,7 +134,10 @@
       var inputs = editable.map(function (f) {
         if (f.type === 'bool') return '<label><input type="checkbox" data-f="' + f.name + '"> ' + f.name + '</label>';
         var t = (f.type === 'int' || f.type === 'float') ? 'number' : 'text';
-        return '<input data-f="' + f.name + '" type="' + t + '" placeholder="' + f.name + (f.type === 'ref' ? ' (id)' : '') + '"' + (f.required ? ' required' : '') + '>';
+        var lbl = f.name + (f.type === 'ref' ? ' (id)' : '');
+        var iid = e.name + '-' + f.name;
+        return '<label for="' + iid + '">' + lbl + '</label>\n        ' +
+          '<input id="' + iid + '" data-f="' + f.name + '" type="' + t + '" placeholder="' + lbl + '" aria-label="' + lbl + '"' + (f.required ? ' required' : '') + '>';
       }).join('\n        ');
       return {
         name: e.name, table: e.table,
@@ -147,11 +150,13 @@
     });
     var authFrag = s.auth ? A().uiFragment() : { html: '', js: '' };
     var html =
-      '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
-      '  <h1>' + s.name + '</h1>\n' + authFrag.html +
+      '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
+      '  <a href="#main" class="skip-link">Skip to content</a>\n' +
+      '  <header><h1>' + s.name + '</h1></header>\n' +
+      '  <main id="main">\n' + authFrag.html +
       (s.auth ? '  <div id="entities" hidden>\n' : '  <div id="entities">\n') +
       forms.map(function (f) { return f.html; }).join('') +
-      '  </div>\n  <script src="app.js"></script>\n</body>\n</html>\n';
+      '  </div>\n  </main>\n  <script src="app.js"></script>\n</body>\n</html>\n';
     var js = [
       "'use strict';",
       s.auth ? authFrag.js : "function authHeaders() { return { 'content-type': 'application/json' }; }",
@@ -201,11 +206,15 @@
     var css = "*{box-sizing:border-box}body{font:15px/1.5 system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 16px;color:#111}" +
       "h1{margin:0 0 16px}.card{border:1px solid #ddd;border-radius:10px;padding:16px;margin-bottom:16px}" +
       "h2{margin:0 0 10px;font-size:16px;text-transform:capitalize}form{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}" +
-      "input:not([type=checkbox]){flex:1;min-width:120px;padding:7px 9px;border:1px solid #ccc;border-radius:7px}" +
-      "button{padding:7px 12px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:7px;cursor:pointer}" +
-      "button[data-del]{background:transparent;color:#b91c1c;border-color:#e5b4b4;padding:2px 8px;font-size:12px}" +
+      "label{font-size:12px;color:#444;width:100%;margin-bottom:-4px}" +
+      "input:not([type=checkbox]){flex:1;min-width:120px;padding:8px 10px;border:1px solid #767676;border-radius:7px;min-height:24px}" +
+      "button{padding:9px 14px;border:1px solid #1d4ed8;background:#1d4ed8;color:#fff;border-radius:7px;cursor:pointer;min-height:24px}" +
+      "button[data-del]{background:transparent;color:#b91c1c;border-color:#b91c1c;padding:6px 10px;font-size:12px}" +
       "ul{list-style:none;padding:0;margin:0}li{padding:6px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center}" +
-      ".error,.err{color:#b91c1c}.empty{color:#888}.userbar{display:flex;gap:10px;align-items:center;margin-bottom:12px;font-size:13px}\n";
+      ".error,.err{color:#b91c1c}.empty{color:#6b6b6b}.userbar{display:flex;gap:10px;align-items:center;margin-bottom:12px;font-size:13px}" +
+      ".skip-link{position:absolute;left:-9999px;top:0;background:#000;color:#fff;padding:8px 12px;z-index:10}" +
+      ".skip-link:focus{left:8px}" +
+      "a:focus-visible,button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}\n";
     return { 'public/index.html': html, 'public/app.js': js, 'public/app.css': css };
   }
 

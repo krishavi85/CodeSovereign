@@ -205,15 +205,16 @@
     var ents = s.entities.filter(function (e) { return ['user', 'session', 'job'].indexOf(e.name) < 0; });
     var auth = !!s.auth;
     var html =
-      '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>' + s.name + '</title>\n' +
+      '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n' +
       '<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
-      '<img src="logo.svg" alt="' + s.name + ' logo" width="40" height="40">\n' +
-      '<div id="root"></div>\n' +
+      '<a href="#root" class="skip-link">Skip to content</a>\n' +
+      '<header><img src="logo.svg" alt="' + s.name + ' logo" width="40" height="40"></header>\n' +
+      '<main id="root"></main>\n' +
       '<script src="vendor/vdom.js"></script>\n<script src="app.js"></script>\n</body>\n</html>\n';
     var js = [
       "'use strict';",
       "/* " + s.name + " — a " + (s.frontend || 'react') + " component app on the vendored React-compatible runtime. */",
-      "var h = CSDom.h, render = CSDom.render, useState = CSDom.useState, useEffect = CSDom.useEffect;",
+      "var h = CSDom.h, Fragment = CSDom.Fragment, render = CSDom.render, useState = CSDom.useState, useEffect = CSDom.useEffect;",
       "",
       "function api(path, opts) {",
       "  opts = opts || {};",
@@ -232,10 +233,10 @@
       auth
         ? "  var s = useState(!!localStorage.getItem('token')); var authed = s[0], setAuthed = s[1];\n" +
           "  if (!authed) return h(Auth, { onAuthed: function () { setAuthed(true); } });\n" +
-          "  return h('main', null,\n" +
+          "  return h(Fragment, null,\n" +
           "    h('header', { className: 'bar' }, h('h1', null, '" + s.name + "'), h('button', { onClick: function () { localStorage.removeItem('token'); setAuthed(false); } }, 'Log out')),\n" +
           "    " + ents.map(function (e) { return "h(" + cap(e.name) + "Panel, null)"; }).join(',\n    ') + "\n  );"
-        : "  return h('main', null,\n    h('h1', null, '" + s.name + "'),\n    " + ents.map(function (e) { return "h(" + cap(e.name) + "Panel, null)"; }).join(',\n    ') + "\n  );",
+        : "  return h(Fragment, null,\n    h('h1', null, '" + s.name + "'),\n    " + ents.map(function (e) { return "h(" + cap(e.name) + "Panel, null)"; }).join(',\n    ') + "\n  );",
       "}",
       "",
       "render(h(App, null), document.getElementById('root'));",
@@ -259,10 +260,13 @@
       "      localStorage.setItem('token', r.body.token); props.onAuthed();",
       "    });",
       "  }",
-      "  return h('section', { className: 'card auth' },",
+      "  return h('section', { className: 'card auth', 'aria-label': 'sign in' },",
+      "    h('h2', null, 'Sign in'),",
       "    h('form', { onSubmit: submit },",
-      "      h('input', { type: 'email', placeholder: 'you@example.com', value: email, required: true, onInput: function (ev) { setEmail(ev.target.value); } }),",
-      "      h('input', { type: 'password', placeholder: 'password (8+)', value: pass, required: true, onInput: function (ev) { setPass(ev.target.value); } }),",
+      "      h('label', { htmlFor: 'fEmail' }, 'Email'),",
+      "      h('input', { id: 'fEmail', type: 'email', autocomplete: 'email', 'aria-label': 'email', placeholder: 'you@example.com', value: email, required: true, onInput: function (ev) { setEmail(ev.target.value); } }),",
+      "      h('label', { htmlFor: 'fPass' }, 'Password'),",
+      "      h('input', { id: 'fPass', type: 'password', autocomplete: 'current-password', 'aria-label': 'password', placeholder: 'password (8+)', value: pass, required: true, onInput: function (ev) { setPass(ev.target.value); } }),",
       "      h('button', { type: 'submit' }, mode === 'login' ? 'Sign in' : 'Create account'),",
       "      h('button', { type: 'button', id: 'authToggle', onClick: function () { setMode(mode === 'login' ? 'register' : 'login'); } }, mode === 'login' ? 'Need an account?' : 'Have an account?')",
       "    ),",
@@ -297,7 +301,7 @@
       fields.map(function (fl) {
         var t = (fl.type === 'int' || fl.type === 'float') ? 'number' : (fl.type === 'bool' ? 'checkbox' : 'text');
         if (t === 'checkbox') return "      h('label', null, h('input', { type: 'checkbox', checked: !!form." + fl.name + ", onChange: function (ev) { setForm(Object.assign({}, form, { " + fl.name + ": ev.target.checked })); } }), ' " + fl.name + "'),";
-        return "      h('input', { type: '" + t + "', placeholder: '" + fl.name + "', value: form." + fl.name + " || '', " + (fl.required ? "required: true, " : "") + "onInput: function (ev) { setForm(Object.assign({}, form, { " + fl.name + ": ev.target.value })); } }),";
+        return "      h('input', { type: '" + t + "', 'aria-label': '" + fl.name + "', placeholder: '" + fl.name + "', value: form." + fl.name + " || '', " + (fl.required ? "required: true, " : "") + "onInput: function (ev) { setForm(Object.assign({}, form, { " + fl.name + ": ev.target.value })); } }),";
       }).join('\n'),
       "      h('button', { type: 'submit' }, 'Add " + e.name + "')",
       "    ),",
@@ -318,8 +322,9 @@
     var first = ents[0];
     var firstFields = first ? (first.fields || []).filter(function (f) { return ['id', 'timestamp'].indexOf(f.type) < 0 && !(f.type === 'ref' && f.ref === 'user'); }) : [];
     var html =
-      '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
-      '<img src="logo.svg" alt="' + s.name + ' logo" width="40" height="40">\n<div id="app"></div>\n' +
+      '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
+      '<a href="#app" class="skip-link">Skip to content</a>\n' +
+      '<header><img src="logo.svg" alt="' + s.name + ' logo" width="40" height="40"></header>\n<main id="app"></main>\n' +
       '<script src="vendor/vue-lite.js"></script>\n<script src="app.js"></script>\n</body>\n</html>\n';
     var js = [
       "'use strict';",
@@ -344,17 +349,20 @@
       "  render: function (ctx, h) {",
       "    var st = ctx.st;",
       auth
-        ? "    if (!st.authed) return h('section', { class: 'card auth' }, [\n" +
+        ? "    if (!st.authed) return h('div', {}, [ h('section', { class: 'card auth', 'aria-label': 'sign in' }, [\n" +
+          "      h('h2', {}, ['Sign in']),\n" +
           "      h('form', { onSubmit: function (e) { e.preventDefault(); ctx.auth_(); } }, [\n" +
-          "        h('input', { type: 'email', placeholder: 'you@example.com', value: st.email, onInput: function (e) { st.email = e.target.value; } }),\n" +
-          "        h('input', { type: 'password', placeholder: 'password (8+)', value: st.pass, onInput: function (e) { st.pass = e.target.value; } }),\n" +
+          "        h('label', { for: 'vEmail' }, ['Email']),\n" +
+          "        h('input', { id: 'vEmail', type: 'email', autocomplete: 'email', 'aria-label': 'email', placeholder: 'you@example.com', value: st.email, onInput: function (e) { st.email = e.target.value; } }),\n" +
+          "        h('label', { for: 'vPass' }, ['Password']),\n" +
+          "        h('input', { id: 'vPass', type: 'password', autocomplete: 'current-password', 'aria-label': 'password', placeholder: 'password (8+)', value: st.pass, onInput: function (e) { st.pass = e.target.value; } }),\n" +
           "        h('button', { type: 'submit' }, [st.mode === 'login' ? 'Sign in' : 'Create account']),\n" +
           "        h('button', { type: 'button', id: 'authToggle', onClick: function () { st.mode = st.mode === 'login' ? 'register' : 'login'; } }, [st.mode === 'login' ? 'Need an account?' : 'Have an account?'])\n" +
           "      ]),\n" +
           "      st.err ? h('div', { class: 'err' }, [st.err]) : null\n" +
-          "    ]);\n"
+          "    ]) ]);\n"
         : "",
-      "    return h('main', {}, [",
+      "    return h('div', {}, [",
       auth ? "      h('header', { class: 'bar' }, [h('h1', {}, ['" + s.name + "']), h('button', { onClick: ctx.logout }, ['Log out'])])," : "      h('h1', {}, ['" + s.name + "']),",
       first
         ? "      h('section', { class: 'card', 'data-entity': '" + first.name + "' }, [\n" +
@@ -362,7 +370,7 @@
           "        h('form', { class: 'create', onSubmit: function (e) { e.preventDefault(); ctx.add(); } }, [\n" +
           firstFields.map(function (f) {
             var t = (f.type === 'int' || f.type === 'float') ? 'number' : 'text';
-            return "          h('input', { type: '" + t + "', placeholder: '" + f.name + "', value: st.form." + f.name + " || '', onInput: function (e) { st.form." + f.name + " = e.target.value; } }),";
+            return "          h('input', { type: '" + t + "', 'aria-label': '" + f.name + "', placeholder: '" + f.name + "', value: st.form." + f.name + " || '', onInput: function (e) { st.form." + f.name + " = e.target.value; } }),";
           }).join('\n') + "\n" +
           "          h('button', { type: 'submit' }, ['Add " + first.name + "'])\n" +
           "        ]),\n" +
@@ -381,11 +389,14 @@
   function frameworkCss() {
     return "*{box-sizing:border-box}body{font:15px/1.5 system-ui,sans-serif;max-width:780px;margin:24px auto;padding:0 16px;color:#111}" +
       "h1{margin:0 0 16px}h2{margin:0 0 10px;font-size:16px;text-transform:capitalize}" +
+      "label{font-size:12px;color:#444;width:100%;margin-bottom:-4px}" +
       ".card{border:1px solid #ddd;border-radius:10px;padding:16px;margin-bottom:16px}.bar{display:flex;justify-content:space-between;align-items:center}" +
-      "form{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}input:not([type=checkbox]){flex:1;min-width:120px;padding:7px 9px;border:1px solid #ccc;border-radius:7px}" +
-      "button{padding:7px 12px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:7px;cursor:pointer}" +
+      "form{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}input:not([type=checkbox]){flex:1;min-width:120px;padding:8px 10px;border:1px solid #767676;border-radius:7px;min-height:24px}" +
+      "button{padding:9px 14px;border:1px solid #1d4ed8;background:#1d4ed8;color:#fff;border-radius:7px;cursor:pointer;min-height:24px}" +
       "ul{list-style:none;padding:0;margin:0}li{padding:6px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center}" +
-      ".err{color:#b91c1c}.empty{color:#888}li button{background:transparent;color:#b91c1c;border-color:#e5b4b4;font-size:12px;padding:2px 8px}\n";
+      ".err{color:#b91c1c}.empty{color:#6b6b6b}li button{background:transparent;color:#b91c1c;border-color:#b91c1c;font-size:12px;padding:6px 10px}" +
+      ".skip-link{position:absolute;left:-9999px;top:0;background:#000;color:#fff;padding:8px 12px;z-index:10}.skip-link:focus{left:8px}" +
+      "a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}\n";
   }
   function logoSvg(name) {
     return '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><rect width="40" height="40" rx="9" fill="#2563eb"/><text x="20" y="27" font-size="20" fill="#fff" text-anchor="middle" font-family="system-ui">' + (name[0] || 'A').toUpperCase() + '</text></svg>\n';

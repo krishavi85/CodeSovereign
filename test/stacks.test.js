@@ -365,6 +365,33 @@ module.exports = async function (t) {
     t.ok('ops(python): app/main.py exposes /healthz + /readyz + /metrics + JSON access log', /"\/healthz"/.test(pg['/app/main.py']) && /"\/metrics"/.test(pg['/app/main.py']) && /_metrics_text/.test(pg['/app/main.py']) && /json\.dumps\(rec\)/.test(pg['/app/main.py']));
   }
 
+  /* ---------- 12. Accessibility gate (§47): generated frontends pass WCAG; violations block the DoD ---------- */
+  {
+    const win = loadEngines(['engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.frontends.js', 'engine.graphql.js', 'engine.realtime.js', 'engine.pybackend.js', 'engine.microservices.js', 'engine.scaffold.js', 'engine.a11y.js', 'engine.contract.js', 'engine.ledger.js', 'engine.dod.js']);
+    const clearFS = () => Object.keys(win.Engine.FS._data).forEach((k) => delete win.Engine.FS._data[k]);
+    for (const fw of ['vanilla', 'react', 'vue']) {
+      clearFS();
+      win.Engine.Scaffold.generate({ name: 'acc', auth: true, frontend: fw === 'vanilla' ? undefined : fw, entities: [{ name: 'note', fields: [{ name: 'body', type: 'text', required: true }, { name: 'ownerId', type: 'ref', ref: 'user', required: true }] }] }).forEach((f) => win.Engine.FS.write(f.path, f.content));
+      const r = win.Engine.A11y.audit();
+      t.equal('a11y(' + fw + '): the generated frontend has no critical or serious WCAG violations', ((r.byImpact.critical || 0) + (r.byImpact.serious || 0)), 0);
+      t.ok('a11y(' + fw + '): score >= 96', r.score >= 96);
+    }
+    // contrast maths
+    t.ok('a11y: contrastRatio(#000,#fff) ≈ 21', Math.abs(win.Engine.A11y.contrastRatio('#000000', '#ffffff') - 21) < 0.1);
+    t.ok('a11y: contrastRatio flags #999 on #fff as < 4.5', win.Engine.A11y.contrastRatio('#999999', '#ffffff') < 4.5);
+
+    // an injected barrier -> critical -> DoD accessibilityPass fails
+    clearFS();
+    win.Engine.FS.write('/public/index.html', '<!doctype html><html lang="en"><body><main><img src="x.png"><form><input type="text"></form></main></body></html>');
+    const bad = win.Engine.A11y.audit();
+    t.ok('a11y: an <img> with no alt + an unlabelled input are CRITICAL', (bad.byImpact.critical || 0) >= 2);
+    const dod = win.Engine.DoD.evaluate();
+    t.equal('DoD: accessibilityPass FAILS while the critical barriers exist', dod.criteria.accessibilityPass, false);
+    win.Engine.FS.write('/public/index.html', '<!doctype html><html lang="en"><body><a href="#m" class="skip-link">skip</a><header><h1>x</h1></header><main id="m"><img src="x.png" alt="a chart"><form><label for="q">Query</label><input id="q" type="text"></form></main></body></html>');
+    win.Engine.A11y.audit();
+    t.equal('DoD: accessibilityPass PASSES once the frontend is clean', win.Engine.DoD.evaluate().criteria.accessibilityPass, true);
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

@@ -79,6 +79,8 @@
     'architecture-rules.md':      'Readable architecture violations + score',
     'privacy-findings.json':      'PII / data-protection scan — data in logs, PII in URLs, secrets in responses, egress (spec §18)',
     'privacy-report.md':          'Readable privacy findings + score',
+    'a11y-findings.json':         'WCAG 2.1 AA accessibility audit — alt / labels / contrast / keyboard / focus / ARIA (spec §47)',
+    'a11y-report.md':             'Readable accessibility findings + score',
     'blockchain-evidence.json':   'EVM target — solc compile + local-chain deploy + transactions + receipts + static analysis',
     'mobile-evidence.json':       'Native-mobile target — gradle build + emulator install/launch + logcat + screenshot',
     'ml-evidence.json':           'ML-training target — dataset inspection + real training loss curve + checkpoint + eval metric',
@@ -601,6 +603,9 @@
 
     // ---- privacy / PII scan (spec §18) ----
     safe(function () { window.Engine.Privacy && window.Engine.Privacy.scan(); });
+
+    // ---- accessibility audit (spec §47) ----
+    safe(function () { window.Engine.A11y && window.Engine.A11y.audit(); });
 
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {

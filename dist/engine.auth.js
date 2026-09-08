@@ -114,10 +114,13 @@
   function uiFragment() {
     return {
       html:
-        '  <section id="authPanel" class="card">\n' +
+        '  <section id="authPanel" class="card" aria-labelledby="authHeading">\n' +
+        '    <h2 id="authHeading">Sign in</h2>\n' +
         '    <form id="authForm">\n' +
-        '      <input id="authEmail" type="email" placeholder="you@example.com" required aria-label="email">\n' +
-        '      <input id="authPass" type="password" placeholder="password (8+ chars)" required aria-label="password">\n' +
+        '      <label for="authEmail">Email</label>\n' +
+        '      <input id="authEmail" type="email" autocomplete="email" placeholder="you@example.com" required aria-label="email">\n' +
+        '      <label for="authPass">Password</label>\n' +
+        '      <input id="authPass" type="password" autocomplete="current-password" placeholder="password (8+ chars)" required aria-label="password">\n' +
         '      <button type="submit" id="authSubmit">Sign in</button>\n' +
         '      <button type="button" id="authToggle">Need an account?</button>\n' +
         '    </form>\n' +
