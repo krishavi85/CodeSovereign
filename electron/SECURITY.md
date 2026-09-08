@@ -199,6 +199,23 @@ boundaries. Both were hardened before the M2 merge.
 | Observe vs interactive mode | default **observe**: controls whose label matches the destructive/mutating pattern (`delete\|send\|pay\|submit\|publish\|deploy\|confirm\|…`), `type=submit`, and form-submit buttons are **SKIPPED, never activated**. `interactive` mode requires a confirmation dialog in main and clicks them. |
 | Action log | every activation, skip, blocked request and navigation is recorded in `runtime-trace.json` (`actionLog`). |
 
+### GodMode closed loop (`dist/engine.godmode.js`)
+
+`Engine.GodMode` generates and verifies a project from one prompt. It adds no new
+IPC surface — it sequences engines that already carry the boundaries above. What
+it adds on top:
+
+| Concern | Control |
+|---|---|
+| Generated code is untrusted | generation only writes into the **already-open, already-trusted** workspace; `runEvidence` still goes through the trusted-workspace `proc:*` gate (exact command + cwd shown, no auto-run, credentials stripped from the child env, timeouts, process-tree kill); `observe` still uses the isolated ephemeral-session window. |
+| Unsafe requests | `Contract.deriveFromPrompt` matches a refusal list (covert behaviour, credential theft, cryptojacking, spam/DoS, DRM/paywall circumvention, coordinated deception, malware) → `verdict:'unsafe'` → the run ends `BLOCKED` **before any generation**. |
+| Out-of-scope requests | anything outside the supported stack is recorded as `unsupported`; a request whose core is out of scope ends `BLOCKED`, never faked. |
+| Secrets in the prompt | the coordinator scrubs token-shaped strings from the prompt before persisting; `Sovereign.write` also redacts `godmode-run` / `godmode-report` / `godmode-plan` / `product-contract`. |
+| Deployment | `Engine.Deploy.apply` **generates** IaC + a deploy script only. Nothing is pushed — that needs the user's credentials. |
+| Bounded autonomy | `maxRepairAttempts`, overall `runTimeoutMs`, `cancel()`; `Engine.Autonomy.allows('generate'/'repair')` is checked before those side effects. |
+| Resume | state is persisted to `.sovereign/godmode-run.json` after every transition; `resume()` skips generation if the repo is already on disk — no repeated side effects. |
+| Browser mode | generation runs; execution + observation are reported **unavailable** and the run ends `BLOCKED` — never a false `VERIFIED`. |
+
 ## Parser & memory safeguards
 
 - `.sovereign/**` is excluded from every analyzer (`SELF_RE` in mockscan /
@@ -207,7 +224,9 @@ boundaries. Both were hardened before the M2 merge.
 - **Evidence redaction**: `engine.sovereign.write()` scrubs GitHub / OpenAI /
   Anthropic / Slack / AWS tokens, JWTs, PEM keys and `key=value` secrets from
   `execution-evidence`, `runtime-trace`, `diagnostics/*`, `known-issues`,
-  `production-readiness`, `command-audit` before writing.
+  `production-readiness`, `command-audit`, `godmode-run`, `godmode-report`,
+  `godmode-plan` and `product-contract` before writing. `Engine.GodMode` also
+  scrubs the prompt itself before persisting.
 - **Atomic writes**: `workspace.writeFile`, `store.save`, `creds.saveAll` write a
   temp file then `rename` over the target; `readTree` skips `.cs-tmp-*`.
 - **History retention**: `.sovereign/history/` keeps the last 15 snapshots;
@@ -250,3 +269,8 @@ credential key validation, snapshot id validation, the 8.3-short-path
 containment regression, and the symlink write/scan defence.
 `test/workspace.test.js` covers path normalization (`/`, `\`, `.`, `..`) and
 protected dirs.
+`test/godmode.test.js` covers the closed-loop coordinator: repair limits,
+rollback, cancellation, resume-without-repeated-side-effects, unsafe → BLOCKED,
+unsupported → BLOCKED, browser-mode degradation, secret redaction, deterministic
+ids. `npm run acceptance:godmode` proves the real integration end to end plus the
+resume and negative scenarios.

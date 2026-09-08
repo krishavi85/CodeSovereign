@@ -162,9 +162,9 @@ chase the 68 framework / platform features.
 | § | Capability | State |
 |---|---|---|
 | 69 | Graduated control levels (Assist / Build / Engineer / Autopilot / GodMode) | ✅ `dist/engine.autonomy.js` — 5 levels, each a capability set over `write/generate/command/repair/observe/deploy/release/network`. `allows(action)` / `gate(action, fn)`. `Engine.Orchestrator.run()` checks `allows('generate'/'command'/'observe'/'repair')` before each side effect; `Engine.Agents` blocks disallowed agents; Settings → **Autonomy & Deployment** card sets the level (persisted). Default `engineer`. |
-| 70 | GodMode command (compact BUILD/TARGET/CONSTRAINTS/MODE declaration) | ⬜ |
-| 71 | The GodMode pipeline (one closed loop intent→…→SOVEREIGN VERIFIED) | 🟨 the P0 slice (`engine.orchestrator.js`) closes the loop for a task DAG with generators; the 20-stage `engine-universal.js` front end still feeds it only a plan |
-| 72 | The defining difference (verified outcomes, not files) | 🟨 now demonstrated on **generated** code too (acceptance §8), for template/LLM-task slices; not yet for a full from-scratch product |
+| 70 | GodMode command (compact BUILD/TARGET/CONSTRAINTS/MODE declaration) | 🟨 `Engine.GodMode.start({ prompt, answers?, bounds?, useLLM? })` is the programmatic entry; a free-text request is normalised into the machine-readable contract (BUILD/TARGET/CONSTRAINTS are all derived). A terse `BUILD:/TARGET:/CONSTRAINTS:/MODE:` DSL is not parsed as a distinct syntax. |
+| 71 | The GodMode pipeline (one closed loop intent→…→SOVEREIGN VERIFIED) | ✅ `dist/engine.godmode.js` `Engine.GodMode` — one coordinator, an explicit 15-state machine persisted to `.sovereign/godmode-run.json` (resumes after an app restart with no regeneration), bounded (max repair attempts, run timeout, cancellation), snapshot-before-mutation + rollback-when-worse. It sequences the existing engines only: `Contract.deriveFromPrompt` → `Universal.buildPlan` → `Scaffold`/`TestGen`/`Deploy` → `Sovereign.analyze`/`runEvidence`/`observe` → `Ledger` → `Recovery` → `DoD` + certificate. A plain-browser run generates then ends `BLOCKED` (execution + observation unavailable) — never falsely verified. Proven end-to-end by `npm run acceptance:godmode` (prompt → SOVEREIGN VERIFIED + resume + two negative scenarios) and `test/godmode.test.js` (82 checks). See `docs/GODMODE_CLOSED_LOOP.md`. |
+| 72 | The defining difference (verified outcomes, not files) | ✅ demonstrated for a **from-scratch product** built from one natural-language request: `acceptance:godmode` starts from an empty workspace + the acceptance prompt, generates a ~31-file full-stack app, runs its real `npm test/build/lint`, crawls it running, injects + repairs a defect through the normal repair path, and only then emits `SOVEREIGN VERIFIED`. A requirement is `verified` only when its acceptance criteria pass against real evidence — never because a file exists. |
 
 ---
 
@@ -172,25 +172,25 @@ chase the 68 framework / platform features.
 
 | Stage | State | Gap |
 |---|---|---|
-| 1 Prompt intake / composer | 🟨 | text + platform + budget only; no attachments/screenshots/repos/audio |
-| 2 Prompt normalization | 🟨 | keyword + spellfix rules, no model |
-| 3 Application classifier | 🟨 | rule-based; `estimatedModules` is a heuristic |
-| 4 Requirements engine | 🟨 | list produced; not verified per-requirement |
-| 5 Feasibility & constraint analysis | 🟧 | returns mostly hard-coded "pass" checks |
-| 6 Product specification (`/project-docs/*.md`) | 🟧 | `writeProjectDocs()` emits markdown; not driven into the build |
-| 7 Architecture generation | 🟧 | object + `architecture.md`; not enforced |
-| 8 Technology stack selection | 🟨 | `StackSelector` picks by rules; not validated against the machine |
-| 9 Project blueprint (repo structure) | 🟧 | a structure *list*; generator ignores it |
-| 10 Multi-agent orchestration | 🟧 | DAG of `PENDING` tasks, **no executor / agents** |
-| 11 Code generation | 🟨 | one LLM call → flat SPA, or templates |
-| 12 Connection & wiring engine | 🟨 | `engine-universal.js` produces wiring *contracts* + a simple issue list; no deep "button→handler→endpoint→service→DB" verification of generated code |
+| 1 Prompt intake / composer | 🟨 | free-text request → `Engine.GodMode.start({ prompt })` or the GodMode screen; still no attachments/screenshots/repos/audio |
+| 2 Prompt normalization | 🟨 | keyword + spellfix rules (`Universal.Normalizer`), optional model pass; feeds `Contract.deriveFromPrompt` |
+| 3 Application classifier | 🟨 | rule-based (`Universal.Classifier`); now consumed by the contract's `product.type` + stack choice |
+| 4 Requirements engine | ✅ | `Contract.deriveFromPrompt` → machine-readable requirements with stable ids + machine-checkable acceptance criteria; each is **verified per-requirement** by `Engine.Ledger` against real evidence |
+| 5 Feasibility & constraint analysis | 🟨 | the contract records `unsupported` / `unsafe` / `blockingQuestions` / `assumptions`; `GodMode` acts on them (BLOCKED / NEEDS_INPUT / recorded default). Cost/host feasibility is still light. |
+| 6 Product specification (`/project-docs/*.md`) | 🟨 | `product-contract.json` + `godmode-plan.json` + `godmode-report.md` are the driven spec; the older `writeProjectDocs()` markdown is not wired into `GodMode` |
+| 7 Architecture generation | 🟨 | `Universal.buildPlan` + the contract's entities/journeys/api table drive generation; `Sovereign.analyze` regenerates architecture diagrams from the real graph. Not enforced as contract *rules*. |
+| 8 Technology stack selection | 🟨 | `Contract` picks the supported stack from the prompt (Postgres vs SQLite vs JSON, auth, jobs); `Scaffold` honours it. Not validated against the host machine. |
+| 9 Project blueprint (repo structure) | ✅ | `Scaffold.generate` emits the real repo structure the plan predicts; `godmode-plan.json` lists the files up front and the ledger checks they exist |
+| 10 Multi-agent orchestration | ✅ | `Engine.GodMode` (state machine) + `Engine.Agents` (specialist roster) + `Engine.Orchestrator` (task DAG). `Universal.buildPlan` produces the typed plan the coordinator executes against the real engines. |
+| 11 Code generation | ✅ | `Engine.Scaffold.specFromContract` → `generate()` → a complete dependency-free full-stack repo (backend + data layer + real SQL migrations + auth + async queue/worker + frontend + tests + CI + Docker). Driven from the contract, offline, deterministic. Vanilla JS + JSON/pg store by design (so the generated `npm test` runs and the observer can drive it). |
+| 12 Connection & wiring engine | 🟨 | `Sovereign.analyze` builds the connection graph + health; `Ledger` checks per-control runtime verdicts (REAL / MOCK / BROKEN) from the observer crawl. Deep "button→handler→endpoint→service→DB" *static* tracing of generated code is still partial. |
 | 13 Build & execution | ✅ | real, via proc bridge (for projects that build) |
 | 14 Automated testing | ✅ | `engine.testgen.js` generates API + chaos + a11y `node:test` files; `runEvidence()` executes them |
-| 15 Repair loop | 🟨 | Recovery loop; not requirement-driven |
-| 16 Quality gate (requirements met / no mocks / no broken routes / UX verified) | 🟧 | the ingredients exist; not assembled into one gate |
+| 15 Repair loop | ✅ | `Engine.GodMode` REPAIRING/REVERIFYING — snapshot → `Recovery.run` → re-execute + re-observe → re-evaluate the DoD; bounded by `maxRepairAttempts`, rolls back a repair that makes the evidence worse, stops when a repair makes no progress |
+| 16 Quality gate (requirements met / no mocks / no broken routes / UX verified) | ✅ | `Engine.DoD.evaluate()` — 8 blocking criteria (implementation exists · dependencies connected · build succeeds · tests succeed · runtime action succeeds · no fake implementation · security gates · acceptance criteria) computed from real evidence; `Engine.GodMode` will not emit `VERIFIED` without it + a real certificate. |
 | 17 Packaging | 🟨 | Windows only |
 | 18 Deployment | 🟨 | `engine.deploy.js` generates IaC + deploy script + preflight for 7 targets; does not push (needs creds) |
-| 19/20 Delivery contract (code + build + tests + package + guide + evidence + known limits + continuation state) | 🟨 | `.sovereign/` covers evidence + continuation; no assembled delivery bundle |
+| 19/20 Delivery contract (code + build + tests + package + guide + evidence + known limits + continuation state) | 🟨 | `Engine.GodMode` produces `godmode-report.md` (request, state, assumptions, blocking questions, unsupported/unsafe items, the evidence timeline, requirement traceability) + the full `.sovereign/` set (contract, plan, ledger, DoD, certificate). Not yet a single downloadable delivery archive. |
 
 ---
 

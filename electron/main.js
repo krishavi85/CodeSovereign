@@ -30,10 +30,11 @@ const SMOKE = process.argv.includes('--smoke');
 const SMOKE_OBSERVER = process.argv.includes('--smoke-observer');
 const ACCEPTANCE = process.argv.includes('--acceptance');
 const ACCEPTANCE_BUILD = process.argv.includes('--acceptance-build');
+const ACCEPTANCE_GODMODE = process.argv.includes('--acceptance-godmode');
 const RENDERER = path.join(__dirname, '..', 'dist', 'index.html');
 
 // The headless checks run on CI runners with no GPU / no desktop session.
-if (SMOKE || SMOKE_OBSERVER || ACCEPTANCE || ACCEPTANCE_BUILD) {
+if (SMOKE || SMOKE_OBSERVER || ACCEPTANCE || ACCEPTANCE_BUILD || ACCEPTANCE_GODMODE) {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('in-process-gpu');
@@ -542,6 +543,7 @@ if (!app.requestSingleInstanceLock()) {
     if (SMOKE_OBSERVER) { runObserverSmoke(); return; }
     if (ACCEPTANCE) { require('./acceptance').run(); return; }
     if (ACCEPTANCE_BUILD) { require('./acceptance-build').run(); return; }
+    if (ACCEPTANCE_GODMODE) { require('./acceptance-godmode').run(); return; }
 
     createWindow();
 
