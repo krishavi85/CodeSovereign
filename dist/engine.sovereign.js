@@ -104,6 +104,7 @@
     'feature-graph.md':           'Readable feature-completion matrix',
     'decision-log.json':          'Decision ledger — ADRs harvested from the build evidence (assumptions, substitutions, refusals, rolled-back repairs, release decision) (spec §57-58)',
     'decision-report.md':         'Architecture Decision Records, newest first',
+    'intake.json':                'Non-text prompt intake — spec docs / JSON schema / OpenAPI parsed to entities + requirements (build-flow stage 1)',
     'cicd.json':                  'Multi-provider CI/CD generation — GitLab / Jenkins / Azure / Bitbucket from the detected stack (spec §40)',
     'cicd-report.md':             'Readable CI/CD generation summary',
     'bootstrap.json':             'Environment bootstrap plan — required runtimes + versions + setup steps (spec §33)',

@@ -313,6 +313,21 @@
   function deriveFromPrompt(prompt, opts) {
     opts = opts || {};
     prompt = String(prompt || '').trim();
+    // stage 1: fold an attached spec document (markdown / JSON schema / OpenAPI)
+    // into the prompt so the rest of the pipeline sees it as prose intent, and
+    // stash its parsed entities as an explicit hint for _derivePrompt.
+    if (opts.documents && window.Engine && Engine.Intake && Engine.Intake.enrichPrompt) {
+      try {
+        prompt = Engine.Intake.enrichPrompt(prompt, opts.documents);
+        var _de = [];
+        (Array.isArray(opts.documents) ? opts.documents : [opts.documents]).forEach(function (d) {
+          var r = Engine.Intake.fromDocument(typeof d === 'string' ? d : (d.text || d.content || ''), d && d.kind);
+          (r.entities || []).forEach(function (e) { _de.push({ name: e.name, fields: (e.fields || []).map(function (f) { return f.name; }) }); });
+        });
+        if (_de.length) opts = Object.assign({}, opts, { _docEntities: _de });
+        if (Engine.Intake.analyze) Engine.Intake.analyze(opts.documents);
+      } catch (_) {}
+    }
     // §2-3: model-first intent when a provider is connected, deterministic rules
     // otherwise. Engine.Intent runs the rule-based Normalizer/Classifier as the
     // backbone and lets the model refine only the fuzzy fields.
@@ -333,6 +348,12 @@
     var classification = (intent && intent.classification) ? intent.classification
       : (U ? U.Classifier.classify(normalized) : { primaryType: 'web_application', complexity: 'standard', riskLevel: 'low' });
     var intentEntities = (intent && intent.entitiesHint) || null;
+    // an attached spec document's entities take priority over rule inference
+    if (opts._docEntities && opts._docEntities.length) {
+      var _byName = {}; (intentEntities || []).forEach(function (e) { _byName[e.name] = e; });
+      opts._docEntities.forEach(function (e) { _byName[e.name] = { name: e.name, fields: (e.fields || []).concat(((_byName[e.name] || {}).fields) || []) }; });
+      intentEntities = Object.keys(_byName).map(function (k) { return _byName[k]; });
+    }
     var intentDesign = (intent && intent.design) || null;
     var lc = prompt.toLowerCase();
 

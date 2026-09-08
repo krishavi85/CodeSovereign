@@ -61,6 +61,7 @@
   // The evidence artifacts we fold in, in a sensible reading order. Each is
   // included only if it exists in the store.
   var EVIDENCE = [
+    'intake.json',
     'product-contract.json',
     'evidence-ledger.json',
     'definition-of-done.json',

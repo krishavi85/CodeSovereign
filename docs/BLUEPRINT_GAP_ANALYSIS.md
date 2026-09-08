@@ -15,7 +15,7 @@ The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
 repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 769, `acceptance` 38, `acceptance:build` 26,
+(`node test/run.js` 781, `acceptance` 38, `acceptance:build` 26,
 `acceptance:ultramode` 57) prove it end to end in the real Electron renderer.
 
 The last several sessions closed the breadth items from the blueprint's own
@@ -48,8 +48,11 @@ factory can't provide offline, or they are adjacent products):
   and wires the image as the visual-fidelity reference; status `PARTIAL`,
   reason `VISION_MODEL_REQUIRED`. *(Figma-export + HTML ingestion → design spec +
   token CSS is **done**.)*
-- **Prompt intake — non-text** (stage 1): repo import / audio / attachments — 🟨.
-  *(Model-driven intent for **text** (§2–3) is **done** — `engine.intent.js`.)*
+- **Prompt intake — audio** (stage 1): voice → transcript needs a model. *(An
+  attached **spec document** — Markdown / JSON Schema / OpenAPI — is **done**:
+  `engine.intake.js` parses it to entities + requirements + API routes and folds
+  it into the contract; **repo import** is `Sovereign.analyze()` on an opened
+  folder (§53); model-driven **text** intent (§2–3) is `engine.intent.js`.)*
 - **Hosted-service wiring** (§38-39, §43-46 integration): an OTel collector, a
   Sentry DSN, `npm publish` / a signed GitHub release, a GitHub delivery
   workflow — config-only steps that need the user's accounts / credentials. The
@@ -106,7 +109,7 @@ chase the 68 framework / platform features.
 | § | Capability | State | Notes |
 |---|---|---|---|
 | 1 | Universal project creation (every surface) | ✅ (web + mobile + contract + ML) / ⬜ (desktop / extension) | `Engine.Scaffold` generates a complete full-stack **web** repo from the contract; the runtime-adapter path (§70b) generates + verifies **native Android**, **native iOS** (staged), **EVM contracts** and **ML training** projects. The single-file `engine.llm.js` / `engine.js` template path still exists for a quick flat SPA. Native desktop (Electron/Tauri) and browser-extension generators are not built. |
-| 2 | Intent engine | ✅ (text) | `dist/engine.intent.js` `Engine.Intent.resolve()` — **model-first**: when a provider is connected the model reads the request and returns a structured understanding (typo-corrected text, project goal, application category, target platforms, actors, capabilities, an **entity-model hint**, decisions still owed, design language). The rule-based `Normalizer` + `Classifier` always runs as the backbone — the model can only *refine* the fuzzy fields, never remove a safety or stack decision. `Engine.Contract.deriveFromPrompt` consumes it (`contract.intent.source` = `model+rules` / `rules`; the model's data model, deduped + typed, feeds the entities). Deterministic + offline with no key. `test/stacks.test.js` §15. Still text-only — no attachment/screenshot parsing. |
+| 2 | Intent engine | ✅ (text) | `dist/engine.intent.js` `Engine.Intent.resolve()` — **model-first**: when a provider is connected the model reads the request and returns a structured understanding (typo-corrected text, project goal, application category, target platforms, actors, capabilities, an **entity-model hint**, decisions still owed, design language). The rule-based `Normalizer` + `Classifier` always runs as the backbone — the model can only *refine* the fuzzy fields, never remove a safety or stack decision. `Engine.Contract.deriveFromPrompt` consumes it (`contract.intent.source` = `model+rules` / `rules`; the model's data model, deduped + typed, feeds the entities). Deterministic + offline with no key. `test/stacks.test.js` §15. **Non-text intake**: `dist/engine.intake.js` (`Engine.Intake`) parses an attached **Markdown spec / JSON Schema / OpenAPI** doc → entities (from "Data model" sections + tables + `properties` / `components.schemas`), requirements (must / shall / should sentences), API routes (from prose or `paths`); `deriveFromPrompt({ documents })` distils it into the prompt **and** injects its entities as an explicit hint that overrides rule inference. `test/intake.test.js` (12 checks). |
 | 3 | Requirement completeness (requested→implied→missing→verified) | 🟨 | `engine.requirements.js` has 13 domain packs, archetypes, contradictions, weighted scoring, progressive questions. `engine-universal.js RequirementsEngine` expands a prompt to a functional/non-functional list. Neither is tied to a per-requirement **verification** record. |
 | 4 | Autonomous architecture engine | 🟧 | `engine-universal.js` produces an architecture *object* (client/gateway/backend/data components) + `architecture.md`. Rule-based; not used to drive generation. |
 | 5 | Full repository generator | ✅ | `dist/engine.scaffold.js` — a spec → a **complete, runnable, tested** dependency-free full-stack repo: backend + data layer + SQL migrations + auth + frontend + unit/integration tests + build/lint/migrate scripts + CI + Dockerfile + `.env.example` + README. Proven by `npm run acceptance:build` (generate → analyze → **real npm test/build/lint** → observe → DoD **SOVEREIGN VERIFIED**, 26/26). Wired into `Engine.Orchestrator` (`task.scaffold`). **Stack breadth** (all verified by generating → running → observing, `test/stacks.test.js`): React / Preact / Vue / Svelte / Angular component frontends via a vendored ~220-line VDOM+hooks runtime, no build step (`engine.frontends.js`); a pure-standard-library **Python** HTTP backend — `http.server` + `sqlite3` + `hashlib.scrypt` + `unittest`, no pip (`engine.pybackend.js`); a zero-dependency **GraphQL** executor — queries + mutations + args + variables + nested selections (`engine.graphql.js`); a real **RFC 6455 WebSocket** server (`engine.realtime.js`); **microservices** — an API gateway + one HTTP service per domain resource + `docker-compose.prod.yml`, with a generated test that boots every service on real ports and round-trips a request through them (`engine.microservices.js`). `specFromObjective()` uses `Engine.AI` for the data model when connected. |
@@ -231,7 +234,7 @@ chase the 68 framework / platform features.
 
 | Stage | State | Gap |
 |---|---|---|
-| 1 Prompt intake / composer | 🟨 | free-text request → `Engine.UltraMode.start({ prompt })` or the Ultra Mode screen; still no attachments/screenshots/repos/audio |
+| 1 Prompt intake / composer | ✅ (text · spec doc · Figma · repo) / 🟨 (audio) | free-text → `Engine.UltraMode.start({ prompt })`; a **spec document** (Markdown / JSON Schema / OpenAPI) → `Engine.Intake` → contract entities/requirements; a **Figma export / screenshot** → `Engine.Design`; an **opened repo** → `Sovereign.analyze()`. Voice/audio still needs a transcription model. |
 | 2 Prompt normalization | ✅ | `Engine.Intent` — model-first typo/grammar fix + structured normalize, deterministic `Universal.Normalizer` fallback; feeds `Contract.deriveFromPrompt` |
 | 3 Application classifier | ✅ | `Engine.Intent` — the model picks the application category (17 options) when the rules are unsure; `Universal.Classifier` otherwise. Drives `product.type` + stack choice. |
 | 4 Requirements engine | ✅ | `Contract.deriveFromPrompt` → machine-readable requirements with stable ids + machine-checkable acceptance criteria; each is **verified per-requirement** by `Engine.Ledger` against real evidence |
