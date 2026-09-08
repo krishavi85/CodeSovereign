@@ -96,6 +96,8 @@
     'refactor-report.md':         'Readable refactoring + TS-readiness summary',
     'upgrade-plan.json':          'Rules-driven dependency-upgrade plan — risk, codemod availability, notes (spec §62)',
     'upgrade-report.md':          'Readable dependency-upgrade plan',
+    'feature-graph.json':         'Feature-completion graph — per-feature facet checklist (data/migration/service/API/UI/test/journey) + next task (spec §63-64)',
+    'feature-graph.md':           'Readable feature-completion matrix',
     'documentation-index.json':   'Documentation factory — which docs were (re)generated + folded-in verification evidence (spec §49)',
     'documentation-report.md':    'Readable summary of the documentation factory run',
     'delivery-manifest.json':     'Delivery archive manifest — verdict, DoD result, per-file hashes, content hash (spec §19-20)',
@@ -648,6 +650,9 @@
 
     // ---- user-journey coverage (spec §65) — from contract.journeys ----
     safe(function () { window.Engine.Journeys && window.Engine.Journeys.analyze(); });
+
+    // ---- feature completion graph (spec §63-64) ----
+    safe(function () { window.Engine.Features && window.Engine.Features.analyze(); });
 
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {
