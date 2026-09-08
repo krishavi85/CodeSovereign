@@ -92,6 +92,10 @@
     'perf-report.md':             'Readable performance summary',
     'localization-findings.json': 'Localization coverage — hard-coded strings, missing keys, per-locale % + RTL wiring (spec §48)',
     'localization-report.md':     'Readable localization coverage summary',
+    'refactor-plan.json':         'Safe-refactor candidates + TypeScript-migration readiness (spec §60)',
+    'refactor-report.md':         'Readable refactoring + TS-readiness summary',
+    'upgrade-plan.json':          'Rules-driven dependency-upgrade plan — risk, codemod availability, notes (spec §62)',
+    'upgrade-report.md':          'Readable dependency-upgrade plan',
     'documentation-index.json':   'Documentation factory — which docs were (re)generated + folded-in verification evidence (spec §49)',
     'documentation-report.md':    'Readable summary of the documentation factory run',
     'delivery-manifest.json':     'Delivery archive manifest — verdict, DoD result, per-file hashes, content hash (spec §19-20)',
@@ -635,6 +639,12 @@
 
     // ---- localization coverage (spec §48) ----
     safe(function () { window.Engine.Localize && window.Engine.Localize.analyze(); });
+
+    // ---- refactor candidates + TS readiness (spec §60) ----
+    safe(function () { window.Engine.Refactor && window.Engine.Refactor.analyze(); });
+
+    // ---- dependency upgrade plan (spec §62) ----
+    safe(function () { window.Engine.Upgrade && window.Engine.Upgrade.analyze(); });
 
     // ---- user-journey coverage (spec §65) — from contract.journeys ----
     safe(function () { window.Engine.Journeys && window.Engine.Journeys.analyze(); });
