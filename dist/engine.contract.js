@@ -312,13 +312,28 @@
 
   function deriveFromPrompt(prompt, opts) {
     opts = opts || {};
+    prompt = String(prompt || '').trim();
+    // §2-3: model-first intent when a provider is connected, deterministic rules
+    // otherwise. Engine.Intent runs the rule-based Normalizer/Classifier as the
+    // backbone and lets the model refine only the fuzzy fields.
+    var intentP = (window.Engine && Engine.Intent && Engine.Intent.resolve)
+      ? Engine.Intent.resolve(prompt, { useLLM: opts.useLLM })
+      : Promise.resolve(null);
+    return intentP.then(function (intent) { return _derivePrompt(prompt, opts, intent); },
+      function () { return _derivePrompt(prompt, opts, null); });
+  }
+
+  function _derivePrompt(prompt, opts, intent) {
     _cid = {};
     _rid = 0;
-    prompt = String(prompt || '').trim();
 
     var U = window.Universal || (Engine.Universal);
-    var normalized = U ? U.Normalizer.normalize({ prompt: prompt }) : { projectGoal: prompt.slice(0, 200), applicationCategory: 'web_application', targetPlatforms: ['web'], primaryActors: ['user'], coreCapabilities: [] };
-    var classification = U ? U.Classifier.classify(normalized) : { primaryType: 'web_application', complexity: 'standard', riskLevel: 'low' };
+    var normalized = (intent && intent.normalized) ? intent.normalized
+      : (U ? U.Normalizer.normalize({ prompt: prompt }) : { projectGoal: prompt.slice(0, 200), applicationCategory: 'web_application', targetPlatforms: ['web'], primaryActors: ['user'], coreCapabilities: [] });
+    var classification = (intent && intent.classification) ? intent.classification
+      : (U ? U.Classifier.classify(normalized) : { primaryType: 'web_application', complexity: 'standard', riskLevel: 'low' });
+    var intentEntities = (intent && intent.entitiesHint) || null;
+    var intentDesign = (intent && intent.design) || null;
     var lc = prompt.toLowerCase();
 
     /* ---- specialised runtime target (Engine.RuntimeRouter) ---- */
@@ -371,6 +386,26 @@
       : { choice: 'json', reason: 'no storage engine named; a schema-enforced JSON store is generated (swap in Postgres via DATABASE_URL)' };
 
     var entities = entitiesFromPrompt(prompt, normalized.primaryActors);
+    // §3: when the model inferred a data model, prefer it (typed, deduped) but
+    // keep the rule-based fields as a floor so nothing regresses.
+    if (intentEntities && intentEntities.length) {
+      var ruleByName = {};
+      entities.forEach(function (e) { ruleByName[e.name] = e; });
+      entities = intentEntities.filter(function (e) { return ['user', 'session', 'job'].indexOf(e.name) < 0; }).slice(0, 5).map(function (e) {
+        var base = ruleByName[e.name];
+        var fields = (base && base.fields ? base.fields.slice() : []);
+        var have = {}; fields.forEach(function (f) { have[f.name] = 1; });
+        (e.fields || []).forEach(function (fn) {
+          var name = String(fn).replace(/[^A-Za-z0-9]/g, '');
+          if (!name || have[name] || ['id', 'createdAt', 'updatedAt'].indexOf(name) >= 0) return;
+          var type = /at$|date|time/i.test(name) ? 'timestamp' : /cents|count|qty|quantity|amount|price|age|num/i.test(name) ? 'int' : /is|has|done|active|enabled/i.test(name) ? 'bool' : /body|description|content|notes?$/i.test(name) ? 'longtext' : 'text';
+          fields.push({ name: name, type: type, max: type === 'text' ? 200 : undefined });
+        });
+        if (!fields.length) fields.push({ name: 'title', type: 'text', required: true, max: 200 });
+        return { name: e.name, fields: fields };
+      });
+      if (!entities.length) entities = entitiesFromPrompt(prompt, normalized.primaryActors);
+    }
 
     /* ---- roles ---- */
     var roles = [];
@@ -572,6 +607,7 @@
       targetLabel: targetMeta ? targetMeta.label : 'Web application',
       targetAdapter: targetMeta ? targetMeta.adapter : null,
       targetRuntime: targetMeta ? targetMeta.runtime : null,
+      intent: { source: (intent && intent.source) || 'rules', corrections: (intent && intent.corrections) || null, design: intentDesign || null },
       totals: {
         requirements: reqs.length,
         withMachineCriteria: reqs.filter(function (r) { return r.acceptanceCriteria.some(function (c) { return ACCEPT_KINDS.indexOf(c.kind) >= 0; }); }).length,

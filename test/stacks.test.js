@@ -445,6 +445,47 @@ module.exports = async function (t) {
     t.ok('depintel: license-report.json classifies every dependency', (() => { const lr = win.Engine.Sovereign.read('license-report.json'); return lr && lr.dependencies.length === 3 && lr.compatible === false; })());
   }
 
+  /* ---------- 15. Model-driven intent (§2-3): rules fallback + model enrichment ---------- */
+  {
+    // rules-only (no provider): behaves exactly like the deterministic Normalizer/Classifier
+    const win = loadEngines(['engine-universal.js', 'engine.intent.js', 'engine.contract.js']);
+    const r1 = await win.Engine.Intent.resolve('build a todo app with projects and tasks', { useLLM: false });
+    t.equal('intent: with no provider, source is "rules"', r1.source, 'rules');
+    t.ok('intent: the rule-based normalize still runs', r1.normalized && r1.normalized.coreCapabilities && r1.classification.primaryType);
+    t.equal('intent: no model -> no entitiesHint / corrections', (r1.entitiesHint || r1.corrections) || null, null);
+
+    // model connected: enrich the fuzzy fields, keep the rule backbone
+    const win2 = loadEngines(['engine-universal.js', 'engine.intent.js', 'engine.contract.js']);
+    win2.Engine.AI = {
+      ready: () => true,
+      json: async () => ({
+        corrected: 'build a recipe box app with recipes and ingredients',
+        projectGoal: 'A personal recipe box',
+        applicationCategory: 'web_application',
+        targetPlatforms: ['web'],
+        primaryActors: ['cook'],
+        coreCapabilities: ['save recipe', 'search recipe', 'plan meals'],
+        entitiesHint: [{ name: 'recipe', fields: ['title', 'servings', 'instructions'] }, { name: 'ingredient', fields: ['name', 'quantity'] }],
+        unknownRequirements: ['import from a URL?'],
+        designLanguage: { tone: 'warm', density: 'comfortable', darkMode: null }
+      }),
+      chat: async () => ({ text: 'build a recipe box app with recipes and ingredients' })
+    };
+    const r2 = await win2.Engine.Intent.resolve('biuld a recipie box app wiht recipies and ingrediants', {});
+    t.equal('intent: with a provider, source is "model+rules"', r2.source, 'model+rules');
+    t.ok('intent: the model corrected the typos', /recipe box app with recipes and ingredients/i.test(r2.corrections || ''));
+    t.equal('intent: the model goal is adopted', r2.normalized.projectGoal, 'A personal recipe box');
+    t.ok('intent: capabilities merged (model + rules)', r2.normalized.coreCapabilities.indexOf('save recipe') >= 0);
+    t.ok('intent: the entity-model hint is captured', (r2.entitiesHint || []).some((e) => e.name === 'recipe') && (r2.entitiesHint || []).some((e) => e.name === 'ingredient'));
+    t.ok('intent: the design language is captured', r2.design && r2.design.tone === 'warm');
+
+    // the contract picks up the model's entity hint
+    const c = await win2.Engine.Contract.deriveFromPrompt('biuld a recipie box app wiht recipies and ingrediants', {});
+    t.ok('contract: uses the model-inferred entities', (c.entities || []).some((e) => e.name === 'recipe') && (c.entities || []).some((e) => e.name === 'ingredient'));
+    t.equal('contract: records the intent source', c.intent && c.intent.source, 'model+rules');
+    t.ok('contract: still deterministic + safe (verdict buildable, no fake auth)', c.verdict === 'buildable');
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

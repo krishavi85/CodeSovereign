@@ -37,8 +37,9 @@ adjacent products, not core-loop gaps):
   `engine.visualcheck.js` + `observer.visualProbe()`.
 - **Prompt intake breadth** (stage 1): attachments / screenshots / audio / repo
   import — 🟨 (text only).
-- **Model-driven intent** (§2–3): the normalizer/classifier are keyword rules +
-  a spellfix table, not a model.
+- **Prompt intake — non-text** (stage 1): attachments / screenshots / audio /
+  repo import — 🟨. *(Model-driven intent for **text** (§2–3) is **done** —
+  `engine.intent.js`.)*
 - **Ops depth** (§43–46): APM / traces / crash-reporting / performance profiling
   / memory-leak detection — ⬜ (each a hosted-collector product).
 - **Localization engine** (§48) — ⬜. *(Dependency intelligence (§10) and licence
@@ -100,7 +101,7 @@ chase the 68 framework / platform features.
 | § | Capability | State | Notes |
 |---|---|---|---|
 | 1 | Universal project creation (every surface) | 🟨 | Generation = one LLM round-trip → flat HTML/CSS/JS SPA (`engine.llm.js`) or ~15 single-page templates (`engine.js`). No repo-scale / backend / mobile / desktop output. |
-| 2 | Intent engine | 🟨 | `engine-universal.js` `Normalizer` + `Classifier` — keyword rules + a `SPELLFIX` table, not model-driven; no attachment/screenshot parsing. |
+| 2 | Intent engine | ✅ (text) | `dist/engine.intent.js` `Engine.Intent.resolve()` — **model-first**: when a provider is connected the model reads the request and returns a structured understanding (typo-corrected text, project goal, application category, target platforms, actors, capabilities, an **entity-model hint**, decisions still owed, design language). The rule-based `Normalizer` + `Classifier` always runs as the backbone — the model can only *refine* the fuzzy fields, never remove a safety or stack decision. `Engine.Contract.deriveFromPrompt` consumes it (`contract.intent.source` = `model+rules` / `rules`; the model's data model, deduped + typed, feeds the entities). Deterministic + offline with no key. `test/stacks.test.js` §15. Still text-only — no attachment/screenshot parsing. |
 | 3 | Requirement completeness (requested→implied→missing→verified) | 🟨 | `engine.requirements.js` has 13 domain packs, archetypes, contradictions, weighted scoring, progressive questions. `engine-universal.js RequirementsEngine` expands a prompt to a functional/non-functional list. Neither is tied to a per-requirement **verification** record. |
 | 4 | Autonomous architecture engine | 🟧 | `engine-universal.js` produces an architecture *object* (client/gateway/backend/data components) + `architecture.md`. Rule-based; not used to drive generation. |
 | 5 | Full repository generator | ✅ | `dist/engine.scaffold.js` — a spec → a **complete, runnable, tested** dependency-free full-stack repo: backend + data layer + SQL migrations + auth + frontend + unit/integration tests + build/lint/migrate scripts + CI + Dockerfile + `.env.example` + README. Proven by `npm run acceptance:build` (generate → analyze → **real npm test/build/lint** → observe → DoD **SOVEREIGN VERIFIED**, 20/20). Wired into `Engine.Orchestrator` (`task.scaffold`). **Stack breadth** (all verified by generating → running → observing, `test/stacks.test.js`): React / Preact / Vue / Svelte / Angular component frontends via a vendored ~220-line VDOM+hooks runtime, no build step (`engine.frontends.js`); a pure-standard-library **Python** HTTP backend — `http.server` + `sqlite3` + `hashlib.scrypt` + `unittest`, no pip (`engine.pybackend.js`); a zero-dependency **GraphQL** executor — queries + mutations + args + variables + nested selections (`engine.graphql.js`); a real **RFC 6455 WebSocket** server (`engine.realtime.js`); **microservices** — an API gateway + one HTTP service per domain resource + `docker-compose.prod.yml`, with a generated test that boots every service on real ports and round-trips a request through them (`engine.microservices.js`). `specFromObjective()` uses `Engine.AI` for the data model when connected. |
@@ -226,8 +227,8 @@ chase the 68 framework / platform features.
 | Stage | State | Gap |
 |---|---|---|
 | 1 Prompt intake / composer | 🟨 | free-text request → `Engine.UltraMode.start({ prompt })` or the Ultra Mode screen; still no attachments/screenshots/repos/audio |
-| 2 Prompt normalization | 🟨 | keyword + spellfix rules (`Universal.Normalizer`), optional model pass; feeds `Contract.deriveFromPrompt` |
-| 3 Application classifier | 🟨 | rule-based (`Universal.Classifier`); now consumed by the contract's `product.type` + stack choice |
+| 2 Prompt normalization | ✅ | `Engine.Intent` — model-first typo/grammar fix + structured normalize, deterministic `Universal.Normalizer` fallback; feeds `Contract.deriveFromPrompt` |
+| 3 Application classifier | ✅ | `Engine.Intent` — the model picks the application category (17 options) when the rules are unsure; `Universal.Classifier` otherwise. Drives `product.type` + stack choice. |
 | 4 Requirements engine | ✅ | `Contract.deriveFromPrompt` → machine-readable requirements with stable ids + machine-checkable acceptance criteria; each is **verified per-requirement** by `Engine.Ledger` against real evidence |
 | 5 Feasibility & constraint analysis | 🟨 | the contract records `target` / `unsafe` / `blockingQuestions` / `assumptions`; `Ultra Mode` acts on them (routes to a runtime adapter / BLOCKED / NEEDS_INPUT / recorded default). A non-web target that this host can't run ends `BLOCKED <REASON>` at verify time with the prerequisite. Cost feasibility is still light. |
 | 6 Product specification (`/project-docs/*.md`) | 🟨 | `product-contract.json` + `ultramode-plan.json` + `ultramode-report.md` are the driven spec; the older `writeProjectDocs()` markdown is not wired into `Ultra Mode` |
