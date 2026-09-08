@@ -60,17 +60,14 @@
         ['product-contract.json']);
     });
 
-    // 2) stack substitution
-    var st = (contract && contract.supportedStack) || {};
-    if (st && st.frontend && /svelte/i.test(JSON.stringify(contract && contract.requested || '')) && !/svelte/i.test(st.frontend)) {
-      add('Architecture', 'Frontend framework substitution', 'accepted',
-        'Svelte needs a compiler step; the factory generates build-free apps so the runtime crawl can drive them.',
-        'Generate the app with the ' + st.frontend + ' component runtime (same app shape, vendored VDOM, no build).',
-        ['The generated code is ' + st.frontend + ', not Svelte — porting later is a mechanical component rename.'],
-        ['product-contract.json']);
-    }
+    // 2) stack substitution — the contract records it as a `*substitution`
+    //    assumption; also surface it as an Architecture ADR
     ((contract && contract.assumptions) || []).filter(function (a) { return /substitution/i.test(a.about); }).forEach(function (a) {
-      // already covered by #1, but flag it as an Architecture decision too
+      add('Architecture', 'Stack substitution: ' + a.about.replace(/ substitution$/i, ''), 'accepted',
+        a.rationale || 'The requested technology maps to a supported one with the same app shape.',
+        a.decision,
+        ['The generated code targets the substituted stack — porting to the original is a mechanical change.'],
+        ['product-contract.json']);
     });
 
     // 3) runtime target
