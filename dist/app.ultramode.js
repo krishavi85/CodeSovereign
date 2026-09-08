@@ -66,7 +66,7 @@
     if (st.state === 'NONE') {
       return '<div class="screen-inner" style="max-width:820px">' +
         '<h1 class="cs-h1" style="margin-bottom:6px">Ultra Mode</h1>' +
-        '<p class="cs-muted" style="margin-bottom:16px">One request in — CodeSovereign derives a machine-readable contract, generates a real Node + vanilla-JS + Postgres/SQLite project, runs its real tests/build, observes it running, repairs what fails, and returns <b>SOVEREIGN VERIFIED</b> or an honest blocked/failed result. Supported today: vanilla web frontend · Node REST backend · SQLite/Postgres · background queue · Docker.</p>' +
+        '<p class="cs-muted" style="margin-bottom:16px">One request in — CodeSovereign derives a machine-readable contract, generates a real project, runs it in the right runtime, observes it, and returns <b>SOVEREIGN VERIFIED</b> or an honest blocked/failed result. Targets: <b>web</b> (Node/Python · React/Vue/Svelte · GraphQL · WebSockets · microservices) · <b>native Android</b> (Gradle build + emulator) · <b>native iOS</b> (macOS worker) · <b>EVM smart contracts</b> (solc + local chain) · <b>ML training</b> (real PyTorch run). A target whose runtime is missing on this host ends <b>BLOCKED</b> with the exact prerequisite — never "unsupported".</p>' +
         '<div class="card" style="padding:18px">' +
         '<textarea id="gmPrompt" rows="5" placeholder="Build a secure task-management web app with user accounts, projects, tasks, role-based access, PostgreSQL, background email-reminder jobs, REST APIs, accessibility checks, tests and Docker." style="width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg-2);color:#e6e9f2;font:13px system-ui;resize:vertical">' + esc(draft) + '</textarea>' +
         '<div style="margin-top:10px;display:flex;gap:10px;align-items:center">' +
@@ -87,6 +87,24 @@
       (st.terminal ? '<button id="gmNew" class="btn" style="padding:5px 12px;font-size:12px">New run</button>' : '') +
       '</div>');
     h.push('<p class="cs-muted" style="font-size:12px;margin:0 0 8px">' + esc(st.prompt) + '</p>');
+
+    // runtime target badge + adapter result
+    if (st.target && st.target !== 'web') {
+      var tgtColor = '#a78bfa';
+      h.push('<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:0 0 8px">' +
+        '<span style="font:11px/1 JetBrains Mono,monospace;font-weight:600;color:' + tgtColor + ';border:1px solid ' + tgtColor + ';border-radius:6px;padding:3px 8px">TARGET · ' + esc(st.targetLabel || st.target) + '</span>' +
+        (st.targetRuntime ? '<span class="cs-muted" style="font-size:11px">runtime: ' + esc(st.targetRuntime) + '</span>' : '') +
+        (st.adapterResult ? '<span style="font-size:11px;font-weight:600;color:' + (st.adapterResult.status === 'PASS' ? '#34d399' : st.adapterResult.status === 'BLOCKED' ? '#f59e0b' : '#ef4444') + '">adapter: ' + esc(st.adapterResult.status) + (st.adapterResult.reason ? ' (' + esc(st.adapterResult.reason) + ')' : '') + '</span>' : '') +
+        '</div>');
+      if (st.adapterResult && st.adapterResult.status === 'BLOCKED' && (st.plan && st.plan.runtimeRequirements || []).length) {
+        h.push('<div class="card" style="padding:12px 14px;margin:0 0 10px;border-color:#f59e0b55">' +
+          '<div style="font-size:12px;font-weight:600;margin-bottom:6px">This capability is supported — provide the runtime to finish verifying</div>' +
+          '<div style="font-size:11.5px;color:#c9cede">' + esc(st.adapterResult.need || '') + '</div>' +
+          '<ul style="margin:6px 0 0;font-size:11.5px;color:#c9cede">' +
+          st.plan.runtimeRequirements.map(function (r) { return '<li><b>' + esc(r.tool) + '</b> — <code>' + esc(r.install) + '</code></li>'; }).join('') +
+          '</ul></div>');
+      }
+    }
 
     if (!(window.desktop && window.desktop.isDesktop)) {
       h.push('<div style="padding:8px 12px;border:1px solid var(--warn,#f59e0b);border-radius:8px;background:rgba(245,158,11,.06);font-size:12px;margin-bottom:10px">Browser mode: the project is generated, but real test/build execution and runtime observation need the desktop app — those steps are reported as <b>unavailable</b>, not faked.</div>');

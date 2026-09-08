@@ -148,21 +148,26 @@ and observes it. Nothing is claimed that a generated test does not exercise
 | CI | GitHub Actions (`lint` → `migrate` → `test` → `build`; Python variant runs `compileall` + `unittest`) |
 | Deploy | multi-stage `Dockerfile`, `docker-compose.prod.yml` (app + Postgres 16), and — on request — **Kubernetes** manifests (deployment/service/ingress/HPA/StatefulSet), a **Helm** chart, or **Terraform** (`main.tf` + variables + tfvars + `deploy/terraform.sh`) |
 
-## Not supported (recorded as `unsupported`, run ends `BLOCKED` when it is the core)
+## Runtime-adapter targets (native mobile · ML training · EVM contracts)
 
-Three things genuinely cannot be verified by this loop, because the loop proves
-work by **running and observing** the generated software and there is no in-loop
-way to do that for:
+These are **supported targets**, not "unsupported". When `contract.target` is
+not `web` the loop routes through `Engine.RuntimeRouter` to a target-specific
+execution + verification adapter. Full detail: **[`RUNTIME_ADAPTERS.md`](RUNTIME_ADAPTERS.md)**.
 
-- **Native mobile** (React Native / Flutter / Swift / Kotlin / `.apk` / `.ipa`) — no simulator, device, or platform SDK in the loop; the runtime observer cannot drive a mobile binary. *Inference against an existing model is fine; building and launching an app is not.*
-- **ML model training pipelines** — needs a dataset + compute; there is no verifiable trained artefact. *Calling an existing model IS supported.*
-- **Blockchain / smart contracts** — needs a live chain to deploy against and observe.
+| Target | Generated | Verified by | If the host lacks the runtime |
+|---|---|---|---|
+| **EVM smart contracts** | ERC-20 / ERC-721 / voting / escrow Solidity (audited patterns, zero imports) + Foundry layout + a local-chain scenario | bundled `solc` + `@ethereumjs/vm` local deterministic chain — compile → deploy → run the transactions → inspect receipts/events/gas/state → static analysis (`+ forge test` when Foundry is installed) | never blocks — the runtime ships with CodeSovereign; a Solidity error is `FAIL` |
+| **Native Android** | a buildable Kotlin/View Gradle project + a Maestro UI flow | `gradle assembleDebug` → headless AVD → `adb install` + launch → screenshot → `logcat` crash scan → Maestro | `BLOCKED ANDROID_SDK_REQUIRED` / `NO_EMULATOR_ACCELERATION` / … — the APK build evidence is kept |
+| **Native iOS** | a SwiftUI project + xcodegen spec | `xcodebuild -sdk iphonesimulator` + `simctl` + Maestro | `BLOCKED MACOS_RUNNER_REQUIRED` — the project is generated and ready |
+| **ML model training** | a real PyTorch project (char-LM / classifier / regressor) + dataset inspector + `config.yaml` for the LLM scale-up | `python train.py` for real → decreasing loss curve + hashed checkpoint + held-out metric | `BLOCKED PYTORCH_NOT_INSTALLED` / `DATASET_REQUIRED` / `INSUFFICIENT_COMPUTE (suggestedStrategy: QLoRA)` |
 
-Also recorded but softer: **gRPC** (a `.proto` + a Node implementation are generated, but cross-language stub generation via `protoc` is not run) and **desktop packaging of the generated product**.
+`BLOCKED` always names the exact missing prerequisite and the command to install
+it. **support ≠ environment availability** — the capability is fully supported;
+this host just can't run it right now.
 
-A request whose **core** is one of the first three ends `BLOCKED` with that
-specific reason. A request that is mostly buildable with an unsupported *extra*
-still builds the supported part and lists the rest under "not generated".
+Still genuinely narrow: **gRPC** (a `.proto` + a Node implementation are generated,
+but cross-language stub generation via `protoc` is not run) and **repackaging
+CodeSovereign itself**.
 
 ## Refused (recorded as `unsafe`, run ends `BLOCKED`)
 
@@ -182,7 +187,7 @@ falsely `VERIFIED`.
 ## Verification
 
 ```bash
-node test/run.js               # 497 checks incl. test/ultramode.test.js (83) + test/stacks.test.js
+node test/run.js               # 539 checks incl. ultramode.test.js (93) + stacks.test.js + adapters.test.js (40)
 npm run smoke                   # renderer boots clean
 npm run smoke:observer          # observer classifies REAL / MOCK / BROKEN / SKIPPED
 npm run acceptance              # 38/38 — the 8 engines together on a fixture
@@ -192,19 +197,23 @@ npm run acceptance:ultramode      # 41/41 — the closed loop: prompt -> SOVEREI
 ```
 
 `test/ultramode.test.js` exercises the state machine exhaustively with the real
-Contract / Universal / Scaffold / TestGen / Deploy engines and stubbed
-verification engines (driven by a mutable world): happy path → `VERIFIED`;
-defect → bounded repair → `VERIFIED`; repair budget exhausted → `FAILED`;
-rollback of a worsening repair; cancellation (paused + mid-run); resume after a
-simulated crash with no regeneration; unsafe → `BLOCKED`; unsupported →
-`BLOCKED`; blocking-question → `NEEDS_INPUT` → answer → continue; browser-mode
-degradation; deterministic ids; requirement traceability; secret redaction.
+Contract / Universal / Scaffold / TestGen / Deploy / RuntimeRouter / Blockchain /
+Mobile / ML engines and stubbed verification engines (driven by a mutable
+world): happy path → `VERIFIED`; defect → bounded repair → `VERIFIED`; repair
+budget exhausted → `FAILED`; rollback of a worsening repair; cancellation; resume
+after a simulated crash with no regeneration; unsafe → `BLOCKED`; **runtime
+target iOS with no macOS worker → `BLOCKED` (artifact still generated)**;
+**blockchain adapter PASS → `VERIFIED`**; **ML adapter FAIL → `FAILED`**;
+blocking-question → `NEEDS_INPUT` → answer → continue; browser-mode degradation;
+deterministic ids; requirement traceability; secret redaction.
 
 `npm run acceptance:ultramode` proves the **real** integration end to end: an empty
 workspace, the acceptance prompt, a repairable defect injected into the generated
 output, real `npm test/build/lint`, a real runtime crawl, a real `Recovery`
-repair, DoD `PASS`, `SOVEREIGN VERIFIED` — then a resumed run and the two
-negative scenarios.
+repair, DoD `PASS`, `SOVEREIGN VERIFIED` — then a resumed run, an unsafe →
+`BLOCKED`, an iOS request → `BLOCKED MACOS_RUNNER_REQUIRED` (SwiftUI project
+generated), and an **ERC-20 request → real `solc` compile → deploy on a local
+chain → real transactions → SOVEREIGN VERIFIED**.
 
 ## Honest remaining limitations
 
@@ -215,10 +224,12 @@ negative scenarios.
 - Microservices share one database (`DATABASE_URL`). The split is at the API and
   deployment boundary — each service scales, deploys and fails independently —
   not data isolation; per-service schema separation is a follow-on migration.
-- Native mobile, ML model training, and blockchain/smart-contract runtimes stay
-  `BLOCKED`: the loop verifies by running and observing, and there is no in-loop
-  way to build/launch an APK/IPA, run a training pipeline, or deploy an on-chain
-  contract. This is deliberate, not a missing generator.
+- Native mobile / ML training / EVM contracts are **supported targets** with
+  runtime adapters (see [`RUNTIME_ADAPTERS.md`](RUNTIME_ADAPTERS.md)). When the
+  host lacks the runtime (no Android SDK, no macOS worker, no PyTorch, no GPU for
+  a large model) the run ends `BLOCKED` with the exact prerequisite — the
+  artifact is still generated. iOS always needs a macOS worker; large-model
+  fine-tuning always needs a GPU.
 - Email/SMS job *delivery* is logged, not wired to a provider — that needs the
   user's credentials.
 - Deployment stops at generated IaC + a deploy script. Nothing is pushed.

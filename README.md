@@ -57,16 +57,26 @@ Factory · Recovery · **Ultra Mode** · Settings.
 `Engine.UltraMode` derives a machine-readable contract, generates a real
 project, runs its real tests/build, observes it running, repairs what fails, and
 returns **SOVEREIGN VERIFIED** or an honest blocked/failed result, gated on a
-10-criterion Definition-of-Done (implementation · dependencies · build · tests ·
-runtime · no-fakes · security · architecture/layering · privacy/PII ·
-acceptance). Stacks it can generate → run → verify: vanilla **or**
+10-criterion Definition-of-Done.
+
+**Web targets** — generated → run → verified: vanilla **or**
 React/Preact/Vue/Svelte/Angular frontends (vendored VDOM runtime, no build);
 Node **or** pure-stdlib Python backends; REST **and/or** a zero-dep GraphQL
 executor; RFC 6455 WebSockets; monolith **or** microservices (gateway +
 per-domain services + compose); SQLite/Postgres/JSON; Docker/Compose/Kubernetes/
-Helm/Terraform IaC. Native mobile, ML training and blockchain stay **BLOCKED** —
-the loop verifies by running and observing, and none of those can be run and
-observed in-loop. See [`docs/ULTRAMODE_CLOSED_LOOP.md`](docs/ULTRAMODE_CLOSED_LOOP.md).
+Helm/Terraform IaC.
+
+**Runtime-adapter targets** — native **Android** (`gradle assembleDebug` + a
+headless emulator + adb install/launch/screenshot/logcat), native **iOS**
+(xcodebuild + simulator on a macOS worker), **EVM smart contracts** (bundled
+`solc` + `@ethereumjs/vm` local deterministic chain — compile, deploy, run
+transactions, inspect receipts), and **ML model training** (a real `python
+train.py` run with a decreasing loss curve + a hashed checkpoint). Each
+generates a real artifact and verifies it in a real runtime; if this host lacks
+the runtime the run ends **BLOCKED** with the exact prerequisite —
+`support ≠ environment availability`. See
+[`docs/RUNTIME_ADAPTERS.md`](docs/RUNTIME_ADAPTERS.md) and
+[`docs/ULTRAMODE_CLOSED_LOOP.md`](docs/ULTRAMODE_CLOSED_LOOP.md).
 
 ## Backend / Supabase
 

@@ -78,7 +78,7 @@ build half of the loop:
 This is the proof that CodeSovereign can *build* verified software from a spec,
 not only verify software that already exists. CI job **Desktop → acceptance-build**.
 
-## `npm run acceptance:ultramode` — the closed Ultra Mode loop (41 checks)
+## `npm run acceptance:ultramode` — the closed Ultra Mode loop (50 checks)
 
 `electron/acceptance-ultramode.js` starts from an **empty** workspace and **one
 natural-language request** and drives `Engine.UltraMode` through the entire real
@@ -100,15 +100,21 @@ flow — see `docs/ULTRAMODE_CLOSED_LOOP.md`:
 6. The defect is detected (validator findings), a **snapshot** is taken
    (`pre-generate`, `pre-repair-N`), `Recovery.run()` repairs it, the checks
    re-run, warnings drop.
-7. **All 8 Definition-of-Done gates PASS** → `release-certificate.md` =
+7. **All 10 Definition-of-Done gates PASS** → `release-certificate.md` =
    **SOVEREIGN VERIFIED**. History: `ANALYZING → … → GENERATING → VALIDATING →
-   EXECUTING → OBSERVING → REPAIRING → REVERIFYING → VERIFIED`.
+   EXECUTING → OBSERVING → REPAIRING → REVERIFYING → VERIFIED (web); PLANNING → GENERATING → VALIDATING → EXECUTING → REVERIFYING → VERIFIED (runtime target)`.
 8. **Resume**: the persisted run is forced back to a mid-flight state and
    `resume()` completes it to `VERIFIED` **without regenerating** the project.
 9. **Negative — unsafe**: a covert-keylogger request ends `BLOCKED`, nothing
    generated, explicit reason.
-10. **Negative — unsupported**: a native-iOS-only request ends `BLOCKED` with a
-    reason that names the supported stack.
+10. **Runtime target — iOS**: a native-iOS-only request is detected as the `ios`
+    target; the SwiftUI project **is** generated; with no macOS worker the run
+    ends `BLOCKED MACOS_RUNNER_REQUIRED` (not "unsupported").
+11. **Runtime target — EVM**: an ERC-20 request is detected as the `evm` target;
+    `Engine.Blockchain` generates a real Solidity contract; `electron/lib/adapters.js`
+    compiles it with `solc` and deploys it on a `@ethereumjs/vm` local chain, runs
+    the transfer / approve / transferFrom / revert transactions, and every
+    assertion passes; the target DoD gate passes → **SOVEREIGN VERIFIED**.
 
 CI job **Desktop → acceptance-ultramode**.
 
@@ -135,6 +141,15 @@ These suites cover the generation + factory engines without a renderer:
   booted generated server; cross-platform packaging config; and the
   architecture-rules + privacy scanners (clean repos score 100, injected
   violations are caught and fail the corresponding DoD criterion).
+- **`test/adapters.test.js`** (40 checks) — the runtime adapters. `Engine.RuntimeRouter`
+  target detection; **blockchain end to end** — ERC-20 / ERC-721 / voting contracts
+  generated, compiled with the bundled `solc`, deployed on a `@ethereumjs/vm` local
+  chain, real transactions run, every assertion passes, `.sovereign/blockchain-evidence.json`
+  written; a Solidity compile error is `FAIL` not `BLOCKED`. **ML end to end** — a real
+  `python train.py` run (char-LM / classifier / regressor) with a decreasing loss curve
+  and a hashed checkpoint; "train on our data" with no dataset → `BLOCKED DATASET_REQUIRED`.
+  Native mobile — the Android Gradle project + SwiftUI skeleton are generated; the probe
+  returns a coherent capability map.
 - **`test/factory.test.js`** — over a generated repo: `Engine.Security.scan()`
   (clean score, then planted SQLi / XSS / secret / command-injection all caught,
   score drops), `Engine.Deploy` (10 targets incl. K8s/Helm/Terraform, preflight
