@@ -199,6 +199,7 @@
       at: now(),
       dodPass: !!(dod && dod.PASS),
       dodPassCount: passCount,
+      dodCriteria: dod ? Object.keys(dod.criteria || {}).length : 0,
       dodFailing: dod ? Object.keys(dod.criteria || {}).filter(function (k) { return dod.criteria[k] !== true; }) : [],
       ledgerFailing: failing,
       ledgerAssertions: (ledger && ledger.totals && ledger.totals.assertions) || 0,
@@ -607,7 +608,7 @@
       '| Reading | DoD pass | DoD criteria | Failing reqs | Assertions | Validator err/warn |',
       '|---|---|---|---|---|---|');
     (run.evidence.timeline || []).forEach(function (r) {
-      lines.push('| ' + r.label + ' | ' + (r.dodPass ? 'yes' : 'no') + ' | ' + r.dodPassCount + ' | ' +
+      lines.push('| ' + r.label + ' | ' + (r.dodPass ? 'yes' : 'no') + ' | ' + r.dodPassCount + (r.dodCriteria ? '/' + r.dodCriteria : '') + ' | ' +
         (r.ledgerFailing || []).length + ' | ' + r.ledgerAssertions + ' | ' + r.validatorErrors + '/' + r.validatorWarnings + ' |');
     });
     lines.push('');

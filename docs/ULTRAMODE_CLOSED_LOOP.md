@@ -20,7 +20,7 @@ prompt
   → Engine.Sovereign.observe            (runtime crawl of the running app)
   → Engine.Ledger.build                 (claim → evidence → confidence)
   → Engine.Recovery.run                 (snapshot → repair → verify)
-  → Engine.DoD.evaluate + certificate   (8 blocking gates)
+  → Engine.DoD.evaluate + certificate   (10 blocking gates)
   → SOVEREIGN VERIFIED  |  BLOCKED  |  FAILED
 ```
 
@@ -129,30 +129,40 @@ percentages or timings anywhere.
 
 Generated today, and nothing else is claimed:
 
+Every entry below is verified the same way — the loop generates it, runs it,
+and observes it. Nothing is claimed that a generated test does not exercise
+(`test/stacks.test.js`).
+
 | Layer | What is generated |
 |---|---|
-| Frontend | vanilla HTML/CSS/JavaScript, real `fetch` with loading/error/empty states |
-| Backend | Node.js zero-dependency HTTP server, routing table, JSON-body parsing, per-entity CRUD service layer, structured errors, in-memory rate limiter |
-| Database | schema-enforced JSON store **or** `node-pg` adapter (chosen by `DATABASE_URL`); real SQL migrations (`CREATE TABLE`, FK + `ON DELETE`, `CREATE [UNIQUE] INDEX`) are always emitted |
-| Auth | scrypt hashing (`node:crypto`, timing-safe), opaque server-side sessions, `requireAuth` / `requireRole`, first-user-is-admin |
-| API | REST (+ SSE for jobs) |
-| Async | durable in-process queue (retry, exponential backoff, dead-letter) + polling worker + SSE hub |
-| Tests | generated unit + API-contract + adversarial chaos + a11y `node:test` suites, run by `runEvidence()` |
-| CI | GitHub Actions (`lint` → `migrate` → `test` → `build`) |
-| Deploy | multi-stage `Dockerfile`, `docker-compose.prod.yml` (app + Postgres 16), `.dockerignore`, `deploy/compose.sh` |
+| Frontend | vanilla HTML/CSS/JavaScript **or** a **React / Preact / Vue / Svelte / Angular** component app on a vendored ~220-line VDOM+hooks runtime (no build step); real `fetch` with loading/error/empty states; a `node:test` DOM-shim suite that renders it |
+| Backend | **Node.js** zero-dependency HTTP server (routing table, JSON-body parsing, per-entity CRUD service layer, structured errors, rate limiter) **or** a pure-standard-library **Python 3** backend — `http.server` + `sqlite3` + `hashlib.scrypt` + `unittest`, no pip |
+| Database | schema-enforced JSON store **or** `node-pg` adapter (chosen by `DATABASE_URL`) **or** SQLite (Python); real SQL migrations are always emitted |
+| Auth | scrypt hashing (timing-safe), opaque server-side sessions, `requireAuth` / `requireRole`, first-user-is-admin — on both backends |
+| API | REST **and/or** a zero-dependency **GraphQL** executor (queries + mutations + args + variables + nested selections), mounted at `POST /graphql` (+ SSE for jobs) |
+| Realtime | a real **RFC 6455 WebSocket** server (handshake + masked-frame parse + text frames + ping/pong + broadcast) with a raw-socket round-trip test |
+| Architecture | monolith **or** **microservices** — an API gateway (public port, owns auth + rate-limit + session verification) + one HTTP service per domain resource, wired by `docker-compose.prod.yml`; a generated test boots every service on real ports and round-trips a request through them |
+| Async | durable in-process queue (retry, backoff, dead-letter) + polling worker + SSE hub (Node) |
+| Ops | `/healthz` + `/readyz` + `/metrics` (Prometheus text) + one-line JSON access logs on every generated backend |
+| Tests | generated unit + API-contract + adversarial chaos + a11y + frontend + graphql + ws + microservices `node:test` / `unittest` suites, run for real by `runEvidence()` |
+| CI | GitHub Actions (`lint` → `migrate` → `test` → `build`; Python variant runs `compileall` + `unittest`) |
+| Deploy | multi-stage `Dockerfile`, `docker-compose.prod.yml` (app + Postgres 16), and — on request — **Kubernetes** manifests (deployment/service/ingress/HPA/StatefulSet), a **Helm** chart, or **Terraform** (`main.tf` + variables + tfvars + `deploy/terraform.sh`) |
 
-## Not supported (recorded as `unsupported`, never faked)
+## Not supported (recorded as `unsupported`, run ends `BLOCKED` when it is the core)
 
-React / Vue / Angular / Svelte / Next / Nuxt and other front-end frameworks ·
-React Native / Flutter / native mobile · desktop packaging of the generated
-product · Kubernetes / Terraform / Pulumi · GraphQL / gRPC / raw WebSockets ·
-multi-service / microservice architectures · ML training pipelines · blockchain /
-smart contracts · non-Node backend languages (Python / Ruby / Go / Java / .NET /
-PHP).
+Three things genuinely cannot be verified by this loop, because the loop proves
+work by **running and observing** the generated software and there is no in-loop
+way to do that for:
 
-A request whose **core** is outside this list ends `BLOCKED` with a specific
-reason. A request that is mostly buildable with an unsupported *extra* still
-builds the supported part and lists the rest under "not generated".
+- **Native mobile** (React Native / Flutter / Swift / Kotlin / `.apk` / `.ipa`) — no simulator, device, or platform SDK in the loop; the runtime observer cannot drive a mobile binary. *Inference against an existing model is fine; building and launching an app is not.*
+- **ML model training pipelines** — needs a dataset + compute; there is no verifiable trained artefact. *Calling an existing model IS supported.*
+- **Blockchain / smart contracts** — needs a live chain to deploy against and observe.
+
+Also recorded but softer: **gRPC** (a `.proto` + a Node implementation are generated, but cross-language stub generation via `protoc` is not run) and **desktop packaging of the generated product**.
+
+A request whose **core** is one of the first three ends `BLOCKED` with that
+specific reason. A request that is mostly buildable with an unsupported *extra*
+still builds the supported part and lists the rest under "not generated".
 
 ## Refused (recorded as `unsafe`, run ends `BLOCKED`)
 
@@ -172,12 +182,12 @@ falsely `VERIFIED`.
 ## Verification
 
 ```bash
-node test/run.js               # 421 checks incl. test/ultramode.test.js (83)
+node test/run.js               # 497 checks incl. test/ultramode.test.js (83) + test/stacks.test.js
 npm run smoke                   # renderer boots clean
 npm run smoke:observer          # observer classifies REAL / MOCK / BROKEN / SKIPPED
 npm run acceptance              # 38/38 — the 8 engines together on a fixture
 npm run acceptance:build        # 20/20 — repo-scale generation from a spec
-npm run acceptance:ultramode      # the closed loop: prompt -> SOVEREIGN VERIFIED,
+npm run acceptance:ultramode      # 41/41 — the closed loop: prompt -> SOVEREIGN VERIFIED,
                                 #   + resume-after-interrupt, + two negative scenarios
 ```
 
@@ -198,9 +208,17 @@ negative scenarios.
 
 ## Honest remaining limitations
 
-- The generated frontend is intentionally vanilla JS + a JSON/pg store so the
-  generated `npm test` runs offline and the observer can drive it. Real
-  React/Next/mobile output is a separate generation backend, not this loop.
+- The component-framework frontends (React/Vue/…) run on a vendored VDOM
+  runtime, not the real framework's toolchain — chosen so the generated
+  `npm test` runs offline with no `npm install` and the observer can drive the
+  DOM. Svelte/Angular map to the same runtime with a recorded substitution.
+- Microservices share one database (`DATABASE_URL`). The split is at the API and
+  deployment boundary — each service scales, deploys and fails independently —
+  not data isolation; per-service schema separation is a follow-on migration.
+- Native mobile, ML model training, and blockchain/smart-contract runtimes stay
+  `BLOCKED`: the loop verifies by running and observing, and there is no in-loop
+  way to build/launch an APK/IPA, run a training pipeline, or deploy an on-chain
+  contract. This is deliberate, not a missing generator.
 - Email/SMS job *delivery* is logged, not wired to a provider — that needs the
   user's credentials.
 - Deployment stops at generated IaC + a deploy script. Nothing is pushed.

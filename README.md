@@ -55,9 +55,18 @@ Factory · Recovery · **Ultra Mode** · Settings.
 
 **Ultra Mode** is the closed loop: one natural-language request →
 `Engine.UltraMode` derives a machine-readable contract, generates a real
-Node + vanilla-JS + SQLite/Postgres project, runs its real tests/build, observes
-it running, repairs what fails, and returns **SOVEREIGN VERIFIED** or an honest
-blocked/failed result. See [`docs/ULTRAMODE_CLOSED_LOOP.md`](docs/ULTRAMODE_CLOSED_LOOP.md).
+project, runs its real tests/build, observes it running, repairs what fails, and
+returns **SOVEREIGN VERIFIED** or an honest blocked/failed result, gated on a
+10-criterion Definition-of-Done (implementation · dependencies · build · tests ·
+runtime · no-fakes · security · architecture/layering · privacy/PII ·
+acceptance). Stacks it can generate → run → verify: vanilla **or**
+React/Preact/Vue/Svelte/Angular frontends (vendored VDOM runtime, no build);
+Node **or** pure-stdlib Python backends; REST **and/or** a zero-dep GraphQL
+executor; RFC 6455 WebSockets; monolith **or** microservices (gateway +
+per-domain services + compose); SQLite/Postgres/JSON; Docker/Compose/Kubernetes/
+Helm/Terraform IaC. Native mobile, ML training and blockchain stay **BLOCKED** —
+the loop verifies by running and observing, and none of those can be run and
+observed in-loop. See [`docs/ULTRAMODE_CLOSED_LOOP.md`](docs/ULTRAMODE_CLOSED_LOOP.md).
 
 ## Backend / Supabase
 

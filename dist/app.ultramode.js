@@ -52,7 +52,7 @@
       timeline.map(function (r) {
         return '<tr style="border-top:1px solid var(--line)"><td style="padding:4px 6px">' + esc(r.label || '?') + '</td>' +
           '<td style="color:' + (r.dodPass ? 'var(--good)' : 'var(--muted)') + '">' + (r.dodPass ? 'PASS' : 'no') + '</td>' +
-          '<td>' + (r.dodPassCount != null ? r.dodPassCount + '/8' : '—') + '</td>' +
+          '<td>' + (r.dodPassCount != null ? r.dodPassCount + (r.dodCriteria ? '/' + r.dodCriteria : '') : '—') + '</td>' +
           '<td>' + ((r.ledgerFailing || []).length) + '</td>' +
           '<td>' + (r.ledgerAssertions || 0) + '</td>' +
           '<td>' + (r.validatorErrors || 0) + ' err / ' + (r.validatorWarnings || 0) + ' warn</td></tr>';
