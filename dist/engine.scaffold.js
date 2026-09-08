@@ -152,7 +152,7 @@
     });
     var authFrag = s.auth ? A().uiFragment() : { html: '', js: '' };
     var html =
-      '<!doctype html>\n<html lang="en" dir="ltr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
+      '<!doctype html>\n<html lang="en" dir="ltr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="design-tokens.css">\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
       '  <a href="#main" class="skip-link" data-i18n="app.skipToContent">Skip to content</a>\n' +
       '  <header><h1 data-i18n="app.title">' + s.name + '</h1></header>\n' +
       '  <main id="main">\n' + authFrag.html +
@@ -219,7 +219,10 @@
       ".skip-link{position:absolute;left:-9999px;top:0;background:#000;color:#fff;padding:8px 12px;z-index:10}" +
       ".skip-link:focus{left:8px}" +
       "a:focus-visible,button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}\n";
-    return { 'public/index.html': html, 'public/app.js': js, 'public/app.css': css };
+    var tokens = ':root {\n  /* design tokens — overwrite via Engine.Design.applyTokens() from a Figma/HTML reference */\n' +
+      '  --color-bg: #ffffff;\n  --color-surface: #ffffff;\n  --color-accent: #1d4ed8;\n  --color-text: #111111;\n' +
+      '  --font-sans: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;\n  --text-base: 15px;\n  --radius: 7px;\n  --space: 8px;\n}\n';
+    return { 'public/index.html': html, 'public/app.js': js, 'public/app.css': css, 'public/design-tokens.css': tokens };
   }
 
   /* ---- tests ---- */

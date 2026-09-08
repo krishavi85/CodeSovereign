@@ -15,7 +15,7 @@ The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
 repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 718, `acceptance` 38, `acceptance:build` 22,
+(`node test/run.js` 736, `acceptance` 38, `acceptance:build` 22,
 `acceptance:ultramode` 53) prove it end to end in the real Electron renderer.
 
 **At / near 100% for the core loop:**
@@ -32,8 +32,11 @@ repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` 
 **Genuinely still open** (roughly, by the blueprint's own sections — most are
 adjacent products, not core-loop gaps):
 
-- **Design input** (§11): UI-from-screenshot / Figma import — ⬜ (prompt-to-UI
-  only). *Visual validation + screenshot fidelity (§12–13) are **done*** —
+- **Design input** (§11): Figma-export + HTML ingestion → design spec + token
+  CSS is **done** (`engine.design.js`); **screenshot → layout** is staged —
+  the image becomes the visual-fidelity reference and returns
+  `BLOCKED / VISION_MODEL_REQUIRED` until a multimodal model is connected.
+  *Visual validation + screenshot fidelity (§12–13) are **done*** —
   `engine.visualcheck.js` + `observer.visualProbe()`.
 - **Prompt intake — non-text** (stage 1): attachments / screenshots / audio /
   repo import — 🟨. *(Model-driven intent for **text** (§2–3) is **done** —
@@ -131,7 +134,7 @@ chase the 68 framework / platform features.
 | § | Capability | State | Notes |
 |---|---|---|---|
 | 10 | Dependency intelligence (compare / abandoned / vuln / license / dedupe / safe-upgrade) | ✅ | `dist/engine.depintel.js` — over `package.json` + `package-lock.json` (+ `requirements.txt`): **abandonment** (a bundled table of ~25 superseded/sabotaged packages → the modern replacement: `request`→fetch, `moment`→dayjs, `node-sass`→sass, `colors`/`faker`→safe forks…), **duplicate/conflicting major versions** across the resolved tree (`npm dedupe`), **known-vulnerable pins** (a bundled advisory table for the common ones; `npm audit` in CI is authoritative), **safe-upgrade** (semver-aware: in-range vs a major bump). `analyze()` → `.sovereign/dependency-intel.json` + `dependency-report.md`; runs in `Sovereign.analyze()`. `test/stacks.test.js` §14. |
-| 11 | UI generation from prompt / screenshot / Figma / wireframe | 🟨 | Prompt-to-UI only (LLM/templates). No vision input, no reconstruction. |
+| 11 | UI generation from prompt / screenshot / Figma / wireframe | ✅ (offline paths) / 🟨 (screenshot) | `dist/engine.design.js` (`Engine.Design`). `ingest({kind, …})` normalises a reference design into a **design spec** (sections, components, colour/type/spacing tokens, text): **Figma frame JSON** — the user's own export, no API token, no network — parsed to viewport + component roles (button/input/nav/card from layer names) + tokens from fills/`style`/`cornerRadius`; **HTML/CSS markup** — sections + `<button>`/`<input>` + tokens from inline CSS. `applyTokens()` writes `public/design-tokens.css` (CSS custom properties) which the scaffold now links; `design-language.json` feeds the contract + `Engine.VisualCheck`. **Screenshot** → the image is stored as the visual-fidelity reference (so the built UI is pixel-diffed against it) and returned `BLOCKED / VISION_MODEL_REQUIRED` — SUPPORTED, needs a multimodal model, never silently dropped. `analyze()` → `.sovereign/design-spec.json` + report. `test/design.test.js` (18 checks). |
 | 12 | Visual validation (render → inspect clipping/overflow/contrast) | ✅ | `dist/engine.visualcheck.js` + `observer.visualProbe()`. The observer renders the running app at **mobile (375) / tablet (768) / desktop (1280)**, measures every element's box + computed style, and reports: page horizontal overflow, elements past the viewport edge, content clipped by `overflow:hidden`, covering fixed/sticky overlays, off-screen text, **zero-size interactive controls**, computed **contrast** below AA — with a screenshot per breakpoint. A static layer (no renderer) catches `overflow:hidden` on html/body, fixed pixel widths ≥ 500px, 100vw×100vh z-indexed overlays, missing viewport meta. `analyze()` → `.sovereign/visual-findings.json` + `visual-report.md`; new DoD criterion `visualIntegrityPass` — a **critical** defect (whole-page overflow, zero-size control, full-screen overlay) blocks release. `test/stacks.test.js` §13. |
 | 13 | Screenshot fidelity mode | ✅ | `Engine.VisualCheck.fidelity(a, b)` — pixel diff of two PNG data URLs (offscreen canvas) → `{ changedPixels, ratio }`. `observer.visualProbe()` captures the reference set; a re-run compares. Used for "did the repair change the layout" and drift checks. |
 | 14 | Backend builder (routes / services / validation / error handling / async infra) | ✅ | `dist/engine.backend.js` — real zero-dep HTTP server: routing table, JSON body parsing, per-entity CRUD service layer, ownership scoping, structured errors, static serving, in-memory rate limiter (120/min/IP → 429). `dist/engine.jobs.js` — durable job queue (`enqueue`/`claim`/`complete`/`fail`, 5 attempts, exponential backoff, dead-letter), a polling worker (`src/worker.js`, dispatches `src/jobs/<type>.js`), and an SSE hub (`src/events.js`, `/api/events`). `Engine.Scaffold` emits all of it + a passing `test/worker.test.js` when `spec.jobs`. **Not yet**: websockets (SSE only), uploads/payments/webhooks. |

@@ -84,6 +84,10 @@
     'visual-observations.json':   'Observer render at mobile/tablet/desktop — box + computed-style measurements + screenshots (spec §12-13)',
     'visual-findings.json':       'Visual validation — overflow / clipping / covering overlays / zero-size controls / low contrast',
     'visual-report.md':           'Readable visual-integrity findings + score',
+    'design-spec.json':           'Normalized design spec from a Figma export / HTML / screenshot — sections, components, tokens (spec §11)',
+    'design-findings.json':       'Design-input summary — source, status, component roles, token counts',
+    'design-report.md':           'Readable design-input summary',
+    'design-language.json':       'Extracted design language (palette / type / scale) fed to the contract + token CSS',
     'dependency-intel.json':      'Dependency intelligence — abandoned / duplicate-major / vulnerable pins / safe-upgrade (spec §10)',
     'license-report.json':        'Licence classification of every dependency + conflicts with the distribution model (spec §52)',
     'dependency-report.md':       'Readable dependency + licence findings',
@@ -632,6 +636,9 @@
 
     // ---- visual validation (spec §12-13; static here, live via the observer) ----
     safe(function () { window.Engine.VisualCheck && window.Engine.VisualCheck.analyze(); });
+
+    // ---- design / vision input (spec §11) ----
+    safe(function () { window.Engine.Design && window.Engine.Design.analyze(); });
 
     // ---- dependency + licence intelligence (spec §10 + §52) ----
     safe(function () { window.Engine.DepIntel && window.Engine.DepIntel.analyze(); });
