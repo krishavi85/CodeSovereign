@@ -816,6 +816,97 @@ const Universal = {
     };
   },
 
+  /* ============================================================
+     BUILD PLAN — the typed, executable output of stages 5-12.
+     Turns a Product Contract (Engine.Contract.deriveFromPrompt) into an
+     ordered list of generation steps the GodMode coordinator runs against
+     the real engines (Scaffold / TestGen / Security / Deploy), plus the
+     requirement -> artifact traceability map the Evidence Ledger needs.
+     Deterministic + offline.
+     ============================================================ */
+  buildPlan(contract){
+    if (!contract || !Array.isArray(contract.requirements)) return null;
+    const st = contract.supportedStack || {};
+    const ents = (contract.entities || []).filter(e => ['user','session','job'].indexOf(e.name) < 0);
+    const dbFiles = st.database === 'postgres'
+      ? ['/src/db.js','/src/db.json.js','/src/db.pg.js']
+      : ['/src/db.js'];
+    const scaffoldFiles = [
+      '/server.js','/src/schema.js','/package.json','/db/migrations/001_init.sql',
+      '/public/index.html','/public/app.js','/public/app.css',
+      '/test/db.test.js','/test/api.test.js','/scripts/migrate.js','/scripts/build.js','/scripts/lint.js',
+      '/Dockerfile','/.github/workflows/ci.yml','/README.md','/.env.example'
+    ].concat(dbFiles)
+     .concat(st.auth ? ['/src/auth.js','/test/auth.test.js'] : [])
+     .concat(st.jobs ? ['/src/queue.js','/src/worker.js','/src/events.js','/src/jobs/welcome.js','/test/worker.test.js'] : [])
+     .concat(ents.map(e => '/src/services/' + e.name + '.js'));
+
+    let step = 0;
+    const mkStep = (kind, agent, produces, why, requirementIds) => ({
+      id: 'STEP-' + String(++step).padStart(3,'0'),
+      kind, agent, produces: produces || [], why,
+      requirementIds: requirementIds || [], status: 'PENDING'
+    });
+
+    const reqBy = (re) => contract.requirements.filter(r => re.test(r.statement)).map(r => r.id);
+
+    const steps = [
+      mkStep('scaffold','scaffold', scaffoldFiles,
+        'generate the runnable repo: schema + migrations + data layer' +
+        (st.auth ? ' + auth' : '') + (st.jobs ? ' + async queue/worker' : '') + ' + REST backend + frontend + unit tests',
+        contract.requirements.filter(r => /tests pass|builds|schema|account|records through a REST API|Background jobs|REST API surface/i.test(r.statement)).map(r => r.id)),
+      mkStep('testgen','test',
+        ['/test/generated-api.test.js','/test/chaos.test.js'].concat(st.database ? [] : []).concat(['/test/a11y.test.js']),
+        'generate API contract tests + an adversarial chaos suite' + (contract.requirements.some(r => /accessibility/i.test(r.statement)) ? ' + an accessibility suite' : ''),
+        reqBy(/tests pass|accessibility|simulated, mocked/i)),
+      mkStep('security-scan','security', [],
+        'scan the generated source for injection / XSS / secrets / unauthenticated mutations; feeds the DoD security gate',
+        reqBy(/secret|password hash|role-based|simulated, mocked/i))
+    ];
+    if (st.deploy || (contract.deployment && (contract.deployment.targets || []).length)) {
+      steps.push(mkStep('deploy-iac','deploy',
+        ['/Dockerfile','/docker-compose.prod.yml','/.dockerignore','/deploy/compose.sh'],
+        'generate Docker + Compose infrastructure-as-code (never pushed — that needs the user\'s credentials)',
+        reqBy(/Docker|deployment-ready infrastructure/i)));
+    }
+
+    // requirement -> predicted artifact map (the Ledger verifies the real result)
+    const traceability = {};
+    contract.requirements.forEach(r => {
+      const arts = [];
+      (r.acceptanceCriteria || []).forEach(c => {
+        if (c.kind === 'file' && c.path) arts.push(c.path);
+        if (c.kind === 'execution') arts.push('execution-evidence.json#' + c.gate);
+        if (c.kind === 'control') arts.push('runtime-trace.json#' + c.name);
+        if (c.kind === 'no-mock') arts.push('runtime-trace.json (no MOCK/BROKEN)');
+        if (c.kind === 'ci') arts.push('/.github/workflows/ci.yml');
+      });
+      traceability[r.id] = { statement: r.statement, priority: r.priority, artifacts: arts, acIds: r.traceIds || [] };
+    });
+
+    return {
+      schemaVersion: 1,
+      generatedAt: Date.now(),
+      contractGeneratedAt: contract.generatedAt,
+      product: contract.product,
+      stack: {
+        frontend: 'vanilla HTML/CSS/JS', backend: 'Node.js (zero-dep HTTP)',
+        database: st.database, api: 'REST' + (st.jobs ? ' + SSE' : ''),
+        auth: !!st.auth, rbac: !!st.rbac, jobs: !!st.jobs
+      },
+      steps,
+      files: Array.from(new Set(scaffoldFiles)).sort(),
+      buildCommands: ['npm run migrate','npm test','npm run build'].concat(st ? ['npm run lint'] : []),
+      observationTargets: [{
+        url: 'http://localhost:4319/',
+        controls: (st.auth ? ['need an account?'] : []).concat(ents.map(e => 'add ' + e.name)),
+        routes: (contract.apiRequirements || []).map(a => a.method + ' ' + a.path)
+      }],
+      deployment: contract.deployment || { expectation: 'compose', targets: ['compose'] },
+      traceability
+    };
+  },
+
   // Persist a complete build state to the engine FS as project docs
   writeProjectDocs(buildState){
     if (!window.Engine || !window.Engine.FS) return;

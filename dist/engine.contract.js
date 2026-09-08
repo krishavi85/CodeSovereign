@@ -181,6 +181,330 @@
   function write(c) { if (S()) S().write('product-contract.json', c); return c; }
   function load() { return sj('product-contract.json'); }
 
-  Engine.Contract = { derive: derive, write: write, load: load, ACCEPT_KINDS: ACCEPT_KINDS };
+  /* =====================================================================
+     deriveFromPrompt — build a machine-readable Product Contract from ONLY a
+     natural-language request, BEFORE any code exists. Deterministic + offline;
+     the optional LLM pass only adds extra functional requirements, never
+     changes the machine criteria the Ledger / DoD verify against.
+
+     This is what the GodMode closed loop starts from. Every generated
+     component, test and observation traces back to an id assigned here.
+     ===================================================================== */
+
+  // The stack CodeSovereign can genuinely generate today. Anything outside this
+  // is recorded as `unsupported` — never silently dropped, never faked.
+  var SUPPORTED = {
+    frontend: 'vanilla HTML/CSS/JavaScript',
+    backend: 'Node.js (zero-dependency HTTP server)',
+    database: ['sqlite', 'postgres', 'json'],
+    api: 'REST',
+    jobs: 'in-process durable queue + polling worker + SSE',
+    deploy: ['docker', 'compose', 'fly', 'render', 'railway', 'vps', 'static'],
+    execution: 'Electron-hosted real test/build/lint + runtime observation'
+  };
+  var UNSUPPORTED_RE = [
+    [/\b(react|vue|angular|svelte|next\.?js|nuxt|remix|solid\.?js)\b/i, 'front-end framework (only vanilla HTML/CSS/JS is generated today)'],
+    [/\b(react native|flutter|expo|swift|kotlin|android|ios|iphone|ipad|mobile app)\b/i, 'mobile / native platform (not generated today)'],
+    [/\b(electron app|tauri|desktop app|\.exe|dmg|appimage|windows app|mac app)\b/i, 'desktop packaging for the generated product (not generated today)'],
+    [/\b(kubernetes|k8s|helm|terraform|pulumi|cloudformation)\b/i, 'infrastructure-as-code beyond Docker / Compose / PaaS manifests'],
+    [/\b(graphql|grpc|websocket|web ?socket|socket\.io)\b/i, 'non-REST API transport (REST + SSE only today)'],
+    [/\b(microservices?|service mesh|event sourcing|cqrs)\b/i, 'multi-service architecture (a single Node service is generated)'],
+    [/\b(machine learning|train a model|neural net|llm fine-?tun|computer vision)\b/i, 'ML model training pipeline (not generated today)'],
+    [/\b(blockchain|smart contract|web3|solidity|nft)\b/i, 'blockchain / smart-contract runtime (not generated today)'],
+    [/\b(python|django|flask|fastapi|rails|ruby|golang|go backend|java|spring|\.net|php|laravel)\b/i, 'non-Node backend language (Node.js only today)']
+  ];
+  // Requests that must NOT be built — recorded and the run is BLOCKED, never verified.
+  var UNSAFE_RE = [
+    [/\b(without (their|the user'?s?) (knowledge|consent|permission)|covert(ly)?|secretly|hidden from the user|stealth)\b/i, 'covert behaviour hidden from the end user'],
+    [/\b(keylogger|key ?logging|spyware|stalkerware|exfiltrat|credential harvest(ing)?|phish(ing)?|steal (passwords|credentials|logins))\b/i, 'credential theft / surveillance'],
+    [/\b(mine (crypto|bitcoin|monero)|cryptojack|hidden miner|background mining)\b/i, 'unauthorised cryptocurrency mining'],
+    [/\b(ddos|denial of service|botnet|spam(bot)?|bulk unsolicited|mass (unsolicited )?email|scrape .* personal data|harvest emails)\b/i, 'abuse / spam / DoS tooling'],
+    [/\b(bypass (auth|authentication|license|paywall|drm)|crack(ing)? software|pirate)\b/i, 'circumventing access controls'],
+    [/\b(fake reviews?|astroturf|manipulat(e|ing) (elections?|votes?)|disinformation)\b/i, 'coordinated deception'],
+    [/\b(malware|ransomware|trojan|rootkit|exploit kit|c2 server)\b/i, 'malware development']
+  ];
+
+  var _cid;
+  function nid(prefix) { _cid[prefix] = (_cid[prefix] || 0) + 1; return prefix + '-' + ('000' + _cid[prefix]).slice(-3); }
+
+  function slugName(prompt) {
+    var m = String(prompt || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+    var stop = { build: 1, a: 1, an: 1, the: 1, with: 1, and: 1, for: 1, to: 1, of: 1, secure: 1, simple: 1, web: 1, app: 1, application: 1, that: 1, my: 1, me: 1, user: 1, users: 1, account: 1, accounts: 1, role: 1, roles: 1, based: 1, access: 1, using: 1, only: 1, native: 1 };
+    var picked = m.filter(function (w) { return !stop[w] && w.length > 2; }).slice(0, 3);
+    return (picked.join('-') || 'app').slice(0, 40);
+  }
+
+  // singular noun -> entity heuristic
+  function entitiesFromPrompt(text, actors) {
+    var lc = ' ' + String(text || '').toLowerCase() + ' ';
+    var CANDIDATES = [
+      ['project', /\bprojects?\b/], ['task', /\btasks?\b/], ['ticket', /\btickets?\b/],
+      ['note', /\bnotes?\b/], ['document', /\bdocuments?\b/], ['post', /\bposts?\b|\barticles?\b/],
+      ['comment', /\bcomments?\b/], ['order', /\borders?\b/], ['product', /\bproducts?\b|\bitems?\b(?! per)/],
+      ['invoice', /\binvoices?\b/], ['event', /\bevents?\b/], ['booking', /\bbookings?\b|\breservations?\b|\bappointments?\b/],
+      ['message', /\bmessages?\b/], ['contact', /\bcontacts?\b/], ['lead', /\bleads?\b/],
+      ['expense', /\bexpenses?\b/], ['course', /\bcourses?\b/], ['lesson', /\blessons?\b/],
+      ['review', /\breviews?\b/], ['file', /\bfiles?\b|\buploads?\b/]
+    ];
+    var found = CANDIDATES.filter(function (c) { return c[1].test(lc); }).map(function (c) { return c[0]; });
+    if (!found.length) found = ['item'];
+    found = found.slice(0, 4);
+
+    // a hierarchy hint: "<A> with <B>" / "<A> and their <B>" -> B references A
+    var ents = found.map(function (name, i) {
+      var fields = [];
+      if (name === 'task' || name === 'ticket') fields.push({ name: 'title', type: 'text', required: true, max: 200 }, { name: 'done', type: 'bool', default: false });
+      else if (name === 'note' || name === 'comment' || name === 'message') fields.push({ name: 'body', type: 'longtext', required: true, max: 5000 });
+      else if (name === 'product') fields.push({ name: 'title', type: 'text', required: true }, { name: 'priceCents', type: 'int', required: true });
+      else if (name === 'order' || name === 'invoice' || name === 'expense') fields.push({ name: 'amountCents', type: 'int', required: true }, { name: 'status', type: 'text', default: 'pending', max: 40 });
+      else if (name === 'event' || name === 'booking') fields.push({ name: 'title', type: 'text', required: true }, { name: 'startsAt', type: 'timestamp', required: true });
+      else fields.push({ name: 'title', type: 'text', required: true, max: 200 });
+      // parent ref: the previous entity, when the prompt links them
+      if (i > 0 && new RegExp(found[i - 1] + '[^.]{0,40}\\b' + name, 'i').test(text)) {
+        fields.push({ name: found[i - 1] + 'Id', type: 'ref', ref: found[i - 1], required: true });
+      }
+      return { name: name, fields: fields };
+    });
+    return ents;
+  }
+
+  function deriveFromPrompt(prompt, opts) {
+    opts = opts || {};
+    _cid = {};
+    _rid = 0;
+    prompt = String(prompt || '').trim();
+
+    var U = window.Universal || (Engine.Universal);
+    var normalized = U ? U.Normalizer.normalize({ prompt: prompt }) : { projectGoal: prompt.slice(0, 200), applicationCategory: 'web_application', targetPlatforms: ['web'], primaryActors: ['user'], coreCapabilities: [] };
+    var classification = U ? U.Classifier.classify(normalized) : { primaryType: 'web_application', complexity: 'standard', riskLevel: 'low' };
+    var lc = prompt.toLowerCase();
+
+    /* ---- unsupported requests (recorded, never faked) ---- */
+    var unsupported = [];
+    UNSUPPORTED_RE.forEach(function (u) { if (u[0].test(prompt)) unsupported.push({ id: nid('UNS'), request: (prompt.match(u[0]) || [''])[0], reason: u[1] }); });
+
+    /* ---- unsafe requests (BLOCK the run) ---- */
+    var unsafe = [];
+    UNSAFE_RE.forEach(function (u) { if (u[0].test(prompt)) unsafe.push({ id: nid('UNSAFE'), request: (prompt.match(u[0]) || [''])[0], reason: u[1] }); });
+
+    /* ---- the shape of the thing ---- */
+    var wantsAuth = /\b(account|accounts|sign ?up|sign ?in|log ?in|auth|users?|role|permission|rbac|tenant)\b/.test(lc);
+    var wantsRBAC = /\b(role|roles|rbac|permission|admin|manager|owner|access control)\b/.test(lc);
+    var wantsJobs = /\b(job|jobs|queue|worker|background|reminder|reminders|email|notification|notifications|schedule|cron|digest|async)\b/.test(lc);
+    var wantsApi = /\b(api|rest|endpoint|endpoints|integrat)\b/.test(lc) || classification.primaryType === 'api_service';
+    var wantsA11y = /\b(accessib|a11y|wcag|screen reader)\b/.test(lc);
+    var wantsDocker = /\b(docker|container|compose|deploy|deployment|kubernetes|infrastructure)\b/.test(lc);
+    var storage =
+      /\bpostgres|postgresql|pg\b/.test(lc) ? { choice: 'postgres', reason: 'requested explicitly' }
+      : /\bsqlite\b/.test(lc) ? { choice: 'sqlite', reason: 'requested explicitly' }
+      : /\b(database|persist|store|storage|sql)\b/.test(lc) ? { choice: 'postgres', reason: 'relational data implied; Postgres is the safe default' }
+      : { choice: 'json', reason: 'no storage engine named; a schema-enforced JSON store is generated (swap in Postgres via DATABASE_URL)' };
+
+    var entities = entitiesFromPrompt(prompt, normalized.primaryActors);
+
+    /* ---- roles ---- */
+    var roles = [];
+    if (wantsAuth) {
+      roles.push({ role: 'admin', permissions: ['manage_users', 'read_all', 'write_all', 'delete_all'] });
+      roles.push({ role: 'member', permissions: ['read_own', 'write_own', 'delete_own'] });
+      if (/\bguest|public|anonymous|visitor\b/.test(lc)) roles.push({ role: 'guest', permissions: ['read_public'] });
+    }
+
+    /* ---- assumptions (non-blocking ambiguity -> conservative default, recorded) ---- */
+    var assumptions = [];
+    function assume(about, decision, def, why) { assumptions.push({ id: nid('ASM'), about: about, decision: decision, default: def, rationale: why }); }
+    if (storage.choice === 'json') assume('storage engine', 'schema-enforced JSON store', 'json', 'nothing named; real SQL migrations are still emitted for Postgres');
+    if (wantsAuth) assume('password policy', 'scrypt hash, minimum 8 characters, first user becomes admin', 'scrypt+8', 'no policy specified; a safe conservative default');
+    if (wantsAuth) assume('session model', 'opaque server-side session tokens (no JWT)', 'opaque-session', 'simplest secure default; no third-party identity provider named');
+    if (wantsJobs) assume('job delivery', 'in-process durable queue + polling worker; email send is logged, not wired to a provider', 'queue+log', 'no email/SMS provider named — wiring one needs credentials the user must supply');
+    assume('frontend', 'server-rendered vanilla HTML/CSS/JS with fetch', 'vanilla-js', 'no framework named and none is generated today');
+    if (!wantsDocker) assume('deployment', 'Docker + Compose IaC is generated but nothing is pushed', 'compose', 'no target named; generation is safe, a real deploy needs the user\'s credentials');
+
+    /* ---- blocking questions (only where the answer changes architecture / data-safety / money / auth) ---- */
+    var blockingQuestions = [];
+    function blocker(kind, question, why, options) { blockingQuestions.push({ id: nid('Q'), kind: kind, question: question, why: why, options: options || [], answered: null }); }
+    if (/\b(pay|payment|payments|checkout|subscription|billing|charge|invoice)\b/.test(lc) && !/\b(stripe|paypal|braintree|adyen|square|mock payment|no real payment)\b/.test(lc)) {
+      blocker('billing', 'Which payment provider should handle real charges, or should payments be recorded only (no real money movement)?',
+        'Moving real money requires a specific provider + credentials and changes the data model and compliance scope.',
+        ['Record payments only (no provider)', 'Stripe', 'Other (specify)']);
+    }
+    if (wantsAuth && /\b(multi-?tenant|organization|organisations?|companies|workspaces?|teams?)\b/.test(lc) && !/\brow-level|per-tenant|shared schema|separate database\b/.test(lc)) {
+      blocker('architecture', 'Should tenants share one schema with a tenant_id column, or is stricter isolation required?',
+        'Tenant isolation is a data-safety decision that is very expensive to change after generation.',
+        ['Shared schema + tenant_id (default)', 'Separate database per tenant']);
+    }
+    if (/\b(gdpr|hipaa|pci|sox|compliance|regulated|medical records|phi|financial data)\b/.test(lc)) {
+      blocker('security', 'This domain implies a formal compliance regime. Which controls are in scope for this build (audit log, encryption at rest, data export/erase)?',
+        'Compliance scope changes the schema, the deployment target and what "done" means.',
+        ['Audit log + data export/erase only', 'Full regime (out of scope for this generator)']);
+    }
+
+    /* ---- requirements with stable ids + machine-checkable acceptance criteria ---- */
+    var reqs = [];
+    var acList = [];
+    function addReq(statement, category, priority, machine, journeyRef) {
+      var r = { id: nid('REQ'), statement: statement, category: category, priority: priority || 'mandatory',
+        acceptanceCriteria: machine || [], dependsOn: [], implementationFiles: [], traceIds: [], status: 'unverified' };
+      // a human-readable Given/When/Then per requirement, linked by id
+      var ac = { id: nid('AC'), requirementId: r.id, given: 'the application is generated and running',
+        when: statement.replace(/^The (application|system|project)\s*/i, '').replace(/\.$/, ''),
+        then: 'the behaviour is present and passes its automated evidence', machine: machine || [] };
+      acList.push(ac);
+      r.traceIds.push(ac.id);
+      if (journeyRef) r.traceIds.push(journeyRef);
+      reqs.push(r);
+      return r;
+    }
+
+    addReq('The project’s automated tests pass.', 'quality', 'mandatory', [{ kind: 'execution', gate: 'testsPass' }]);
+    addReq('The project builds a production artifact.', 'quality', 'mandatory', [{ kind: 'execution', gate: 'buildPasses' }]);
+    addReq('The project passes lint with no findings.', 'quality', 'optional', [{ kind: 'execution', gate: 'lintClean' }]);
+    addReq('No production control is simulated, mocked, or broken.', 'integrity', 'mandatory', [{ kind: 'no-mock' }]);
+    addReq('A real database schema with migrations exists.', 'data', 'mandatory', [{ kind: 'file', path: '/db/migrations/001_init.sql' }]);
+    addReq('CI runs the test and build gates on every change.', 'delivery', 'optional', [{ kind: 'ci', want: 'test+build' }]);
+
+    if (wantsAuth) {
+      addReq('Users can create an account and sign in.', 'functional', 'mandatory',
+        [{ kind: 'file', path: '/src/auth.js' }, { kind: 'control', name: 'need an account?', want: 'REAL' }]);
+      addReq('Authentication uses a password hash and server-side sessions (no secrets in source).', 'security', 'mandatory',
+        [{ kind: 'file', path: '/src/auth.js' }]);
+    }
+    if (wantsRBAC) {
+      addReq('Access is role-based: a member can only act on their own records; an admin can act on all.', 'security', 'mandatory',
+        [{ kind: 'file', path: '/src/auth.js' }, { kind: 'execution', gate: 'testsPass' }]);
+    }
+    entities.forEach(function (e) {
+      if (['user', 'session', 'job'].indexOf(e.name) >= 0) return;
+      addReq('Users can create, list and delete ' + e.name + ' records through a REST API.', 'functional', 'mandatory',
+        [{ kind: 'file', path: '/src/services/' + e.name + '.js' }, { kind: 'execution', gate: 'testsPass' }]);
+    });
+    if (wantsJobs) {
+      addReq('Background jobs run on a durable queue with retry and dead-letter handling.', 'functional', 'mandatory',
+        [{ kind: 'file', path: '/src/queue.js' }, { kind: 'file', path: '/src/worker.js' }, { kind: 'execution', gate: 'testsPass' }]);
+    }
+    if (wantsApi) {
+      addReq('The backend exposes a documented REST API surface.', 'functional', 'mandatory',
+        [{ kind: 'file', path: '/server.js' }]);
+    }
+    if (wantsA11y) {
+      addReq('The frontend passes basic accessibility checks (lang attribute, image alt text, labelled controls).', 'quality', 'mandatory',
+        [{ kind: 'file', path: '/test/a11y.test.js' }, { kind: 'execution', gate: 'testsPass' }]);
+    }
+    if (wantsDocker) {
+      addReq('The project ships Docker and deployment-ready infrastructure.', 'delivery', 'mandatory',
+        [{ kind: 'file', path: '/Dockerfile' }, { kind: 'file', path: '/docker-compose.prod.yml' }]);
+    }
+
+    /* ---- journeys ---- */
+    var journeys = [];
+    if (wantsAuth) journeys.push({ id: nid('JRN'), actor: (normalized.primaryActors[0] || 'user'),
+      steps: ['open the app', 'register an account', 'sign in', 'land on the authenticated view'],
+      requirementIds: reqs.filter(function (r) { return /account|sign in/i.test(r.statement); }).map(function (r) { return r.id; }) });
+    entities.forEach(function (e) {
+      if (['user', 'session', 'job'].indexOf(e.name) >= 0) return;
+      journeys.push({ id: nid('JRN'), actor: (normalized.primaryActors[0] || 'user'),
+        steps: ['sign in', 'create a ' + e.name, 'see it in the list', 'delete it'],
+        requirementIds: reqs.filter(function (r) { return r.statement.indexOf(' ' + e.name + ' ') >= 0; }).map(function (r) { return r.id; }) });
+    });
+
+    /* ---- api + job requirement tables (traceable) ---- */
+    var apiRequirements = [];
+    if (wantsAuth) ['register', 'login', 'logout', 'me'].forEach(function (a) {
+      apiRequirements.push({ id: nid('API'), method: a === 'me' ? 'GET' : 'POST', path: '/api/auth/' + a, auth: a === 'me' || a === 'logout',
+        requirementId: (reqs.find(function (r) { return /account/i.test(r.statement); }) || {}).id || null });
+    });
+    entities.forEach(function (e) {
+      if (['user', 'session', 'job'].indexOf(e.name) >= 0) return;
+      var rid = (reqs.find(function (r) { return r.statement.indexOf(' ' + e.name + ' ') >= 0; }) || {}).id || null;
+      [['GET', ''], ['POST', ''], ['DELETE', '/:id']].forEach(function (m) {
+        apiRequirements.push({ id: nid('API'), method: m[0], path: '/api/' + e.name + 's' + m[1], auth: wantsAuth, requirementId: rid });
+      });
+    });
+    var jobRequirements = [];
+    if (wantsJobs) jobRequirements.push({ id: nid('JOB'), type: /\breminder|email|digest|notification\b/.test(lc) ? 'email-reminder' : 'background-task',
+      trigger: /\bschedule|cron|daily|weekly|hourly\b/.test(lc) ? 'scheduled' : 'on-event',
+      requirementId: (reqs.find(function (r) { return /background jobs/i.test(r.statement); }) || {}).id || null });
+
+    var security = [];
+    function sec(statement, rid) { security.push({ id: nid('SEC'), statement: statement, requirementId: rid || null }); }
+    sec('No secret, token or credential is committed to source.');
+    if (wantsAuth) sec('Passwords are stored only as a slow salted hash (scrypt).', (reqs.find(function (r) { return /password hash/i.test(r.statement); }) || {}).id);
+    if (wantsAuth) sec('Every mutating API route requires an authenticated session.');
+    sec('User input is validated at the API boundary; no SQL is built by string concatenation.');
+    sec('The API applies per-IP rate limiting.');
+
+    var mandatory = reqs.filter(function (r) { return r.priority === 'mandatory'; }).map(function (r) { return r.id; });
+    var optional = reqs.filter(function (r) { return r.priority === 'optional'; }).map(function (r) { return r.id; });
+
+    var contract = {
+      schemaVersion: 1,
+      generatedAt: Date.now(),
+      source: 'prompt-rules',
+      mode: 'from-prompt',
+      product: {
+        name: slugName(prompt),
+        type: classification.primaryType,
+        objective: normalized.projectGoal,
+        prompt: prompt.slice(0, 2000)
+      },
+      supportedStack: {
+        frontend: 'vanilla-js', backend: 'node', database: storage.choice, api: wantsApi ? 'rest' : 'rest',
+        jobs: wantsJobs, auth: wantsAuth, rbac: wantsRBAC, deploy: wantsDocker
+      },
+      capabilitiesReference: SUPPORTED,
+      scope: { mandatory: mandatory, optional: optional, deferred: [], excluded: unsupported.map(function (u) { return u.id; }) },
+      entities: entities,
+      roles: roles,
+      journeys: journeys,
+      apiRequirements: apiRequirements,
+      jobRequirements: jobRequirements,
+      storage: storage,
+      security: security,
+      deployment: { expectation: wantsDocker ? 'Docker + Compose, deploy-ready' : 'Docker generated, not pushed', targets: wantsDocker ? ['docker', 'compose'] : ['compose'] },
+      requirements: reqs,
+      acceptanceCriteria: acList,
+      assumptions: assumptions,
+      blockingQuestions: blockingQuestions,
+      unsupported: unsupported,
+      unsafe: unsafe,
+      totals: {
+        requirements: reqs.length,
+        withMachineCriteria: reqs.filter(function (r) { return r.acceptanceCriteria.some(function (c) { return ACCEPT_KINDS.indexOf(c.kind) >= 0; }); }).length,
+        mandatory: mandatory.length,
+        blockingQuestions: blockingQuestions.length,
+        unsupported: unsupported.length,
+        unsafe: unsafe.length
+      },
+      verdict: 'buildable'
+    };
+    // A run is only BLOCKED up front for safety, or when the request has NO
+    // buildable functional core (everything asked for is outside the supported
+    // stack). Partial-scope requests still build the supported part and report
+    // the rest as `unsupported`.
+    var mentionsWeb = /\b(web ?app|webapp|website|web application|web platform|browser|dashboard|portal|admin panel|rest api|\bapi\b|saas|internal tool)\b/i.test(prompt) &&
+      !/\bno web\b|\bnot .{0,12}web\b|\bwithout .{0,12}web\b|web version/i.test(prompt);
+    var platformBlock = unsupported.some(function (u) { return /platform|backend language|framework/.test(u.reason); });
+    if (unsafe.length) contract.verdict = 'unsafe';
+    else if (platformBlock && !mentionsWeb) contract.verdict = 'unsupported';
+    else contract.verdict = 'buildable';
+
+    var finish = function (llmReqs) {
+      if (llmReqs && llmReqs.length) {
+        llmReqs.forEach(function (r) {
+          r.id = nid('REQ'); r.priority = 'optional'; r.traceIds = []; r.source = 'llm';
+          contract.requirements.push(r);
+        });
+        contract.source = 'prompt-rules+llm';
+        contract.totals.requirements = contract.requirements.length;
+      }
+      write(contract);
+      return contract;
+    };
+    if (opts.useLLM === false) return Promise.resolve(finish(null));
+    return deriveLLM({ objective: normalized.projectGoal, name: contract.product.name, type: classification.primaryType })
+      .then(finish);
+  }
+
+  Engine.Contract = { derive: derive, deriveFromPrompt: deriveFromPrompt, write: write, load: load, ACCEPT_KINDS: ACCEPT_KINDS, SUPPORTED: SUPPORTED };
   console.info('[Contract] product-contract engine ready — Engine.Contract');
 })();

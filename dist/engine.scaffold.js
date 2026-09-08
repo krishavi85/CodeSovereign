@@ -73,6 +73,31 @@
     return normalize(Object.assign({}, DEMO_SPEC, { name: name }));
   }
 
+  // Deterministic, offline: turn a Product Contract (Engine.Contract.deriveFromPrompt)
+  // into a scaffold spec. No AI — the contract already carries the data model.
+  function specFromContract(contract) {
+    if (!contract || !Array.isArray(contract.entities)) return normalize(DEMO_SPEC);
+    var st = contract.supportedStack || {};
+    var ents = contract.entities
+      .filter(function (e) { return ['user', 'session', 'job'].indexOf(e.name) < 0; })
+      .slice(0, 5)
+      .map(function (e) {
+        var fields = (e.fields || []).filter(function (f) { return f && f.name && ['id', 'createdAt', 'updatedAt'].indexOf(f.name) < 0; });
+        if (st.auth && !fields.some(function (f) { return f.type === 'ref' && f.ref === 'user'; })) {
+          fields.push({ name: 'ownerId', type: 'ref', ref: 'user', required: true });
+        }
+        return { name: e.name, fields: fields };
+      });
+    if (!ents.length) ents = DEMO_SPEC.entities;
+    return normalize({
+      name: (contract.product && contract.product.name) || 'app',
+      auth: st.auth !== false,
+      jobs: !!st.jobs,
+      stack: (contract.storage && contract.storage.choice) === 'postgres' ? 'node-pg' : 'node-vanilla',
+      entities: ents
+    });
+  }
+
   function specFromObjective(text) {
     var AI = Engine.AI;
     var fallback = function () { return normalize(Object.assign({}, DEMO_SPEC, { name: (String(text || '').split(/\s+/).slice(0, 2).join('-').replace(/[^a-z0-9-]/gi, '').toLowerCase()) || 'app' })); };
@@ -341,6 +366,6 @@
     return g.map(function (f) { return f.path; });
   }
 
-  Engine.Scaffold = { DEMO_SPEC: DEMO_SPEC, normalize: normalize, specFromContext: specFromContext, specFromObjective: specFromObjective, generate: generate, writeTo: writeTo };
+  Engine.Scaffold = { DEMO_SPEC: DEMO_SPEC, normalize: normalize, specFromContext: specFromContext, specFromObjective: specFromObjective, specFromContract: specFromContract, generate: generate, writeTo: writeTo };
   console.info('[Scaffold] repo-scale generator ready — Engine.Scaffold');
 })();

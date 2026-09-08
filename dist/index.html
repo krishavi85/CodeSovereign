@@ -231,8 +231,11 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="engine.ledger.js"></script>
 <script src="engine.dod.js"></script>
 <script src="engine.orchestrator.js"></script>
+<!-- GodMode closed loop: prompt -> contract -> plan -> generate -> execute -> observe -> repair -> DoD -> VERIFIED -->
+<script src="engine.godmode.js"></script>
 <script src="app.js"></script>
 <script src="app.ai.extras.js"></script>
+<script src="app.godmode.js"></script>
 
 <!-- Desktop layer: no-ops in a plain browser, wires real disk/proc/keychain in Electron -->
 <script src="desktop/desktop-fs.js"></script>

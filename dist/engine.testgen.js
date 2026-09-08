@@ -142,7 +142,8 @@
     var out = {};
     if (eps.length && (opts.api !== false)) out['/test/generated-api.test.js'] = apiSuite(eps, auth);
     if (opts.chaos !== false) out['/test/chaos.test.js'] = chaosSuite(eps, auth);
-    if (opts.a11y !== false && Engine.FS.exists('/public')) out['/test/a11y.test.js'] = a11ySuite();
+    var hasPublic = Engine.FS.exists('/public') || Object.keys(Engine.FS._data || {}).some(function (p) { return p.indexOf('/public/') === 0; });
+    if (opts.a11y !== false && hasPublic) out['/test/a11y.test.js'] = a11ySuite();
     Object.keys(out).forEach(function (p) { Engine.FS.write(p, out[p]); });
     if (S()) S().write('testgen.json', { generatedAt: Date.now(), wrote: Object.keys(out), endpoints: eps.length, plan: plan() });
     return Object.keys(out).map(function (p) { return { path: p, content: out[p] }; });

@@ -20,6 +20,9 @@ const t = {
   equal(name, actual, expected) {
     record(actual === expected, name, actual === expected ? '' : `(got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)})`);
   },
+  notEqual(name, actual, expected) {
+    record(actual !== expected, name, actual !== expected ? '' : `(got ${JSON.stringify(actual)}, did not want it)`);
+  },
   deepEqual(name, actual, expected) {
     const a = JSON.stringify(actual), e = JSON.stringify(expected);
     record(a === e, name, a === e ? '' : `(got ${a}, want ${e})`);

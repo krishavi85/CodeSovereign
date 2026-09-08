@@ -115,7 +115,7 @@
   }
 
   // Files that can contain build/runtime output -> redact secrets on the way in.
-  var RISKY_RE = /(execution-evidence|runtime-trace|diagnostics\/|known-issues|production-readiness|command-audit)/;
+  var RISKY_RE = /(execution-evidence|runtime-trace|diagnostics\/|known-issues|production-readiness|command-audit|godmode-run|godmode-report|godmode-plan|product-contract)/;
   function write(p, data) {
     if (RISKY_RE.test(p)) data = (typeof data === 'string') ? redact(data) : redactDeep(data);
     var body = (typeof data === 'string') ? data : JSON.stringify(data, null, 2);
