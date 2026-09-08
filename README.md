@@ -51,7 +51,13 @@ artifact as-is. The `dist/desktop/` scripts are inert without Electron.
 
 Top nav: Welcome · Agent · IDE · Factory · Pipelines · Marketplace · Workspaces ·
 Ratings · Actions · GitHub · OAuth. Left rail: Welcome · Universal · Agent · IDE ·
-Factory · Recovery · Settings.
+Factory · Recovery · **Ultra Mode** · Settings.
+
+**Ultra Mode** is the closed loop: one natural-language request →
+`Engine.UltraMode` derives a machine-readable contract, generates a real
+Node + vanilla-JS + SQLite/Postgres project, runs its real tests/build, observes
+it running, repairs what fails, and returns **SOVEREIGN VERIFIED** or an honest
+blocked/failed result. See [`docs/ULTRAMODE_CLOSED_LOOP.md`](docs/ULTRAMODE_CLOSED_LOOP.md).
 
 ## Backend / Supabase
 
