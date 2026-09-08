@@ -9,6 +9,57 @@ Measures the current codebase against the two blueprints:
 
 ---
 
+## 0. State of the app — honest standing
+
+The core thesis (**verified outcomes, not files**) is **done and proven**: one
+prompt → contract → plan → generate → run in the right runtime → observe →
+repair → 10-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
+`BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
+(`node test/run.js` 556, `acceptance` 38, `acceptance:build` 22,
+`acceptance:ultramode` 52) prove it end to end in the real Electron renderer.
+
+**At / near 100% for the core loop:**
+
+| Area | Where it landed |
+|---|---|
+| Proof engine (contract · ledger · DoD · certificate) | 10 gates incl. **architecture/layering** (`engine.archrules.js`) and **privacy/PII** (`engine.privacy.js`); zero-mock + no-fake enforced |
+| Repo-scale generation | Node **and** pure-stdlib Python backends; vanilla / React / Preact / Vue / Svelte / Angular frontends (vendored VDOM); GraphQL executor; RFC 6455 WebSockets; monolith **and** microservices (gateway + per-domain services + compose) |
+| Deployment IaC | 10 targets — docker · compose · **kubernetes** · **helm** · **terraform** · fly · render · railway · vps · static (does not push — needs creds, by design) |
+| Ops | every generated backend: `/healthz` · `/readyz` · `/metrics` (Prometheus) · JSON access logs |
+| Cross-platform packaging | Windows NSIS + portable · **macOS dmg/zip (x64+arm64)** · **Linux AppImage+deb** — CI jobs on native runners |
+| **Runtime-adapter targets** | **native Android** (real APK + headless emulator), **native iOS** (staged: source + static universal, build/sim via Xcode/xcross/Theos), **EVM contracts** (bundled solc + local chain — compile/deploy/transact/assert), **ML training** (real PyTorch run + checkpoint + metric). A missing host runtime → `BLOCKED <REASON>` / `PARTIAL`, never "unsupported" |
+
+**Genuinely still open** (roughly, by the blueprint's own sections — most are
+adjacent products, not core-loop gaps):
+
+- **Vision / design input** (§11–13): UI-from-screenshot/Figma, visual validation
+  (render → clipping/overflow/contrast), screenshot-fidelity mode — ⬜. The
+  observer window could host these.
+- **Prompt intake breadth** (stage 1): attachments / screenshots / audio / repo
+  import — 🟨 (text only).
+- **Model-driven intent** (§2–3): the normalizer/classifier are keyword rules +
+  a spellfix table, not a model.
+- **Ops depth** (§43–46): APM / traces / crash-reporting / performance profiling
+  / memory-leak detection — ⬜ (each a hosted-collector product).
+- **Localization engine** (§48), **license intelligence** (§52), **dependency
+  intelligence** — compare / abandoned / safe-upgrade (§10) — ⬜/🟨.
+- **Delivery archive** (§19/20): a single downloadable bundle (report + cert +
+  evidence + continuation state) — 🟨 (the pieces exist as separate
+  `.sovereign/` files + `ultramode-report.md`).
+- **Documentation factory** (§49): full README / API / DB / deploy / troubleshoot
+  set from repo + runtime — 🟨 (README + DATA_MODEL + architecture diagrams).
+- **Refactoring / migration / upgrade engines** (§60, §62), **feature builder /
+  completion graph** (§63–64), **user-journey testing** (§65) — ⬜.
+- **e2e / install / upgrade test generation** (§19), **accessibility as a full
+  gate** — keyboard/focus/ARIA/contrast (§47) — 🟨.
+
+None of these block the core "prompt → verified application" loop; they are
+breadth. The blueprint's own guidance (§ "Recommended Build Priority") is to
+**deepen the loop around the proof engine, not chase the 68 framework features** —
+which is what the last several sessions did.
+
+---
+
 ## 1. The thesis — what actually makes it unique
 
 Most AI builders stop at *prompt → files*. This codebase already has the one
@@ -106,8 +157,8 @@ chase the 68 framework / platform features.
 |---|---|---|---|
 | 32 | Hardware intelligence (CPU / RAM / GPU / VRAM / toolchains) | ✅ | `electron/lib/hardware.js` + `dist/engine.hardware.js`: `os` facts, `nvidia-smi` / `system_profiler` / Electron GPU report for the GPU + VRAM, `--version` probes for node/npm/pnpm/python/rust/go/java/docker/ollama/cmake. Read-only, cached. Browser mode falls back to `navigator` + WebGL renderer string. Feeds the AI router and (next) the build matrix. |
 | 33 | Environment bootstrapper (detect/install Node/Python/Rust/Android SDK/…) | 🟨 | `engine.adapters.js` *detects* runtimes from lockfiles/manifests; no install/verify. |
-| 34 | Cross-platform build matrix (truthful per-target status) | 🟨 | electron-builder configured for win/mac/linux; only **Windows** built & tested in CI. No Android/iOS. No per-target status board. |
-| 35 | Packaging engine (EXE/MSI/DMG/AppImage/APK/IPA/Docker/npm/wheel/VST3) | 🟨 | Windows NSIS + portable only. |
+| 34 | Cross-platform build matrix (truthful per-target status) | 🟨 | electron-builder builds Windows (NSIS + portable), **macOS** (dmg + zip, x64 + arm64) and **Linux** (AppImage + deb) — CI jobs `build` / `build-mac` / `build-linux` on native runners. **Generated apps**: native Android APK via Gradle + emulator; native iOS staged via `electron/lib/ios.js` (`ProjectInspector` reports the truthful per-stage / per-host status → `.sovereign/mobile-ios-evidence.json`). No single per-target status board UI. |
+| 35 | Packaging engine (EXE/MSI/DMG/AppImage/APK/IPA/Docker/npm/wheel/VST3) | 🟨 | CodeSovereign itself: NSIS + portable + dmg + zip + AppImage + deb. Generated apps: Docker/Compose/K8s/Helm/Terraform IaC; Android debug APK (`gradle assembleDebug`); iOS `.ipa` on macOS (Xcode) or via xcross/Theos + zsign off-Mac. No MSI / npm-publish / wheel / VST3. |
 | 36 | Installer engineering (install/upgrade/repair/uninstall/silent/rollback + verification) | 🟨 | NSIS installer exists; lifecycle-path verification (the Phase-10 "test the downloaded installer") is still manual. |
 | 37 | Release engineering (bump / changelog / tag / sign / checksums / notes / publish) | 🟨 | `release.yml` exists; no changelog/notes generation; signing disabled (unsigned alpha). |
 | 38 | Git intelligence | ✅ | `electron/lib/git.js` + checkpoint/stash in exec layer. |
@@ -163,7 +214,8 @@ chase the 68 framework / platform features.
 |---|---|---|
 | 69 | Graduated control levels (Assist / Build / Engineer / Autopilot / Ultra) | ✅ `dist/engine.autonomy.js` — 5 levels, each a capability set over `write/generate/command/repair/observe/deploy/release/network`. `allows(action)` / `gate(action, fn)`. `Engine.Orchestrator.run()` checks `allows('generate'/'command'/'observe'/'repair')` before each side effect; `Engine.Agents` blocks disallowed agents; Settings → **Autonomy & Deployment** card sets the level (persisted). Default `engineer`. |
 | 70 | Ultra Mode command (compact BUILD/TARGET/CONSTRAINTS/MODE declaration) | 🟨 `Engine.UltraMode.start({ prompt, answers?, bounds?, useLLM? })` is the programmatic entry; a free-text request is normalised into the machine-readable contract (BUILD/TARGET/CONSTRAINTS are all derived, incl. `contract.target` ∈ web/android/ios/evm/ml-training). A terse `BUILD:/TARGET:/CONSTRAINTS:/MODE:` DSL is not parsed as a distinct syntax. |
-| 70b | Multi-runtime verification router (native mobile / ML / blockchain) | ✅ `dist/engine.runtime-router.js` + `electron/lib/adapters.js` + `Engine.Blockchain`/`Engine.Mobile`/`Engine.ML`. Native mobile, ML training and EVM contracts are **supported targets**, not "unsupported": each generates a real artifact and verifies it in a real runtime (bundled `solc`+`@ethereumjs/vm` local chain; `gradle assembleDebug` + headless emulator + adb; real `python train.py`). A missing host runtime → `BLOCKED <REASON>` + the exact install command, never a blanket refusal. `test/adapters.test.js` (40) proves ERC-20/721/voting compile+deploy+transact+assert and a real char-LM/classifier/regressor training run; `acceptance:ultramode` proves the closed loop for an ERC-20 contract end to end. See `docs/RUNTIME_ADAPTERS.md`. |
+| 70b | Multi-runtime verification router (native mobile / ML / blockchain) | ✅ `dist/engine.runtime-router.js` + `electron/lib/adapters.js` + `electron/lib/ios.js` + `Engine.Blockchain`/`Engine.Mobile`/`Engine.MobileIOS`/`Engine.ML`. Native mobile, ML training and EVM contracts are **supported targets**, not "unsupported". **EVM**: bundled `solc` + `@ethereumjs/vm` local chain — compile → deploy → transact → assert → `.sovereign/blockchain-evidence.json`. **Android**: `gradle assembleDebug` → real APK → headless emulator → adb install/launch → screenshot → logcat. **iOS** (staged, per `CodeSovereign_Native_iOS_Cross_Platform_Runtime_Spec.md`): `sourceGeneration` + `staticValidation` on every host; `build`/`signing`/`device`/`simulator` via Xcode (macOS) / xcross (Flutter-iOS) / Theos (plain-Swift) / source-only → `.sovereign/mobile-ios-evidence.json`; off-Mac → `PARTIAL` (SOVEREIGN VERIFIED — PARTIAL), never a blanket BLOCKED. **ML**: real `python train.py` → loss curve + hashed checkpoint + metric. A missing host runtime → `BLOCKED <REASON>` / `PARTIAL` + the exact install command. `test/adapters.test.js` (53) + `acceptance:ultramode` (iOS staged + ERC-20 closed loop). See `docs/RUNTIME_ADAPTERS.md`. |
+| 34a | Truthful per-target / per-stage status (native mobile) | ✅ `electron/lib/ios.js` `ProjectInspector` + `HostProbe` + the 6-stage evidence schema is exactly this for iOS; the Android adapter records each step (`gradle-assembleDebug`, `emulator-boot`, `adb-install`, `launch`, `process-alive`, `runtime-observe`) with the APK size and a screenshot. Not surfaced as a dashboard yet. |
 | 71 | The Ultra Mode pipeline (one closed loop intent→…→SOVEREIGN VERIFIED) | ✅ `dist/engine.ultramode.js` `Engine.UltraMode` — one coordinator, an explicit 15-state machine persisted to `.sovereign/ultramode-run.json` (resumes after an app restart with no regeneration), bounded (max repair attempts, run timeout, cancellation), snapshot-before-mutation + rollback-when-worse. It sequences the existing engines only: `Contract.deriveFromPrompt` → `Universal.buildPlan` → `Scaffold`/`TestGen`/`Deploy` → `Sovereign.analyze`/`runEvidence`/`observe` → `Ledger` → `Recovery` → `DoD` + certificate. A plain-browser run generates then ends `BLOCKED` (execution + observation unavailable) — never falsely verified. Proven end-to-end by `npm run acceptance:ultramode` (prompt → SOVEREIGN VERIFIED + resume + two negative scenarios) and `test/ultramode.test.js` (83 checks). See `docs/ULTRAMODE_CLOSED_LOOP.md`. |
 | 72 | The defining difference (verified outcomes, not files) | ✅ demonstrated for a **from-scratch product** built from one natural-language request: `acceptance:ultramode` starts from an empty workspace + the acceptance prompt, generates a ~36-file full-stack app, runs its real `npm test/build/lint`, crawls it running, injects + repairs a defect through the normal repair path, and only then emits `SOVEREIGN VERIFIED`. A requirement is `verified` only when its acceptance criteria pass against real evidence — never because a file exists. |
 
@@ -214,9 +266,13 @@ already exists; none requires new frameworks.
    criteria are coverage gaps, not failures.
 
 3. ✅ **Definition-of-Done gate** — `dist/engine.dod.js` → `.sovereign/definition-of-done.json`
-   (9 criteria) + `release-certificate.md` (SOVEREIGN VERIFIED). Judges "no fake
+   (**10 criteria** — implementation · dependencies · build · tests · runtime ·
+   no-fake · security · **architecture/layering** · **privacy/PII** · acceptance)
+   + `release-certificate.md` (SOVEREIGN VERIFIED). Judges "no fake
    implementation" from what runtime observation actually *exercised*, not from
-   static guesses. Works on any open project.
+   static guesses. A runtime-adapter target (mobile/ML/EVM) is gated on its
+   `*-evidence.json` instead; iOS is split into six per-stage gates. Works on any
+   open project.
 
 4. ✅ **Ultra Mode coordinator** — `dist/engine.orchestrator.js`. Executes a task
    DAG: per task, run a generator (built-in template, or `Engine.LLM` prompt),
@@ -240,8 +296,10 @@ live provider.
 
 ### P1 — make the verdicts binding
 
-5. **Zero-Mock release gate** — wire `mockscan` results into the DoD gate: any
-   MOCK/BROKEN control on a production path blocks release (§67).
+5. ✅ **Zero-Mock release gate** — `Engine.DoD` `noFakeImplementation` blocks
+   `SOVEREIGN VERIFIED` when the runtime crawl classified any control MOCK/BROKEN
+   (proven by `acceptance` §8 and `acceptance:ultramode`). Still static-only for
+   controls the crawl couldn't exercise — those are ledger coverage gaps (§67).
 6. **Completion Auditor from evidence** — rewrite `CompletionScorer` to read
    `.sovereign/*` instead of the plan; per-dimension %, evidence-backed (§54).
 7. **Sovereign Release Certificate** — one cross-gate cert (compile / tests /
