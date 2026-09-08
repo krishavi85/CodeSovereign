@@ -1,7 +1,8 @@
 # CodeSovereign — AI App Factory
 
-An "AI app factory" workspace: describe an app, and the built-in engine plans,
-scaffolds, builds, validates, repairs, packages and documents it. Runs two ways:
+An "AI app factory" workspace: describe an app (or hand it a Figma export),
+and the built-in engine plans, scaffolds, builds, validates, repairs, packages
+and documents it. Runs two ways:
 
 - **Desktop app** (primary) — Electron, real folders on disk, real command
   execution, OS-keychain credentials. See [`electron/README.md`](electron/README.md).
@@ -58,6 +59,19 @@ Factory · Recovery · **Ultra Mode** · Settings.
 project, runs its real tests/build, observes it running, repairs what fails, and
 returns **SOVEREIGN VERIFIED** or an honest blocked/failed result, gated on a
 14-criterion Definition-of-Done (adds accessibility, visual-integrity, licence-compatibility and performance-health gates).
+
+Every run also produces, offline: the **documentation set** (`README` + `docs/API`
++ `DATABASE` + `DEPLOYMENT` + `TROUBLESHOOTING`), generated **e2e / install /
+upgrade / user-journey** test suites, per-request **tracing + crash capture +
+p50/p95/p99** in the backend, a **localization** substrate (`i18n/` catalogue +
+`window.t()` runtime + pseudo-locale), a **feature-completion graph**, **refactor**
+(AST-safe rename) + **dependency-upgrade** plans, and one downloadable
+**delivery archive** (`/delivery/` — manifest + certificate + all evidence +
+continuation state). Engines: `engine.docs.js`, `engine.testgen.js`,
+`engine.journeys.js`, `engine.localize.js`, `engine.features.js`,
+`engine.refactor.js`, `engine.upgrade.js`, `engine.delivery.js`,
+`engine.design.js`, `engine.perfcheck.js`, `engine.a11y.js`,
+`engine.visualcheck.js`, `engine.depintel.js`.
 
 **Web targets** — generated → run → verified: vanilla **or**
 React/Preact/Vue/Svelte/Angular frontends (vendored VDOM runtime, no build);

@@ -13,10 +13,11 @@ prompt
   → progressive clarification           (only for genuinely blocking questions)
   → Universal.buildPlan                 (typed, executable plan — stages 5-12)
   → Engine.Scaffold.generate            (the real repo)
-  → Engine.TestGen.generate             (API + chaos + a11y suites)
+  → Engine.TestGen.generate             (API + chaos + a11y + e2e + install + upgrade + journey suites)
   → Engine.Deploy.apply                 (Docker + Compose IaC — never pushed)
   → Engine.Docs.generate                (README + docs/API/DATABASE/DEPLOYMENT/TROUBLESHOOTING)
-  → Engine.Sovereign.analyze            (static graph + validator + security scan + docs refresh)
+  → Engine.Sovereign.analyze            (static graph + validator + security + a11y + visual + deps/licences
+                                         + perf + localization + journeys + features + refactor + upgrade + design)
   → Engine.Sovereign.runEvidence        (REAL npm test / build / lint)
   → Engine.Sovereign.observe            (runtime crawl of the running app)
   → Engine.Ledger.build                 (claim → evidence → confidence)
