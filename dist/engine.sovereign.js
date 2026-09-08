@@ -90,6 +90,8 @@
     'perf-report.json':           'Generated perf test output — p50/p95/p99 latency + heap-growth samples under a load burst',
     'perf-findings.json':         'Performance + memory-leak classification (spec §45-46)',
     'perf-report.md':             'Readable performance summary',
+    'documentation-index.json':   'Documentation factory — which docs were (re)generated + folded-in verification evidence (spec §49)',
+    'documentation-report.md':    'Readable summary of the documentation factory run',
     'blockchain-evidence.json':   'EVM target — solc compile + local-chain deploy + transactions + receipts + static analysis',
     'mobile-evidence.json':       'Native-mobile target — gradle build + emulator install/launch + logcat + screenshot',
     'ml-evidence.json':           'ML-training target — dataset inspection + real training loss curve + checkpoint + eval metric',
@@ -630,6 +632,9 @@
       safe(function () { window.Engine.Ledger && window.Engine.Ledger.build(); });
       safe(function () { window.Engine.DoD && window.Engine.DoD.evaluate(); });
     }
+
+    // ---- documentation factory (spec §49) — after the gate so it folds in evidence ----
+    safe(function () { window.Engine.Docs && window.Engine.Docs.analyze(); });
 
     return {
       ok: true,

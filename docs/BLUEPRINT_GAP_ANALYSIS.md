@@ -47,8 +47,9 @@ adjacent products, not core-loop gaps):
 - **Delivery archive** (§19/20): a single downloadable bundle (report + cert +
   evidence + continuation state) — 🟨 (the pieces exist as separate
   `.sovereign/` files + `ultramode-report.md`).
-- **Documentation factory** (§49): full README / API / DB / deploy / troubleshoot
-  set from repo + runtime — 🟨 (README + DATA_MODEL + architecture diagrams).
+- ~~**Documentation factory** (§49)~~ — **done** — `engine.docs.js` generates
+  README + docs/API + docs/DATABASE + docs/DEPLOYMENT + docs/TROUBLESHOOTING
+  from the spec + real `.sovereign/` evidence.
 - **Refactoring / migration / upgrade engines** (§60, §62), **feature builder /
   completion graph** (§63–64), **user-journey testing** (§65) — ⬜.
 - **e2e / install / upgrade test generation** (§19) — 🟨. *(Accessibility as a
@@ -178,7 +179,7 @@ chase the 68 framework / platform features.
 | 46 | Memory-leak detection | ✅ the generated perf test samples `process.memoryUsage().heapUsed` across the load run and runs a **linear least-squares fit** on the series; a sustained positive slope (> 200 KB/req) together with > 8 MB net growth is reported as a `memory-leak` critical finding by `Engine.PerfCheck`, failing `performanceHealthy`. |
 | 47 | Accessibility as a release gate | ✅ `dist/engine.a11y.js` — a WCAG 2.1 AA static audit over the project's HTML + CSS: image alt (1.1.1), form labels (1.3.1/3.3.2 — a placeholder is not a label), heading order, **colour contrast** (1.4.3 — real relative-luminance ratio), **keyboard operability** of click handlers (2.1.1), a `<main>` landmark + skip link (2.4.1), link/button names (2.4.4/4.1.2), **visible focus indicator** (2.4.7 — flags `outline:none` with no replacement), target size (2.5.5), positive `tabindex`, duplicate ids, invalid ARIA roles/states. `audit()` → `.sovereign/a11y-findings.json` + `a11y-report.md`; runs in `Sovereign.analyze()`. New DoD criterion `accessibilityPass` — **critical** barriers (missing alt / no accessible name / unlabelled control) block any release; **serious** ones block when the contract asked for accessibility. The generators were made compliant (labels + `<main>` + skip link + focus styles + AA-contrast palette) so every stack scores ≥ 96/100. `test/stacks.test.js` §12. |
 | 48 | Localization engine | ⬜ |
-| 49 | Documentation factory | 🟨 `architecture.md` + `product-brief.md` + `analysis-summary.md` generated; not the full README/API/DB/deploy/troubleshooting set from real repo+runtime |
+| 49 | Documentation factory | ✅ `dist/engine.docs.js` (`Engine.Docs`) generates the full operator set from the scaffold spec + real `.sovereign/` evidence: **README.md** (project map, run steps, verification status folded in from the DoD + perf report), **docs/API.md** (every HTTP route — auth, CRUD per entity, list query params, status codes, request/response examples, rate limits, `/healthz` `/readyz` `/metrics` `/debug/traces`, GraphQL + WS when present), **docs/DATABASE.md** (tables, columns, types, refs, indexes, the real SQL migrations, JSON⇄Postgres note), **docs/DEPLOYMENT.md** (env-var table, build/migrate/start, one section per configured `Engine.Deploy` target with real commands), **docs/TROUBLESHOOTING.md** (symptom → cause → fix, each tied to something the repo actually does — `EADDRINUSE`, `429`, `503 /readyz`, `401/403`, slow p95, climbing `app_crashes_total`, heap growth). Wired into `engine.scaffold.js generate()`, the Ultra Mode `GENERATING` step, and `Sovereign.analyze()` (writes `documentation-index.json`). `test/stacks.test.js` §17. |
 
 ### H. Governance, Reverse Engineering & Evidence (§50–58)
 

@@ -475,6 +475,15 @@
             run.artifacts.steps.push({ kind: 'deploy-iac', at: now(), files: (dep.wrote || []).length, target: 'compose' });
           }
         } catch (e) { run.artifacts.steps.push({ kind: 'deploy-iac', at: now(), error: String(e && e.message || e) }); }
+        // 4) documentation factory — README + docs/API|DATABASE|DEPLOYMENT|TROUBLESHOOTING (§49)
+        try {
+          if (Engine.Docs && Engine.Docs.generate) {
+            var dspec = Engine.Scaffold.specFromContract(contract);
+            var docFiles = Engine.Docs.generate(dspec);
+            docFiles.forEach(function (f) { FS.write(f.path, f.content); written.push(f.path); });
+            run.artifacts.steps.push({ kind: 'docs', at: now(), files: docFiles.length });
+          }
+        } catch (e) { run.artifacts.steps.push({ kind: 'docs', at: now(), error: String(e && e.message || e) }); }
 
         run.artifacts.generatedFiles = Array.from(new Set(written)).sort();
         run.artifacts.generatedAt = now();

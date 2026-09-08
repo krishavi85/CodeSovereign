@@ -87,7 +87,7 @@ function makeEnv(world) {
   win.Engine = { FS, Sovereign };
   vm.createContext(win);
   for (const f of ['engine-universal.js', 'engine.schema.js', 'engine.auth.js', 'engine.jobs.js',
-                   'engine.backend.js', 'engine.scaffold.js', 'engine.testgen.js', 'engine.deploy.js',
+                   'engine.backend.js', 'engine.scaffold.js', 'engine.testgen.js', 'engine.deploy.js', 'engine.docs.js',
                    'engine.intent.js', 'engine.contract.js', 'engine.runtime-router.js', 'engine.blockchain.js',
                    'engine.mobile.ios.js', 'engine.mobile.js', 'engine.ml.js']) {
     vm.runInContext(load(f), win, { filename: f });
@@ -214,6 +214,9 @@ module.exports = async function (t) {
     t.ok('async infra generated (jobs in prompt)', FS.exists('/src/queue.js') && FS.exists('/src/worker.js'));
     t.ok('deploy IaC generated', FS.exists('/Dockerfile') && FS.exists('/docker-compose.prod.yml'));
     t.ok('chaos + a11y test suites generated', FS.exists('/test/chaos.test.js') && FS.exists('/test/a11y.test.js'));
+    t.ok('documentation factory ran (README + docs/API|DATABASE|DEPLOYMENT|TROUBLESHOOTING)',
+      FS.exists('/docs/API.md') && FS.exists('/docs/DATABASE.md') && FS.exists('/docs/DEPLOYMENT.md') && FS.exists('/docs/TROUBLESHOOTING.md') &&
+      /## Documentation/.test(FS.read('/README.md')) && run.artifacts.steps.some((s) => s.kind === 'docs'));
     t.ok('real execution ran', world.execCalls >= 1);
     t.ok('runtime observation ran', world.observeCalls >= 1);
     t.ok('a pre-generate snapshot was taken', run.snapshots.some((s) => s.phase === 'pre-generate'));

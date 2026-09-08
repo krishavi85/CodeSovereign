@@ -419,6 +419,9 @@
         'name: CI\non: [push, pull_request]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-python@v5\n        with: { python-version: "3.12" }\n      - run: python -m compileall -q app\n      - run: python -m unittest discover -s tests\n';
       var an2 = S().analyze(s);
       files['/docs/DATA_MODEL.md'] = '# Data model\n\n' + s.entities.map(function (e) { return '## ' + e.name; }).join('\n\n') + '\n';
+      if (Engine.Docs && Engine.Docs.generate) {
+        try { Engine.Docs.generate(s).forEach(function (d) { files[d.path] = d.content; }); } catch (_) {}
+      }
       return Object.keys(files).sort().map(function (p) { return { path: p, content: files[p] }; });
     }
 
@@ -488,6 +491,11 @@
         return '- `' + f.name + '` ' + f.type + (f.ref ? ' → ' + f.ref : '') + (f.required ? ' **required**' : '');
       }).join('\n');
     }).join('\n\n') + '\n\n## Analysis\n\n' + (an.hints.length ? an.hints.map(function (h) { return '- **' + h.kind + '** ' + (h.entity || '') + (h.field ? '.' + h.field : '') + (h.note ? ' — ' + h.note : ''); }).join('\n') : '- no issues') + '\n';
+
+    // documentation factory — README + docs/API|DATABASE|DEPLOYMENT|TROUBLESHOOTING (§49)
+    if (Engine.Docs && Engine.Docs.generate) {
+      try { Engine.Docs.generate(s).forEach(function (d) { files[d.path] = d.content; }); } catch (_) {}
+    }
 
     return Object.keys(files).sort().map(function (p) { return { path: p, content: files[p] }; });
   }

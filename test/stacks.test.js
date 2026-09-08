@@ -511,6 +511,37 @@ module.exports = async function (t) {
     t.equal('DoD: performanceHealthy FAILS on a detected memory leak', win.Engine.DoD.evaluate().criteria.performanceHealthy, false);
   }
 
+  /* ---------- 17. Documentation factory (§49) — Engine.Docs ---------- */
+  {
+    const win = loadEngines(['engine.schema.js', 'engine.auth.js', 'engine.backend.js', 'engine.frontends.js', 'engine.graphql.js', 'engine.realtime.js', 'engine.pybackend.js', 'engine.microservices.js', 'engine.deploy.js', 'engine.scaffold.js', 'engine.docs.js']);
+    const spec = { name: 'shopdesk', auth: true, jobs: true, api: 'graphql', websocket: true, deployTargets: ['docker', 'compose', 'kubernetes'],
+      entities: [{ name: 'product', fields: [{ name: 'title', type: 'text', required: true }, { name: 'priceCents', type: 'int', required: true }] },
+        { name: 'order', fields: [{ name: 'total', type: 'int', required: true }, { name: 'productId', type: 'ref', ref: 'product', required: true }] }] };
+    const docs = win.Engine.Docs.generate(spec);
+    const byPath = {}; docs.forEach((d) => { byPath[d.path] = d.content; });
+    t.ok('docs: emits README + the four docs/*.md', ['/README.md', '/docs/API.md', '/docs/DATABASE.md', '/docs/DEPLOYMENT.md', '/docs/TROUBLESHOOTING.md'].every((p) => byPath[p] && byPath[p].length > 200));
+    t.ok('docs: API.md documents every resource route', /\/api\/products/.test(byPath['/docs/API.md']) && /\/api\/orders/.test(byPath['/docs/API.md']));
+    t.ok('docs: API.md documents auth + observability + graphql + ws', /\/api\/auth\/login/.test(byPath['/docs/API.md']) && /\/metrics/.test(byPath['/docs/API.md']) && /GraphQL/.test(byPath['/docs/API.md']) && /WebSocket/.test(byPath['/docs/API.md']));
+    t.ok('docs: DATABASE.md lists the real tables + a migration', /`products`/.test(byPath['/docs/DATABASE.md']) && /CREATE TABLE/.test(byPath['/docs/DATABASE.md']));
+    t.ok('docs: DEPLOYMENT.md has a section per configured target', /Kubernetes/i.test(byPath['/docs/DEPLOYMENT.md']) && /kubectl apply/.test(byPath['/docs/DEPLOYMENT.md']) && /DATABASE_URL/.test(byPath['/docs/DEPLOYMENT.md']));
+    t.ok('docs: TROUBLESHOOTING.md ties symptoms to real behaviour', /EADDRINUSE/.test(byPath['/docs/TROUBLESHOOTING.md']) && /x-trace-id/.test(byPath['/docs/TROUBLESHOOTING.md']) && /429/.test(byPath['/docs/TROUBLESHOOTING.md']));
+
+    // scaffold.generate() now bundles the docs into the repo
+    const repo = {}; win.Engine.Scaffold.generate(spec).forEach((f) => { repo[f.path] = f.content; });
+    t.ok('docs: scaffold repo includes docs/API.md + docs/TROUBLESHOOTING.md', repo['/docs/API.md'] && repo['/docs/TROUBLESHOOTING.md']);
+    t.ok('docs: scaffold README is the factory README', /## Documentation/.test(repo['/README.md']));
+
+    // analyze() writes into FS + folds in evidence
+    Object.keys(win.Engine.FS._data).forEach((k) => delete win.Engine.FS._data[k]);
+    win.Engine.Scaffold.generate(spec).forEach((f) => win.Engine.FS.write(f.path, f.content));
+    win.Engine.Sovereign.write('definition-of-done.json', { pass: false, criteria: { implementationExists: true, testsSucceed: false }, failing: ['testsSucceed'] });
+    win.Engine.Sovereign.write('perf-findings.json', { present: true, p50: 3, p95: 20, p99: 44, errors: 0, leak: false });
+    const res = win.Engine.Docs.analyze();
+    t.ok('docs: analyze() rewrites the doc set', res.wrote.includes('/docs/API.md') && res.enrichedWithEvidence === true);
+    t.ok('docs: README gains a Verification status section from evidence', /Verification status/.test(win.Engine.FS.read('/README.md')) && /testsSucceed/.test(win.Engine.FS.read('/README.md')));
+    t.ok('docs: documentation-index.json recorded', win.Engine.Docs.load() && win.Engine.Docs.load().present === true);
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

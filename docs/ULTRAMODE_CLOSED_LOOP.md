@@ -15,7 +15,8 @@ prompt
   → Engine.Scaffold.generate            (the real repo)
   → Engine.TestGen.generate             (API + chaos + a11y suites)
   → Engine.Deploy.apply                 (Docker + Compose IaC — never pushed)
-  → Engine.Sovereign.analyze            (static graph + validator + security scan)
+  → Engine.Docs.generate                (README + docs/API/DATABASE/DEPLOYMENT/TROUBLESHOOTING)
+  → Engine.Sovereign.analyze            (static graph + validator + security scan + docs refresh)
   → Engine.Sovereign.runEvidence        (REAL npm test / build / lint)
   → Engine.Sovereign.observe            (runtime crawl of the running app)
   → Engine.Ledger.build                 (claim → evidence → confidence)
@@ -38,7 +39,7 @@ call `Engine.UltraMode.resume()`.
 | `NEEDS_INPUT` | parked — waiting for `answer({ QID: "…" })` |
 | `CONTRACT_READY` | contract is buildable, nothing blocking |
 | `PLANNING` | `Universal.buildPlan` → `ultramode-plan.json` |
-| `GENERATING` | snapshot `pre-generate` → Scaffold + TestGen + Deploy write files |
+| `GENERATING` | snapshot `pre-generate` → Scaffold + TestGen + Deploy + Docs (README + docs/API/DATABASE/DEPLOYMENT/TROUBLESHOOTING) write files |
 | `VALIDATING` | `Sovereign.analyze` (graph, validator, security, mockscan) + baseline ledger/DoD |
 | `EXECUTING` | `Sovereign.runEvidence(['test','build','lint'])` (real npm) |
 | `OBSERVING` | `Sovereign.observe` (isolated hidden window crawl of the running app) |
