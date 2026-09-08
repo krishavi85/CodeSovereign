@@ -202,13 +202,13 @@ falsely `VERIFIED`.
 ## Verification
 
 ```bash
-node test/run.js               # 539 checks incl. ultramode.test.js (93) + stacks.test.js + adapters.test.js (40)
+node test/run.js               # 736 checks incl. ultramode.test.js (101) + stacks.test.js (§1-20) + adapters.test.js
 npm run smoke                   # renderer boots clean
 npm run smoke:observer          # observer classifies REAL / MOCK / BROKEN / SKIPPED
 npm run acceptance              # 38/38 — the 8 engines together on a fixture
-npm run acceptance:build        # 22/22 — repo-scale generation from a spec, DoD 10/10
-npm run acceptance:ultramode      # 41/41 — the closed loop: prompt -> SOVEREIGN VERIFIED,
-                                #   + resume-after-interrupt, + two negative scenarios
+npm run acceptance:build        # 26/26 — repo-scale generation from a spec, DoD 14/14
+npm run acceptance:ultramode    # 57/57 — the closed loop: prompt -> SOVEREIGN VERIFIED,
+                                #   + resume-after-interrupt, + negative + iOS-staged + EVM scenarios
 ```
 
 `test/ultramode.test.js` exercises the state machine exhaustively with the real
