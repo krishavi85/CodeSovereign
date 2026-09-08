@@ -78,6 +78,40 @@ build half of the loop:
 This is the proof that CodeSovereign can *build* verified software from a spec,
 not only verify software that already exists. CI job **Desktop → acceptance-build**.
 
+## `npm run acceptance:godmode` — the closed GodMode loop (39 checks)
+
+`electron/acceptance-godmode.js` starts from an **empty** workspace and **one
+natural-language request** and drives `Engine.GodMode` through the entire real
+flow — see `docs/GODMODE_CLOSED_LOOP.md`:
+
+1. `Engine.Contract.deriveFromPrompt` → a machine-readable contract (14 requirements,
+   all with machine-checkable acceptance criteria; entities `project` + `task`;
+   auth + jobs inferred).
+2. `Universal.buildPlan` → a typed plan (scaffold · testgen · security-scan ·
+   deploy-iac); **every mandatory requirement traces to a real artifact**.
+3. `Engine.Scaffold.specFromContract` → `generate()` → a **36-file** full-stack
+   project (backend + JSON/pg data layer + real SQL migrations + auth + durable
+   queue + worker + per-entity REST services + frontend + tests + CI + Docker +
+   Compose).
+4. A **repairable defect** (an `<img>` with no `alt`) is injected into the
+   generated output.
+5. `analyze` → **real `npm test` + `npm run build` + `npm run lint`** (all pass)
+   → runtime observation (app booted, a control observed REAL, nothing fake).
+6. The defect is detected (validator findings), a **snapshot** is taken
+   (`pre-generate`, `pre-repair-N`), `Recovery.run()` repairs it, the checks
+   re-run, warnings drop.
+7. **All 8 Definition-of-Done gates PASS** → `release-certificate.md` =
+   **SOVEREIGN VERIFIED**. History: `ANALYZING → … → GENERATING → VALIDATING →
+   EXECUTING → OBSERVING → REPAIRING → REVERIFYING → VERIFIED`.
+8. **Resume**: the persisted run is forced back to a mid-flight state and
+   `resume()` completes it to `VERIFIED` **without regenerating** the project.
+9. **Negative — unsafe**: a covert-keylogger request ends `BLOCKED`, nothing
+   generated, explicit reason.
+10. **Negative — unsupported**: a native-iOS-only request ends `BLOCKED` with a
+    reason that names the supported stack.
+
+CI job **Desktop → acceptance-godmode**.
+
 ## `node test/run.js` — the factory layer (headless, no Electron)
 
 Two suites cover the generation + factory engines without a renderer:
@@ -95,6 +129,14 @@ Two suites cover the generation + factory engines without a renderer:
   parse and target real endpoints), `Engine.Autonomy` (5 levels, `gate()` blocks
   disallowed actions), `Engine.Agents` (roster, autonomy-gated `deploy` agent,
   arbitration by the product > architecture > security > performance > UI order).
+- **`test/godmode.test.js`** (82 checks) — the GodMode state machine with the real
+  Contract / Universal / Scaffold / TestGen / Deploy engines and stubbed
+  verification engines: happy path → `VERIFIED`; defect → bounded repair →
+  `VERIFIED`; repair budget exhausted → `FAILED`; rollback of a worsening repair;
+  cancellation (paused + mid-run); resume after a simulated crash with no
+  regeneration; unsafe → `BLOCKED`; unsupported → `BLOCKED`; blocking-question →
+  `NEEDS_INPUT` → answer → continue; browser-mode degradation; deterministic ids;
+  traceability; secret redaction.
 
 ## Known limitations surfaced by the run (non-gating diagnostics)
 
