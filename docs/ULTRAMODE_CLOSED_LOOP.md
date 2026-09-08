@@ -186,7 +186,7 @@ node test/run.js               # 497 checks incl. test/ultramode.test.js (83) + 
 npm run smoke                   # renderer boots clean
 npm run smoke:observer          # observer classifies REAL / MOCK / BROKEN / SKIPPED
 npm run acceptance              # 38/38 — the 8 engines together on a fixture
-npm run acceptance:build        # 20/20 — repo-scale generation from a spec
+npm run acceptance:build        # 22/22 — repo-scale generation from a spec, DoD 10/10
 npm run acceptance:ultramode      # 41/41 — the closed loop: prompt -> SOVEREIGN VERIFIED,
                                 #   + resume-after-interrupt, + two negative scenarios
 ```

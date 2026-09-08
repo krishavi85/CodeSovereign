@@ -34,7 +34,7 @@ After the readiness gate, the harness exercises the P0 pipeline
 2. **`Engine.Ledger.build()`** checks every criterion against the `.sovereign/`
    evidence → `evidence-ledger.json` (claim → evidence → confidence + assertion
    count).
-3. **`Engine.DoD.evaluate()`** → `definition-of-done.json`: 9 criteria. It
+3. **`Engine.DoD.evaluate()`** → `definition-of-done.json`: 10 criteria (incl. an architecture/layering gate and a privacy/PII gate). It
    **refuses** while the fixture's planted MOCK `Export CSV`, MOCK `Help` and
    BROKEN `Clear all` controls exist.
 4. **`Engine.Orchestrator.run()`** executes a 3-task DAG. Each task's generator
@@ -59,7 +59,7 @@ auto-activated, no non-loopback requests allowed, the recovery loop applying
 patches without a full rollback, a regenerated fingerprint with drift detection,
 and the full evidence set present on disk.
 
-## `npm run acceptance:build` — repo-scale generation (20 checks)
+## `npm run acceptance:build` — repo-scale generation (22 checks)
 
 `electron/acceptance-build.js` starts from an **empty** workspace and proves the
 build half of the loop:
@@ -72,13 +72,13 @@ build half of the loop:
 3. **Real `npm test` + `npm run build` + `npm run lint`** — all exit 0.
 4. `observe()` boots the generated server and crawls it — a real control observed,
    nothing observed fake.
-5. Evidence ledger + **Definition-of-Done gate: all 9 criteria PASS** →
+5. Evidence ledger + **Definition-of-Done gate: all 10 criteria PASS** →
    `release-certificate.md` = **SOVEREIGN VERIFIED**.
 
 This is the proof that CodeSovereign can *build* verified software from a spec,
 not only verify software that already exists. CI job **Desktop → acceptance-build**.
 
-## `npm run acceptance:ultramode` — the closed Ultra Mode loop (39 checks)
+## `npm run acceptance:ultramode` — the closed Ultra Mode loop (41 checks)
 
 `electron/acceptance-ultramode.js` starts from an **empty** workspace and **one
 natural-language request** and drives `Engine.UltraMode` through the entire real
@@ -114,7 +114,7 @@ CI job **Desktop → acceptance-ultramode**.
 
 ## `node test/run.js` — the factory layer (headless, no Electron)
 
-Two suites cover the generation + factory engines without a renderer:
+These suites cover the generation + factory engines without a renderer:
 
 - **`test/scaffold.test.js`** — generates a full-stack app, writes it to a temp
   dir, and actually runs its `migrate` / `lint` / `node --test` / `build`.
@@ -122,13 +122,27 @@ Two suites cover the generation + factory engines without a renderer:
   + SSE hub) generates and its `node --test` passes incl. queue/worker tests; the
   `node-pg` variant emits a `db.js` shim that picks `db.pg` when `DATABASE_URL`
   is set, plus `pg` as an `optionalDependency`.
+- **`test/stacks.test.js`** — the stack-breadth engines, each verified by
+  generating a repo to a temp dir and **really running its suite**: React + Vue
+  component frontends (vendored VDOM runtime, `node:test` DOM shim); a zero-dep
+  GraphQL executor (round-trips a mutation with variables + a query); an RFC 6455
+  WebSocket server (raw-socket handshake + echo + broadcast); a pure-stdlib
+  **Python** backend (`compileall` + `unittest`); **microservices** (boots the
+  gateway + every domain service on real ports, round-trips register→create→list
+  through the gateway, asserts the 401-before-proxy boundary); Kubernetes / Helm /
+  Terraform IaC (valid YAML, balanced `{{ }}` / HCL braces); `Universal.buildPlan`
+  reflecting the real contract stack; `/healthz` + `/readyz` + `/metrics` on a
+  booted generated server; cross-platform packaging config; and the
+  architecture-rules + privacy scanners (clean repos score 100, injected
+  violations are caught and fail the corresponding DoD criterion).
 - **`test/factory.test.js`** — over a generated repo: `Engine.Security.scan()`
   (clean score, then planted SQLi / XSS / secret / command-injection all caught,
-  score drops), `Engine.Deploy` (7 targets, preflight checklist, `apply()` writes
-  Dockerfile/compose/scripts, never pushes), `Engine.TestGen` (chaos + API suites
-  parse and target real endpoints), `Engine.Autonomy` (5 levels, `gate()` blocks
-  disallowed actions), `Engine.Agents` (roster, autonomy-gated `deploy` agent,
-  arbitration by the product > architecture > security > performance > UI order).
+  score drops), `Engine.Deploy` (10 targets incl. K8s/Helm/Terraform, preflight
+  checklist, `apply()` writes Dockerfile/compose/scripts, never pushes),
+  `Engine.TestGen` (chaos + API suites parse and target real endpoints),
+  `Engine.Autonomy` (5 levels, `gate()` blocks disallowed actions), `Engine.Agents`
+  (roster, autonomy-gated `deploy` agent, arbitration by the product > architecture
+  > security > performance > UI order).
 - **`test/ultramode.test.js`** (83 checks) — the Ultra Mode state machine with the real
   Contract / Universal / Scaffold / TestGen / Deploy engines and stubbed
   verification engines: happy path → `VERIFIED`; defect → bounded repair →
