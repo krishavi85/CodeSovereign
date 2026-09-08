@@ -94,17 +94,17 @@ chase the 68 framework / platform features.
 |---|---|---|---|
 | 25 | Multi-agent software company (17 agents + orchestrator) | 🟧 | `engine-universal.js TaskGraph` *names* agents and builds a dependency DAG with `PENDING` tasks — **no executor**, no agents, tasks never run. |
 | 26 | Agent conflict resolution / arbitration | ⬜ | Not built. |
-| 27 | AI/ML development (local + hosted, model lifecycle, quantization, VRAM) | ⬜ | Not built. |
-| 28 | Local AI router (Ollama / llama.cpp / LM Studio / vLLM / ONNX / WebGPU) | 🟨 | `engine.llm.js` custom provider can point at an OpenAI-compatible local endpoint (Ollama/LM Studio/vLLM). No model discovery, selection, or hardware-aware routing. |
-| 29 | AI provider abstraction | ✅ | `engine.llm.js` provider registry (OpenAI-compatible), key in OS keychain. |
-| 30 | Cost sovereignty engine (mandatory vs optional cost, zero-cost alternative) | ⬜ | Not built. |
+| 27 | AI/ML development — model lifecycle, quantization, VRAM | 🟨 | `dist/engine.modelmanager.js`: `estimate(params, quant, ctx)` (real GGUF byte-per-weight table + KV cache), `canRun(model, hw)`, a curated 26-model catalogue, real `ollama pull` via the proc bridge. Model *conversion* still needs a llama.cpp toolchain (contract only). |
+| 28 | Local AI router (Ollama / llama.cpp / LM Studio / vLLM / Jan) | ✅ | `dist/engine.airouter.js` + `electron/lib/aihost.js`: discovers running local runtimes + their models over the vetted main-process proxy, `recommend(hw, task)` picks the largest model that fits (GPU vs CPU aware), `apply()` wires it into `Engine.LLM`, `route()` does the whole flow with a cloud fallback. Settings → **Local AI** card. |
+| 29 | AI provider abstraction | ✅ | For CodeSovereign itself: `engine.llm.js` registry + keychain, and `Engine.LLM` now routes through the main-process proxy so **local** endpoints work despite CSP. For *generated apps*: `Engine.Orchestrator` `ai-provider` template emits a vendor-neutral `src/ai/provider.js` (Ollama-first) + `.env.example`, and the LLM system prompt forbids hard-coding a vendor. |
+| 30 | Cost sovereignty engine (mandatory vs optional cost, zero-cost alternative) | ✅ | `dist/engine.cost.js`: ~50-entry knowledge table (AI / db / auth / email / payments / storage / search / vector / analytics / monitoring / hosting) → tier + `mandatory` + zero-cost alternatives. `analyze()` scans `package.json` + `.sovereign` externals → `.sovereign/cost-analysis.json` + `cost-sovereignty.md`; run in `Sovereign.analyze()`. Settings → **Cost Sovereignty** card. |
 | 31 | Offline development | ✅ | Whole app is offline: vendored parsers, local FS, local exec, local LLM option. |
 
 ### F. Hardware, Build & Release (§32–40)
 
 | § | Capability | State | Notes |
 |---|---|---|---|
-| 32 | Hardware intelligence (CPU / RAM / GPU / VRAM / toolchains) | ⬜ | Not built. |
+| 32 | Hardware intelligence (CPU / RAM / GPU / VRAM / toolchains) | ✅ | `electron/lib/hardware.js` + `dist/engine.hardware.js`: `os` facts, `nvidia-smi` / `system_profiler` / Electron GPU report for the GPU + VRAM, `--version` probes for node/npm/pnpm/python/rust/go/java/docker/ollama/cmake. Read-only, cached. Browser mode falls back to `navigator` + WebGL renderer string. Feeds the AI router and (next) the build matrix. |
 | 33 | Environment bootstrapper (detect/install Node/Python/Rust/Android SDK/…) | 🟨 | `engine.adapters.js` *detects* runtimes from lockfiles/manifests; no install/verify. |
 | 34 | Cross-platform build matrix (truthful per-target status) | 🟨 | electron-builder configured for win/mac/linux; only **Windows** built & tested in CI. No Android/iOS. No per-target status board. |
 | 35 | Packaging engine (EXE/MSI/DMG/AppImage/APK/IPA/Docker/npm/wheel/VST3) | 🟨 | Windows NSIS + portable only. |
@@ -265,7 +265,12 @@ live provider.
 ### P3 — breadth (only after P0–P2)
 
 Real backend/DB/auth generators, deployment adapters, cross-platform build
-matrix, local-AI router, hardware intelligence, cost sovereignty, control levels.
+matrix, graduated control levels, model conversion/quantization tooling.
+
+**Done ahead of order** (§27–32): hardware intelligence, the local-AI router +
+model lifecycle, cost sovereignty, the generated-app AI abstraction —
+`dist/engine.{hardware,modelmanager,airouter,cost}.js`, `electron/lib/{hardware,aihost}.js`.
+Tests: `test/ai.test.js`. UI: Settings → *Local AI* + *Cost Sovereignty*.
 
 ---
 

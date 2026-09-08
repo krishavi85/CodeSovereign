@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co https://api.openai.com https://api.minimaxi.chat https://api.minimax.chat https://api.anthropic.com; frame-src 'self' data: blob:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' http://localhost:* http://127.0.0.1:* https://*.supabase.co https://api.openai.com https://api.minimaxi.chat https://api.minimax.chat https://api.anthropic.com https://openrouter.ai https://api.together.xyz https://api.groq.com https://api.mistral.ai https://api.deepseek.com https://generativelanguage.googleapis.com; frame-src 'self' data: blob:">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="x-content-type-options" content="nosniff">
 <title>CodeSovereign — AI App Factory</title>
@@ -207,12 +207,18 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="app.ratings.js"></script>
 <script src="app.actions.js"></script>
 <script src="app.oauth.js"></script>
+<!-- AI: hardware intelligence -> local model lifecycle -> local inference router -> cost sovereignty -->
+<script src="engine.hardware.js"></script>
+<script src="engine.modelmanager.js"></script>
+<script src="engine.airouter.js"></script>
+<script src="engine.cost.js"></script>
 <!-- P0 pipeline: product contract -> evidence ledger -> definition-of-done gate -> orchestrator -->
 <script src="engine.contract.js"></script>
 <script src="engine.ledger.js"></script>
 <script src="engine.dod.js"></script>
 <script src="engine.orchestrator.js"></script>
 <script src="app.js"></script>
+<script src="app.ai.extras.js"></script>
 
 <!-- Desktop layer: no-ops in a plain browser, wires real disk/proc/keychain in Electron -->
 <script src="desktop/desktop-fs.js"></script>

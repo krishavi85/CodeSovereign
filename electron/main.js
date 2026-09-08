@@ -16,6 +16,8 @@ const workspace = require('./lib/workspace');
 const proc = require('./lib/proc');
 const observer = require('./lib/observer');
 const trust = require('./lib/trust');
+const hardware = require('./lib/hardware');
+const aihost = require('./lib/aihost');
 const git = require('./lib/git');
 const creds = require('./lib/creds');
 const zip = require('./lib/zip');
@@ -444,6 +446,28 @@ function registerIpc() {
   ipcMain.handle('snap:list', () => snapshots.list());
   ipcMain.handle('snap:create', (_e, reason) => snapshots.create(reason));
   ipcMain.handle('snap:restore', (_e, id) => snapshots.restore(id));
+
+  /* ---- hardware (read-only) + local AI ---- */
+  let _hwCache = null;
+  ipcMain.handle('hw:probe', async () => {
+    try {
+      if (_hwCache && Date.now() - _hwCache.at < 60000) return _hwCache;
+      _hwCache = await hardware.probe(app);
+      return _hwCache;
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('ai:discover', async () => {
+    try { return ok(await aihost.discover()); } catch (e) { return fail(e); }
+  });
+  // Locked-down HTTP: loopback only, or an LLM API host the CSP already allows.
+  ipcMain.handle('ai:request', async (_e, opts) => {
+    try {
+      const o = opts || {};
+      if (typeof o.url !== 'string') return fail('url required');
+      const r = await aihost.request({ url: o.url, method: o.method, headers: o.headers, body: o.body, timeoutMs: o.timeoutMs });
+      return r;
+    } catch (e) { return fail(e); }
+  });
 }
 
 /* ------------------------------------------------------------ workspace open */

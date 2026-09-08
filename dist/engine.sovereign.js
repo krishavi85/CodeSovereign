@@ -69,7 +69,9 @@
     'evidence-ledger.json':      'Every claim -> evidence -> confidence, with assertion counts',
     'definition-of-done.json':   'The DoD gate: 8 criteria computed from the evidence',
     'release-certificate.md':    'Cross-gate SOVEREIGN VERIFIED certificate',
-    'orchestrator-run.json':     'Last GodMode pipeline run (tasks, generators, DoD before/after)'
+    'orchestrator-run.json':     'Last GodMode pipeline run (tasks, generators, DoD before/after)',
+    'cost-analysis.json':        'Per-dependency cost tier + zero-cost alternatives (spec §30)',
+    'cost-sovereignty.md':       'Readable mandatory vs optional cost breakdown'
   };
 
   function rel(p) { return ROOT + '/' + String(p).replace(/^\/+/, ''); }
@@ -575,6 +577,9 @@
       if (pj) reqCtx = { prompt: pj.prompt || '', offline: pj.constraints && pj.constraints.offline, archetypes: pj.archetypes };
     } catch (_) {}
     safe(function () { requirements(reqCtx); });
+
+    // ---- cost sovereignty (spec §30) ----
+    safe(function () { window.Engine.Cost && window.Engine.Cost.analyze({}); });
 
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {

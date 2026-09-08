@@ -130,6 +130,34 @@ beyond what the user explicitly enabled.
 - `app:setTitle` truncates to 120 chars. `app:recents` returns only the user's
   own project paths.
 
+### Hardware (`hw:probe`) — read-only
+
+- Returns `os` module facts (CPU model/cores, RAM totals), Electron's own GPU
+  report, and the output of read-only vendor probes (`nvidia-smi --query-gpu`,
+  `system_profiler SPDisplaysDataType`) plus `--version` of common toolchains.
+- No writes, no downloads, no arbitrary command — `execFile` with a fixed
+  argv, 3–6 s timeout, 1 MB buffer cap. Result cached 60 s.
+- Worst case: the renderer learns the host's specs (it already gets a subset
+  via `navigator`). Accepted.
+
+### Local AI (`ai:discover`, `ai:request`) — `electron/lib/aihost.js`
+
+- `ai:discover` GETs the well-known local-runtime endpoints (Ollama 11434,
+  LM Studio 1234, vLLM 8000, llama.cpp 8080, Jan 1337) with a 2.5 s timeout and
+  lists their models. Loopback only.
+- `ai:request` is a deliberately narrow HTTP client — **not** a general fetch:
+  - `http(s)` to a **loopback** host (any port), **or** `https` to one of the
+    LLM API hosts the app already allow-lists in its CSP (openai / anthropic /
+    minimax / openrouter / together / groq / mistral / deepseek / gemini).
+  - No `file:`, no other hosts, no cross-host redirects (checked against the
+    same allowlist), 45 s timeout, 8 MB response cap.
+- Purpose: the renderer CSP blocks `localhost` and several API hosts, so
+  `Engine.LLM` routes its chat calls through this when running in Electron.
+  The surface is the allowlist + the caps — the renderer never gets `net`.
+- Keys still live only in the OS keychain (`creds:*`) / localStorage; `ai:request`
+  forwards whatever `Authorization` header the caller sets, to an allow-listed
+  host only.
+
 ## M2 hardening — execution & observation trust boundaries
 
 The automated execution loop and runtime observer are the two biggest new trust

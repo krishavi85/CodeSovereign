@@ -178,6 +178,52 @@
         out.push({ path: '/public/app.js', content: app });
       }
       return out;
+    },
+
+    // Emit a vendor-neutral AIProvider abstraction so a generated app never
+    // hard-codes one AI vendor (GodMode blueprint §29). Local-first: it prefers
+    // an OLLAMA_BASE_URL, then falls back to whichever cloud key is present.
+    'ai-provider': function (read) {
+      var out = [];
+      if (!read('/src/ai/provider.js')) {
+        out.push({ path: '/src/ai/provider.js', content:
+          "'use strict';\n" +
+          "// Vendor-neutral AI provider. Set ONE of:\n" +
+          "//   OLLAMA_BASE_URL   (local, zero-cost — e.g. http://localhost:11434)\n" +
+          "//   OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENAI_COMPAT_BASE_URL(+_KEY)\n" +
+          "const P = process.env;\n\n" +
+          "function pick() {\n" +
+          "  if (P.OLLAMA_BASE_URL) return { name: 'ollama', base: P.OLLAMA_BASE_URL.replace(/\\/$/, ''), key: 'ollama', model: P.AI_MODEL || 'qwen2.5-coder:7b' };\n" +
+          "  if (P.OPENAI_COMPAT_BASE_URL) return { name: 'openai-compat', base: P.OPENAI_COMPAT_BASE_URL.replace(/\\/$/, ''), key: P.OPENAI_COMPAT_KEY || 'local', model: P.AI_MODEL || 'local-model' };\n" +
+          "  if (P.OPENAI_API_KEY) return { name: 'openai', base: 'https://api.openai.com', key: P.OPENAI_API_KEY, model: P.AI_MODEL || 'gpt-4o-mini' };\n" +
+          "  if (P.ANTHROPIC_API_KEY) return { name: 'anthropic', base: 'https://api.anthropic.com', key: P.ANTHROPIC_API_KEY, model: P.AI_MODEL || 'claude-3-5-haiku-latest' };\n" +
+          "  return null;\n" +
+          "}\n\n" +
+          "async function chat(messages, opts = {}) {\n" +
+          "  const p = pick();\n" +
+          "  if (!p) throw new Error('No AI provider configured — set OLLAMA_BASE_URL or an API key (see .env.example)');\n" +
+          "  if (p.name === 'anthropic') {\n" +
+          "    const r = await fetch(p.base + '/v1/messages', { method: 'POST',\n" +
+          "      headers: { 'content-type': 'application/json', 'x-api-key': p.key, 'anthropic-version': '2023-06-01' },\n" +
+          "      body: JSON.stringify({ model: p.model, max_tokens: opts.maxTokens || 1024, messages }) });\n" +
+          "    const j = await r.json();\n" +
+          "    return { text: (j.content && j.content[0] && j.content[0].text) || '', provider: p.name, raw: j };\n" +
+          "  }\n" +
+          "  const r = await fetch(p.base + '/v1/chat/completions', { method: 'POST',\n" +
+          "    headers: { 'content-type': 'application/json', authorization: 'Bearer ' + p.key },\n" +
+          "    body: JSON.stringify({ model: p.model, messages, temperature: opts.temperature ?? 0.2 }) });\n" +
+          "  const j = await r.json();\n" +
+          "  return { text: (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '', provider: p.name, raw: j };\n" +
+          "}\n\n" +
+          "module.exports = { chat, provider: () => (pick() || { name: 'none' }).name };\n" });
+      }
+      var env = read('/.env.example');
+      if (env != null && env.indexOf('OLLAMA_BASE_URL') < 0) {
+        out.push({ path: '/.env.example', content: env.replace(/\s*$/, '') + '\n\n# --- AI (set ONE; OLLAMA is zero-cost/local) ---\nOLLAMA_BASE_URL=http://localhost:11434\nAI_MODEL=qwen2.5-coder:7b\n# OPENAI_API_KEY=\n# ANTHROPIC_API_KEY=\n# OPENAI_COMPAT_BASE_URL=\n# OPENAI_COMPAT_KEY=\n' });
+      } else if (env == null) {
+        out.push({ path: '/.env.example', content: '# --- AI (set ONE; OLLAMA is zero-cost/local) ---\nOLLAMA_BASE_URL=http://localhost:11434\nAI_MODEL=qwen2.5-coder:7b\n# OPENAI_API_KEY=\n# ANTHROPIC_API_KEY=\n' });
+      }
+      return out;
     }
   };
 

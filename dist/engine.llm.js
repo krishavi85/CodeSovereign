@@ -129,8 +129,29 @@
       "- Use plain HTML/CSS/JS unless the project context requires a framework.",
       "- All file paths start with /. Keep paths short and ASCII.",
       "- Every file must be complete and runnable on its own.",
+      "- If the app calls an AI model, put it behind a small vendor-neutral provider",
+      "  module (local Ollama first, then an API key) — never hard-code one vendor.",
+      "- Prefer zero-cost / self-hostable services; list required keys in /.env.example.",
       ctxBlk
     ].join("\n");
+  }
+
+  // ----- HTTP transport -----
+  // In the desktop app the renderer CSP blocks localhost + several API hosts;
+  // route through the vetted main-process proxy (loopback / allow-listed API
+  // hosts only). In a plain browser, use fetch directly.
+  async function httpText(url, init) {
+    const D = window.desktop;
+    if (D && D.isDesktop && D.ai && D.ai.request) {
+      const r = await D.ai.request({
+        url: url, method: (init && init.method) || "GET",
+        headers: (init && init.headers) || {}, body: (init && init.body) || null
+      });
+      if (r && r.ok) return { ok: r.status >= 200 && r.status < 300, status: r.status, text: async () => r.body };
+      throw new Error((r && r.error) || "request failed");
+    }
+    const res = await fetch(url, init);
+    return { ok: res.ok, status: res.status, text: () => res.text() };
   }
 
   // ----- HTTP call (OpenAI-compatible chat completions) -----
@@ -172,7 +193,7 @@
     const systemPrompt = buildSystemPrompt(ctx || null);
     const userPrompt = String(prompt || "").trim();
     const req = buildRequest(provider, cfg, systemPrompt, userPrompt);
-    const res = await fetch(req.url, {
+    const res = await httpText(req.url, {
       method: "POST",
       headers: req.headers,
       body: JSON.stringify(req.body)
@@ -246,7 +267,7 @@
       "ping"
     );
     try {
-      const res = await fetch(req.url, {
+      const res = await httpText(req.url, {
         method: "POST",
         headers: req.headers,
         body: JSON.stringify(req.body)

@@ -93,5 +93,14 @@ contextBridge.exposeInMainWorld('desktop', {
     list: () => invoke('snap:list'),
     create: (reason) => invoke('snap:create', reason),
     restore: (id) => invoke('snap:restore', id)
+  },
+
+  hardware: {
+    probe: () => invoke('hw:probe')
+  },
+
+  ai: {
+    discover: () => invoke('ai:discover'),
+    request: (opts) => invoke('ai:request', opts)
   }
 });
