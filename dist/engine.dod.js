@@ -30,7 +30,7 @@
   function t(p) { try { var v = S() && S().read(p); return typeof v === 'string' ? v : (v == null ? '' : JSON.stringify(v)); } catch (_) { return ''; } }
   function pkg() { try { return JSON.parse((Engine.FS.read('/package.json')) || 'null'); } catch (_) { return null; } }
 
-  var NODE_CORE = /^(node:)?(fs|path|http|https|os|url|vm|crypto|events|stream|util|assert|child_process|net|zlib|buffer|timers|dns|tls|readline|worker_threads|perf_hooks|process|module|string_decoder|querystring)$/;
+  var NODE_CORE = /^(node:)?(fs|path|http|https|os|url|vm|crypto|events|stream|util|assert|child_process|net|zlib|buffer|timers|dns|tls|readline|worker_threads|perf_hooks|process|module|string_decoder|querystring|test|sqlite|inspector|constants|console)$/;
 
   function evaluate() {
     var contract = Engine.Contract && Engine.Contract.load();

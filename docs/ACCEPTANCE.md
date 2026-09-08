@@ -59,6 +59,25 @@ auto-activated, no non-loopback requests allowed, the recovery loop applying
 patches without a full rollback, a regenerated fingerprint with drift detection,
 and the full evidence set present on disk.
 
+## `npm run acceptance:build` — repo-scale generation (20 checks)
+
+`electron/acceptance-build.js` starts from an **empty** workspace and proves the
+build half of the loop:
+
+1. `Engine.Scaffold.generate(spec)` writes a complete full-stack app — `server.js`
+   (zero-dep HTTP, routing, CRUD), `src/db.js` (schema-enforcing data layer),
+   `src/auth.js` (scrypt + sessions + RBAC), `db/migrations/*.sql` (real SQL with
+   FK + indexes), `public/` (real fetch UI), `test/*.test.js`, CI, Dockerfile.
+2. `Engine.Sovereign.analyze()` + `Engine.Contract.derive()` on the generated code.
+3. **Real `npm test` + `npm run build` + `npm run lint`** — all exit 0.
+4. `observe()` boots the generated server and crawls it — a real control observed,
+   nothing observed fake.
+5. Evidence ledger + **Definition-of-Done gate: all 8 criteria PASS** →
+   `release-certificate.md` = **SOVEREIGN VERIFIED**.
+
+This is the proof that CodeSovereign can *build* verified software from a spec,
+not only verify software that already exists. CI job **Desktop → acceptance-build**.
+
 ## Known limitations surfaced by the run (non-gating diagnostics)
 
 - The in-renderer static validator's `new Function()` JS parse is blocked by the

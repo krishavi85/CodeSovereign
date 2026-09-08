@@ -52,7 +52,7 @@ chase the 68 framework / platform features.
 | 2 | Intent engine | 🟨 | `engine-universal.js` `Normalizer` + `Classifier` — keyword rules + a `SPELLFIX` table, not model-driven; no attachment/screenshot parsing. |
 | 3 | Requirement completeness (requested→implied→missing→verified) | 🟨 | `engine.requirements.js` has 13 domain packs, archetypes, contradictions, weighted scoring, progressive questions. `engine-universal.js RequirementsEngine` expands a prompt to a functional/non-functional list. Neither is tied to a per-requirement **verification** record. |
 | 4 | Autonomous architecture engine | 🟧 | `engine-universal.js` produces an architecture *object* (client/gateway/backend/data components) + `architecture.md`. Rule-based; not used to drive generation. |
-| 5 | Full repository generator | ⬜ | Generator writes a flat SPA, not `/apps /packages /services /database /tests /infrastructure`. |
+| 5 | Full repository generator | ✅ | `dist/engine.scaffold.js` — a spec → a **complete, runnable, tested** dependency-free full-stack repo: backend + data layer + SQL migrations + auth + frontend + unit/integration tests + build/lint/migrate scripts + CI + Dockerfile + `.env.example` + README. Proven by `npm run acceptance:build` (generate → analyze → **real npm test/build/lint** → observe → DoD **SOVEREIGN VERIFIED**, 20/20). Wired into `Engine.Orchestrator` (`task.scaffold`). Still template-shaped output (one architecture); `specFromObjective()` uses `Engine.AI` for the data model when connected. |
 
 ### B. Execution & Runtime Truth (§6–9)
 
@@ -71,9 +71,9 @@ chase the 68 framework / platform features.
 | 11 | UI generation from prompt / screenshot / Figma / wireframe | 🟨 | Prompt-to-UI only (LLM/templates). No vision input, no reconstruction. |
 | 12 | Visual validation (render → inspect clipping/overflow/contrast) | ⬜ | Not built. The observer window could host this. |
 | 13 | Screenshot fidelity mode | ⬜ | Not built. |
-| 14 | Backend builder (routes / workers / queues / auth / uploads / payments / webhooks / websockets) | ⬜ | `dist/backend.js` is an in-page mock API console, not a backend generator. |
-| 15 | Database architect (schema / migrations / constraints / indexes / query analysis / N+1) | 🟧 | Pipeline/SQL files are *detected*; no design, migration authoring, or query analysis. |
-| 16 | Auth & authz engine (passwordless / OAuth / passkeys / MFA / RBAC / tenant isolation / attack tests) | ⬜ | Not built (there is an OAuth *connector* screen for CodeSovereign itself, not a generator). |
+| 14 | Backend builder (routes / services / validation / error handling) | 🟨 | `dist/engine.backend.js` — generates a real zero-dep HTTP server: routing table, JSON body parsing, per-entity CRUD service layer, ownership scoping, structured errors, static serving. **Not yet**: workers/queues/websockets/uploads/payments/webhooks. |
+| 15 | Database architect (schema / migrations / constraints / indexes / query analysis / N+1) | ✅ | `dist/engine.schema.js` — entity model → real SQL migrations (CREATE TABLE, FK + `ON DELETE`, `CREATE [UNIQUE] INDEX`, up+down) + a schema-enforcing data layer (types, required, max, defaults, auto-inc, FK existence, unique indexes, cascade delete) + N+1 / missing-FK-index analysis. JSON-backed for portability; the SQL is the real artefact for Postgres. |
+| 16 | Auth & authz engine (password + RBAC + sessions + tenant scoping) | 🟨 | `dist/engine.auth.js` — generates a real auth module: scrypt hashing (`node:crypto`, timing-safe), opaque session tokens, `requireAuth` / `requireRole`, per-request user, first-user-is-admin, a login/register UI. **Not yet**: OAuth / passkeys / MFA / authorization attack tests. |
 
 ### D. Security, Testing & Recovery (§17–24)
 

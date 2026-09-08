@@ -229,6 +229,16 @@
 
   function resolveGenerator(task) {
     if (typeof task.generate === 'function') return task.generate;
+    // repo-scale scaffold: task.scaffold is a spec, or 'context' / 'objective:<text>'
+    if (task.scaffold && Engine.Scaffold) {
+      return function () {
+        if (task.scaffold === 'context') return Engine.Scaffold.generate(Engine.Scaffold.specFromContext());
+        if (typeof task.scaffold === 'string' && task.scaffold.indexOf('objective:') === 0) {
+          return Engine.Scaffold.specFromObjective(task.scaffold.slice(10)).then(function (s) { return Engine.Scaffold.generate(s); });
+        }
+        return Engine.Scaffold.generate(task.scaffold);
+      };
+    }
     if (task.template && TEMPLATES[task.template]) {
       return function () { return TEMPLATES[task.template](function (p) { try { return FS.read(p) || ''; } catch (_) { return ''; } }); };
     }

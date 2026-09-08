@@ -74,10 +74,30 @@ jobs:
       - name: Detect -> classify -> execute -> observe -> repair -> retest -> regenerate -> readiness gate
         run: npm run acceptance
 
+  acceptance-build:
+    name: Repo-scale generation (generate a full app, prove it passes the DoD gate)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Cache Electron download
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/.electron-cache
+          key: electron-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+        env:
+          ELECTRON_CACHE: ${{ runner.temp }}/.electron-cache
+      - name: generate -> analyze -> real npm test/build/lint -> observe -> DoD -> SOVEREIGN VERIFIED
+        run: npm run acceptance:build
+
   build:
     name: Windows installer
     runs-on: windows-latest
-    needs: [test, smoke, acceptance]
+    needs: [test, smoke, acceptance, acceptance-build]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

@@ -13,6 +13,7 @@
     "smoke": "electron . --smoke",
     "smoke:observer": "electron . --smoke-observer",
     "acceptance": "electron . --acceptance",
+    "acceptance:build": "electron . --acceptance-build",
     "test": "node test/run.js",
     "web": "npx --yes serve dist -l 4173",
     "dist:win": "electron-builder --win --publish never",
