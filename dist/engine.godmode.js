@@ -440,9 +440,17 @@
         try { S().analyze(); } catch (_) {}
         return flush().then(function () {
           var e = recordEvidence(run, 'post-observe');
-          var repairable = hasRepairableIssues(e);
-          if ((!repairable) || run.attempts.repair >= run.bounds.maxRepairAttempts) {
-            transition(run, 'REVERIFYING', repairable ? 'no repair budget left — verify honestly' : 'first pass clean');
+          // Repair when: the DoD is failing (always, if budget allows), OR there
+          // are auto-repairable hygiene findings AND we have not yet tried a repair
+          // pass. Once we have repaired at least once, a DoD-passing run with only
+          // residual hygiene warnings is accepted — no point burning the budget.
+          var needsRepair = !clean(e)
+            ? hasRepairableIssues(e)
+            : (hasHygieneFindings(e) && run.attempts.repair === 0);
+          if (!needsRepair || run.attempts.repair >= run.bounds.maxRepairAttempts) {
+            transition(run, 'REVERIFYING',
+              (!clean(e) && run.attempts.repair >= run.bounds.maxRepairAttempts) ? 'no repair budget left — verify honestly'
+              : (clean(e) ? 'DoD passes — verify' : 'first pass clean'));
             return;
           }
           transition(run, 'REPAIRING', clean(e) ? 'DoD passes but hygiene findings remain' : 'issues after first pass');
