@@ -45,9 +45,12 @@
   var STATES = [
     'RECEIVED', 'ANALYZING', 'NEEDS_INPUT', 'CONTRACT_READY', 'PLANNING',
     'GENERATING', 'VALIDATING', 'EXECUTING', 'OBSERVING', 'REPAIRING',
-    'REVERIFYING', 'VERIFIED', 'BLOCKED', 'FAILED', 'CANCELLED'
+    'REVERIFYING', 'VERIFIED', 'PARTIAL', 'BLOCKED', 'FAILED', 'CANCELLED'
   ];
-  var TERMINAL = { VERIFIED: 1, BLOCKED: 1, FAILED: 1, CANCELLED: 1 };
+  // PARTIAL: a runtime-adapter target where every stage this host CAN run passed,
+  // but some stages need tooling the host lacks (e.g. iOS build/simulator need
+  // macOS). Never a FAIL, never a blanket BLOCKED — spec rule 10.
+  var TERMINAL = { VERIFIED: 1, PARTIAL: 1, BLOCKED: 1, FAILED: 1, CANCELLED: 1 };
 
   var DEFAULT_BOUNDS = {
     maxRepairAttempts: 3,
@@ -505,13 +508,20 @@
           run.adapterResult = {
             status: res.status, reason: res.reason || null, need: res.need || null,
             evidenceFile: res.evidenceFile || null, platform: res.platform || null,
-            note: res.note || null
+            note: res.note || null, partial: !!res.partial,
+            stages: res.stages || null, blockers: res.blockers || null
           };
           // Persist the adapter evidence into the Sovereign store (the real adapter
           // already wrote it to .sovereign/ on disk; this keeps the in-memory store
           // and any resumed run consistent, and feeds Engine.DoD).
-          var evFile = res.evidenceFile || ({ evm: 'blockchain-evidence.json', android: 'mobile-evidence.json', ios: 'mobile-evidence.json', 'ml-training': 'ml-evidence.json' })[run.target];
-          if (evFile && res.evidence && S()) { try { S().write(evFile, res.evidence); } catch (_) {} }
+          var evFile = res.evidenceFile || ({ evm: 'blockchain-evidence.json', android: 'mobile-evidence.json', ios: 'mobile-ios-evidence.json', 'ml-training': 'ml-evidence.json' })[run.target];
+          if (evFile && res.evidence && S()) {
+            try { S().write(evFile, res.evidence); } catch (_) {}
+            // iOS: also mirror a generic mobile-evidence.json so the DoD/UI generic path sees it
+            if (run.target === 'ios') {
+              try { S().write('mobile-evidence.json', { capability: 'native-mobile', platform: 'ios', status: res.status === 'PARTIAL' ? 'PASS' : res.status, partial: res.status === 'PARTIAL', iosStages: res.evidence, generatedAt: now() }); } catch (_) {}
+            }
+          }
           run.artifacts.steps.push({ kind: 'runtime-verify', at: now(), target: run.target, status: res.status, reason: res.reason || null, evidenceFile: evFile || null });
           try { S().analyze(); } catch (_) {}
           return flush();
@@ -649,8 +659,19 @@
             transition(run, 'FAILED', 'adapter verification failed');
             return;
           }
-          // PASS — the DoD gate must also agree (it now reads the *-evidence.json)
           var e = run.evidence.latest || {};
+          // PARTIAL — every stage this host CAN run passed; some need Apple/other
+          // tooling. A real, honest outcome (spec rule 10) — not BLOCKED, not FAIL.
+          if (ar.status === 'PARTIAL') {
+            run.partial = true;
+            var stg = (ar.stages || {});
+            run.resultReason = (ar.note || (run.target + ': partial verification')) +
+              (e.dodPass ? '' : ' The achievable-stage Definition-of-Done gate did not fully clear: ' + ((e.dodFailing || []).join(', ') || '') + '.');
+            transition(run, e.dodPass ? 'PARTIAL' : 'FAILED',
+              e.dodPass ? 'source + static verified; runtime stages need host tooling' : 'partial run but DoD gate incomplete');
+            return;
+          }
+          // PASS — the DoD gate must also agree (it now reads the *-evidence.json)
           if (e.dodPass && /SOVEREIGN VERIFIED/.test(cert || '')) {
             transition(run, 'VERIFIED', run.target + ' verified on its real runtime + DoD gate passed');
             return;
@@ -769,6 +790,8 @@
   function finishTerminal(run) {
     run.result = run.state;
     if (run.state === 'VERIFIED') run.resultReason = run.resultReason || 'All Definition-of-Done gates passed with real execution + runtime evidence.';
+    if (run.state === 'PARTIAL') run.resultReason = run.resultReason ||
+      (run.target + ' — SUPPORTED WITH TARGET-SPECIFIC EXECUTION. Everything this host can verify passed; the remaining stages need tooling it lacks.');
     writeReport(run);
     return persist(run).then(function () { return run; });
   }

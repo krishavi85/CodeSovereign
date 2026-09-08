@@ -388,8 +388,9 @@ function registerIpc() {
     try {
       const o = opts || {};
       const kind = String(o.kind || '');
-      if (['evm', 'android', 'ios', 'ml'].indexOf(kind) < 0) return fail('unknown adapter: ' + kind);
-      await ensureTrusted('runtime adapter: ' + kind + (kind === 'evm' ? ' (solidity compile + local chain)' : kind === 'android' ? ' (gradle build + emulator)' : kind === 'ml' ? ' (pytorch training run)' : ''));
+      if (['evm', 'android', 'ios', 'ml', 'ios-probe', 'ios-inspect'].indexOf(kind) < 0) return fail('unknown adapter: ' + kind);
+      if (kind === 'ios-probe' || kind === 'ios-inspect') return ok({ result: await require('./lib/adapters').run(kind, o.opts || {}) });
+      await ensureTrusted('runtime adapter: ' + kind + (kind === 'evm' ? ' (solidity compile + local chain)' : kind === 'android' ? ' (gradle build + emulator)' : kind === 'ml' ? ' (pytorch training run)' : kind === 'ios' ? ' (swift build / xcross / theos)' : ''));
       const res = await require('./lib/adapters').run(kind, o.opts || {});
       trust.audit({ kind: 'adapter', cmd: kind, cwd: workspace.getRoot(), status: res && res.status });
       return ok(res);

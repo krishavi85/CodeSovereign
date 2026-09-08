@@ -131,14 +131,15 @@ function probe() {
     sdk: sdk || null, adb: !!adb, emulator: !!emu, java: !!java, avds, accel: !!accel
   };
 
-  // iOS
-  const xcodebuild = process.platform === 'darwin' ? which('xcodebuild') : null;
-  out.ios = {
-    available: !!xcodebuild,
-    canRun: !!xcodebuild,
+  // iOS — the full host probe (Swift toolchain, xcross, Theos, device tooling, signing)
+  let iosHost = {};
+  try { iosHost = require('./ios').probe(); } catch (_) {}
+  out.ios = Object.assign({
+    available: true,   // SwiftUI generation + static validation run on every host
+    canRun: process.platform === 'darwin' && !!which('xcodebuild'),
     macos: process.platform === 'darwin',
-    xcodebuild: !!xcodebuild, simctl: !!which('simctl')
-  };
+    xcodebuild: process.platform === 'darwin' && !!which('xcodebuild'), simctl: !!which('simctl')
+  }, iosHost);
 
   // ML
   const py = which('python') || which('python3');
@@ -577,20 +578,12 @@ async function androidRun(opts) {
   }
 }
 
-async function iosRun() {
-  const r = root();
-  if (process.platform !== 'darwin' || !which('xcodebuild')) {
-    const ev = { capability: 'native-mobile', platform: 'ios', status: 'BLOCKED', generatedAt: Date.now(), reason: 'MACOS_RUNNER_REQUIRED' };
-    await writeEvidence(r, 'mobile-evidence.json', ev);
-    return { status: 'BLOCKED', capability: 'native-mobile', platform: 'ios', reason: 'MACOS_RUNNER_REQUIRED',
-      need: 'a macOS worker with Xcode + iOS Simulator (xcodebuild, simctl). https://developer.apple.com/xcode/', evidence: ev, evidenceFile: 'mobile-evidence.json' };
-  }
-  // macOS path
-  const build = await runIn(r, 'xcodebuild', ['-scheme', 'App', '-sdk', 'iphonesimulator', '-configuration', 'Debug', 'build'], { timeoutMs: 10 * 60 * 1000 });
-  const ev = { capability: 'native-mobile', platform: 'ios', generatedAt: Date.now(), buildOk: build.code === 0, tail: (build.stdout + build.stderr).slice(-1500) };
-  ev.status = build.code === 0 ? 'PASS' : 'FAIL';
-  await writeEvidence(r, 'mobile-evidence.json', ev);
-  return { status: ev.status, capability: 'native-mobile', platform: 'ios', evidence: ev, evidenceFile: 'mobile-evidence.json' };
+async function iosRun(opts) {
+  // Full staged model lives in ./ios.js (ProjectInspector + HostProbe +
+  // RuntimeRouter: Xcode / xcross / Theos / source-only). It writes both
+  // .sovereign/mobile-ios-evidence.json (spec schema) and a mirror into
+  // mobile-evidence.json for the generic DoD/UI path.
+  return require('./ios').verify(opts || {});
 }
 
 /* =====================================================================
@@ -676,6 +669,8 @@ async function run(kind, opts) {
     case 'evm': return evmRun(opts);
     case 'android': return androidRun(opts);
     case 'ios': return iosRun(opts);
+    case 'ios-probe': return require('./ios').probe();
+    case 'ios-inspect': return require('./ios').inspect(workspace.getRoot());
     case 'ml': return mlRun(opts);
     default: return { status: 'FAIL', reason: 'UNKNOWN_ADAPTER', kind };
   }

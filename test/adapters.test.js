@@ -120,19 +120,61 @@ module.exports = async function (t) {
 
   /* ---------- Native mobile: generation + honest probe ---------- */
   {
-    const win = loadEngine(['engine.mobile.js']);
+    const win = loadEngine(['engine.mobile.ios.js', 'engine.mobile.js']);
     const android = win.Engine.Mobile.generate({ name: 'WorkoutLog', prompt: 'a native android app for workouts', entities: [{ name: 'workout', fields: [] }] });
     t.ok('mobile(android): a buildable Gradle project (settings + app module + Kotlin Activity + manifest)',
       ['/settings.gradle.kts', '/app/build.gradle.kts', '/app/src/main/AndroidManifest.xml'].every((p) => android.some((f) => f.path === p)) &&
       android.some((f) => /MainActivity\.kt$/.test(f.path)));
     t.ok('mobile(android): a Maestro UI flow is generated', android.some((f) => f.path === '/.maestro/flow.yaml'));
-    const ios = win.Engine.Mobile.generate({ name: 'Jotter', prompt: 'a swiftui iphone app for notes, ios only' });
-    t.equal('mobile: an iOS-only prompt -> ios platform', win.Engine.Mobile.platformOf({ prompt: 'a swiftui iphone app for notes, ios only' }), 'ios');
-    t.ok('mobile(ios): a SwiftUI skeleton is generated', ios.some((f) => /ContentView\.swift$/.test(f.path)));
 
     const probe = adapters.probe();
     t.ok('probe: returns a coherent capability map', probe && probe.evm && probe.android && probe.ios && probe.ml);
     t.ok('probe: the EVM runtime is always available (bundled solc + @ethereumjs/vm)', probe.evm.available === true);
-    t.ok('probe: iOS is only runnable on macOS', process.platform === 'darwin' ? true : probe.ios.canRun === false);
+    t.ok('probe: iOS is available on every host (source + static validation)', probe.ios.available === true);
+    t.ok('probe: the iOS host probe reports the OS + Swift toolchain state', typeof probe.ios.os === 'string' && 'swift' in probe.ios);
+  }
+
+  /* ---------- Native iOS: staged generation + verification (source/static universal, build host-limited) ---------- */
+  {
+    const win = loadEngine(['engine.mobile.ios.js']);
+    const files = win.Engine.MobileIOS.generate({ name: 'Jotter', prompt: 'a swiftui iphone app for notes, ios only', entities: [{ name: 'note', fields: [] }] });
+    t.ok('ios: a real SwiftUI + SwiftPM + xcodegen project',
+      files.some((f) => f.path === '/Package.swift') && files.some((f) => f.path === '/project.yml') &&
+      files.some((f) => /App\.swift$/.test(f.path)) && files.some((f) => /ContentView\.swift$/.test(f.path)) &&
+      files.some((f) => /Core\/[A-Z]\w+\.swift$/.test(f.path)));
+    t.ok('ios: a Theos target + a Maestro flow + entitlements are generated',
+      files.some((f) => f.path === '/Makefile') && files.some((f) => f.path === '/.maestro/flow.yaml') && files.some((f) => /\.entitlements$/.test(f.path)));
+
+    const dir = writeProject(files);
+    try {
+      workspace.setRoot(dir);
+      const insp = await require(path.join(APP, 'electron', 'lib', 'ios')).inspect(dir);
+      t.equal('ios: ProjectInspector detects a swiftui project', insp.projectType, 'swiftui');
+      t.ok('ios: it finds the SwiftPM manifest + the xcodegen spec + entitlements', insp.hasPackageSwift && insp.hasProjectYml && insp.entitlements.length > 0);
+
+      const host = require(path.join(APP, 'electron', 'lib', 'ios')).probe();
+      t.ok('ios: HostProbe reports os / swift / xcode / xcross / theos / device / signing', ['os', 'swift', 'xcode', 'xcross', 'theos', 'physicalDevice', 'signingCredentials'].every((k) => k in host));
+
+      const r = await adapters.run('ios', {});
+      t.ok('ios: source generation + static validation always run', r.stages.sourceGeneration === 'PASS' && r.stages.staticValidation === 'PASS');
+      t.ok('ios: .sovereign/mobile-ios-evidence.json is written to the spec schema', fs.existsSync(path.join(dir, '.sovereign', 'mobile-ios-evidence.json')) &&
+        (() => { const e = JSON.parse(fs.readFileSync(path.join(dir, '.sovereign', 'mobile-ios-evidence.json'), 'utf8')); return e.target === 'ios' && e.support === 'SUPPORTED' && Array.isArray(e.blockers); })());
+      if (process.platform === 'darwin' && host.xcode) {
+        t.ok('ios(macOS): build ran through the Xcode adapter', r.stages.runtimeAdapter === 'xcode' || r.stages.build !== 'BLOCKED');
+      } else {
+        t.equal('ios(non-macOS): overall status is PARTIAL (not BLOCKED, not FAIL)', r.status, 'PARTIAL');
+        t.ok('ios(non-macOS): build + simulator are stage-BLOCKED with precise reasons',
+          r.stages.build === 'BLOCKED' && r.stages.simulatorExecution === 'BLOCKED' &&
+          r.blockers.some((b) => b.stage === 'build' && /MACOS_XCODE_REQUIRED|XCROSS_REQUIRED/.test(b.reason)) &&
+          r.blockers.some((b) => b.stage === 'simulator' && b.reason === 'MACOS_SIMULATOR_REQUIRED'));
+        t.ok('ios(non-macOS): the whole capability is NOT marked unsupported', r.stages.support === 'SUPPORTED');
+      }
+
+      // a deliberately broken Swift source -> staticValidation FAIL -> status FAIL (not BLOCKED)
+      fs.writeFileSync(path.join(dir, 'App', 'Bad.swift'), 'import SwiftUI\nstruct Broken: View {\n  var body: some View {\n    Text("x"\n  }\n'); // unbalanced
+      const r2 = await adapters.run('ios', {});
+      t.equal('ios: a Swift syntax error makes static validation FAIL', r2.stages.staticValidation, 'FAIL');
+      t.equal('ios: a static-validation failure is status FAIL, never BLOCKED', r2.status, 'FAIL');
+    } finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
   }
 };

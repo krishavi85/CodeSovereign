@@ -37,10 +37,65 @@
 
   // A runtime-adapter target run (native mobile / ML training / blockchain) is
   // gated on its adapter evidence, not the web-observer criteria.
+  // iOS is a special case — its DoD is split into per-stage evidence
+  // (sourceGeneration / staticValidation / build / signing / device / simulator).
+  function iosTargetEvaluate(contract) {
+    var ios = j('mobile-ios-evidence.json');
+    if (!ios) { var m = j('mobile-evidence.json'); ios = m && m.iosStages; }
+    var arch = j('architecture-findings.json');
+    var priv = j('privacy-findings.json');
+    var secR = j('security-findings.json');
+    function g(v) { return v === true; }
+    var st = ios || {};
+    var anyFail = ['sourceGeneration', 'staticValidation', 'build', 'signing', 'deviceExecution', 'simulatorExecution']
+      .some(function (k) { return st[k] === 'FAIL'; });
+    var criteria = {
+      artifactGenerated: g(!!ios),
+      sourceGeneration: g(st.sourceGeneration === 'PASS'),
+      staticValidation: g(st.staticValidation === 'PASS'),
+      // build/runtime: PASS if it ran, or BLOCKED (host-limited) — but NOT FAIL
+      buildStage: g(st.build === 'PASS' || st.build === 'BLOCKED' || st.build === 'NOT_RUN'),
+      signingStage: g(st.signing !== 'FAIL'),
+      runtimeStage: g(st.deviceExecution !== 'FAIL' && st.simulatorExecution !== 'FAIL'),
+      noStageFailed: g(!anyFail),
+      securityGatesPass: g(((secR && secR.bySeverity && secR.bySeverity.high) || 0) === 0),
+      architectureSound: g(!arch || ((arch.bySeverity && arch.bySeverity.high) || 0) === 0),
+      privacyRespected: g(!priv || ((priv.bySeverity && priv.bySeverity.high) || 0) === 0)
+    };
+    var fullyVerified = st.build === 'PASS' && (st.deviceExecution === 'PASS' || st.simulatorExecution === 'PASS');
+    var PASS = st.sourceGeneration === 'PASS' && st.staticValidation === 'PASS' && !anyFail &&
+      criteria.securityGatesPass && criteria.architectureSound && criteria.privacyRespected;
+    var dod = {
+      generatedAt: Date.now(), PASS: PASS, mode: 'target', target: 'ios',
+      partial: PASS && !fullyVerified,
+      criteria: criteria,
+      detail: {
+        evidenceFile: 'mobile-ios-evidence.json',
+        stages: {
+          sourceGeneration: st.sourceGeneration, staticValidation: st.staticValidation,
+          build: st.build, signing: st.signing, deviceExecution: st.deviceExecution, simulatorExecution: st.simulatorExecution
+        },
+        runtimeAdapter: st.runtimeAdapter || null,
+        blockers: (st.blockers || []).map(function (b) { return b.stage + ': ' + b.reason; }),
+        experimental: st.experimental || [],
+        fullyVerified: fullyVerified
+      }
+    };
+    if (S()) {
+      S().write('definition-of-done.json', dod);
+      var ds3 = j('decision-state.json') || {};
+      ds3.definitionOfDone = { at: dod.generatedAt, pass: PASS, mode: 'target', target: 'ios', partial: dod.partial,
+        failing: Object.keys(criteria).filter(function (k) { return !criteria[k]; }) };
+      S().write('decision-state.json', ds3);
+    }
+    return dod;
+  }
+
   function targetEvaluate(contract) {
     var target = contract.target;
+    if (target === 'ios') return iosTargetEvaluate(contract);
     var evName = target === 'evm' ? 'blockchain-evidence.json'
-      : (target === 'android' || target === 'ios') ? 'mobile-evidence.json'
+      : target === 'android' ? 'mobile-evidence.json'
       : target === 'ml-training' ? 'ml-evidence.json' : null;
     var tev = evName ? j(evName) : null;
     var arch = j('architecture-findings.json');
@@ -227,6 +282,32 @@
     var name = (contract && contract.product && contract.product.name) || 'project';
     var line = function (label, ok) { return '| ' + label + (Array(Math.max(2, 26 - label.length)).join(' ')) + ' | ' + (ok === true ? 'PASS' : ok === false ? 'FAIL' : 'n/a') + ' |'; };
     var c = dod.criteria || {};
+
+    // ---- iOS staged certificate ----
+    if (dod.mode === 'target' && dod.target === 'ios') {
+      var di = dod.detail || {}; var sg = di.stages || {};
+      var stg = function (label, v) { return '| ' + label + (Array(Math.max(2, 22 - label.length)).join(' ')) + ' | ' + (v || 'n/a') + ' |'; };
+      var head = dod.PASS
+        ? (di.fullyVerified ? '**SOVEREIGN VERIFIED**' : '**SOVEREIGN VERIFIED — PARTIAL** (source + static; build/runtime need host tooling)')
+        : '**NOT VERIFIED**';
+      var imd =
+        '# CodeSovereign Release Certificate\n\n_Generated ' + new Date(dod.generatedAt).toISOString() + '_\n\n' +
+        '- **Project:** ' + name + '\n- **Target:** Native iOS  (staged runtime adapter)\n' +
+        '- **Status:** ' + head + '\n' +
+        (di.runtimeAdapter ? '- **Build adapter:** ' + di.runtimeAdapter + '\n' : '') +
+        (di.experimental && di.experimental.length ? '- **Experimental adapters:** ' + di.experimental.join(', ') + '\n' : '') + '\n' +
+        '| Stage | Result |\n|---|---|\n' +
+        stg('Source generation', sg.sourceGeneration) + '\n' +
+        stg('Static validation', sg.staticValidation) + '\n' +
+        stg('Build', sg.build) + '\n' +
+        stg('Signing', sg.signing) + '\n' +
+        stg('Device execution', sg.deviceExecution) + '\n' +
+        stg('Simulator execution', sg.simulatorExecution) + '\n\n' +
+        (di.blockers && di.blockers.length ? '**Host-limited stages:** ' + di.blockers.join('; ') + '\n\n' : '') +
+        '_Evidence: `.sovereign/mobile-ios-evidence.json`_\n';
+      if (S()) S().write('release-certificate.md', imd);
+      return imd;
+    }
 
     // ---- runtime-adapter target certificate ----
     if (dod.mode === 'target') {

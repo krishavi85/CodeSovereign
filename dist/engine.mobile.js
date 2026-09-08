@@ -159,7 +159,11 @@
 
   function generate(spec) {
     spec = spec || {};
-    return platformOf(spec) === 'ios' ? iosFiles(spec) : androidFiles(spec);
+    if (platformOf(spec) === 'ios') {
+      // the full SwiftUI + SwiftPM + xcodegen + Theos project (staged verification)
+      return (Engine.MobileIOS && Engine.MobileIOS.generate) ? Engine.MobileIOS.generate(spec) : iosFiles(spec);
+    }
+    return androidFiles(spec);
   }
 
   function verify(opts) {
@@ -167,7 +171,7 @@
     var CA = window.CSAdapters;
     if (!CA) return Promise.resolve({ status: 'BLOCKED', capability: 'native-mobile', reason: 'DESKTOP_REQUIRED', need: 'the mobile adapter runs in the desktop app' });
     var plat = opts.platform || (Engine.FS.exists && Engine.FS.exists('/App/ContentView.swift') ? 'ios' : 'android');
-    if (plat === 'ios') return CA.ios(opts);
+    if (plat === 'ios') return (Engine.MobileIOS && Engine.MobileIOS.verify) ? Engine.MobileIOS.verify(opts) : CA.ios(opts);
     return CA.android({ avd: opts.avd, applicationId: opts.applicationId });
   }
 

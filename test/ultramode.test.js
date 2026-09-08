@@ -70,7 +70,17 @@ function makeEnv(world) {
     probe: () => Promise.resolve(world.adapterProbe || { host: { platform: 'test' }, evm: { available: true }, android: { available: true, canRun: !!world.adapterCanRun }, ios: { available: false, canRun: false }, ml: { available: true } }),
     evm: () => Promise.resolve(world.adapterResult || { status: 'BLOCKED', reason: 'NO_WORLD_RESULT' }),
     android: () => Promise.resolve(world.adapterResult || { status: 'BLOCKED', reason: 'NO_WORLD_RESULT' }),
-    ios: () => Promise.resolve(world.adapterResult || { status: 'BLOCKED', capability: 'native-mobile', platform: 'ios', reason: 'MACOS_RUNNER_REQUIRED', need: 'a macOS worker with Xcode' }),
+    ios: () => Promise.resolve(world.adapterResult || {
+      status: 'PARTIAL', capability: 'native-mobile', platform: 'ios', partial: true,
+      reason: 'RUNTIME_STAGES_NEED_APPLE_TOOLING',
+      evidenceFile: 'mobile-ios-evidence.json',
+      stages: { target: 'ios', support: 'SUPPORTED', host: 'windows', projectType: 'swiftui',
+        sourceGeneration: 'PASS', staticValidation: 'PASS', build: 'BLOCKED', signing: 'NOT_RUN',
+        deviceExecution: 'BLOCKED', simulatorExecution: 'BLOCKED', runtimeAdapter: null,
+        blockers: [{ stage: 'build', reason: 'MACOS_XCODE_REQUIRED' }, { stage: 'simulator', reason: 'MACOS_SIMULATOR_REQUIRED' }] },
+      evidence: { target: 'ios', status: 'PARTIAL', sourceGeneration: 'PASS', staticValidation: 'PASS', build: 'BLOCKED', signing: 'NOT_RUN', deviceExecution: 'BLOCKED', simulatorExecution: 'BLOCKED', blockers: [{ stage: 'build', reason: 'MACOS_XCODE_REQUIRED' }] },
+      note: 'Native iOS — SUPPORTED WITH TARGET-SPECIFIC EXECUTION. source generation: PASS · static validation: PASS · build: BLOCKED · simulator: BLOCKED'
+    }),
     ml: () => Promise.resolve(world.adapterResult || { status: 'BLOCKED', reason: 'NO_WORLD_RESULT' })
   } : undefined;
 
@@ -79,7 +89,7 @@ function makeEnv(world) {
   for (const f of ['engine-universal.js', 'engine.schema.js', 'engine.auth.js', 'engine.jobs.js',
                    'engine.backend.js', 'engine.scaffold.js', 'engine.testgen.js', 'engine.deploy.js',
                    'engine.contract.js', 'engine.runtime-router.js', 'engine.blockchain.js',
-                   'engine.mobile.js', 'engine.ml.js']) {
+                   'engine.mobile.ios.js', 'engine.mobile.js', 'engine.ml.js']) {
     vm.runInContext(load(f), win, { filename: f });
   }
 
@@ -98,8 +108,19 @@ function makeEnv(world) {
   win.Engine.DoD = {
     evaluate: () => {
       // runtime-adapter target run: gate on the adapter evidence
-      const tev = Sovereign.read('blockchain-evidence.json') || Sovereign.read('mobile-evidence.json') || Sovereign.read('ml-evidence.json');
       const contract = Sovereign.read('product-contract.json');
+      if (contract && contract.target === 'ios') {
+        const iev = Sovereign.read('mobile-ios-evidence.json') || (Sovereign.read('mobile-evidence.json') || {}).iosStages || {};
+        const anyFail = ['sourceGeneration', 'staticValidation', 'build', 'signing', 'deviceExecution', 'simulatorExecution'].some((k) => iev[k] === 'FAIL');
+        const full = iev.build === 'PASS' && (iev.deviceExecution === 'PASS' || iev.simulatorExecution === 'PASS');
+        const PASS = iev.sourceGeneration === 'PASS' && iev.staticValidation === 'PASS' && !anyFail;
+        const dod = { PASS, mode: 'target', target: 'ios', partial: PASS && !full,
+          criteria: { artifactGenerated: !!iev.sourceGeneration, sourceGeneration: iev.sourceGeneration === 'PASS', staticValidation: iev.staticValidation === 'PASS', noStageFailed: !anyFail, securityGatesPass: true, architectureSound: true, privacyRespected: true },
+          detail: { stages: iev, fullyVerified: full } };
+        Sovereign.write('definition-of-done.json', dod);
+        return dod;
+      }
+      const tev = Sovereign.read('blockchain-evidence.json') || Sovereign.read('mobile-evidence.json') || Sovereign.read('ml-evidence.json');
       if (contract && contract.target && contract.target !== 'web') {
         const ok = tev && tev.status === 'PASS';
         const crit = { artifactGenerated: !!tev, buildSucceeds: ok, runtimeVerified: ok, testsSucceed: ok, noFakeImplementation: ok, securityGatesPass: true, architectureSound: true, privacyRespected: true };
@@ -328,7 +349,7 @@ module.exports = async function (t) {
     t.ok('nothing was generated for an unsafe request', (run.artifacts.generatedFiles || []).length === 0);
   }
 
-  /* ---------- 8. RUNTIME TARGET: iOS with no macOS worker -> BLOCKED (artifact still generated) ---------- */
+  /* ---------- 8. RUNTIME TARGET: iOS on a non-macOS host -> PARTIAL (source+static PASS, runtime host-limited) ---------- */
   {
     const { win } = makeEnv(baseWorld());
     const run = await win.Engine.UltraMode.start({
@@ -336,10 +357,29 @@ module.exports = async function (t) {
       useLLM: false
     });
     t.equal('iOS target: target detected', run.target, 'ios');
-    t.equal('iOS target with no macOS worker -> BLOCKED', run.state, 'BLOCKED');
-    t.notEqual('a BLOCKED runtime target is never VERIFIED', run.result, 'VERIFIED');
-    t.ok('the BLOCKED reason names the missing runtime', /MACOS_RUNNER_REQUIRED|macOS worker/i.test(run.resultReason));
-    t.ok('the iOS artifact WAS generated (capability supported, runtime missing)', (run.artifacts.generatedFiles || []).some((p) => /ContentView\.swift$/.test(p)));
+    t.equal('iOS on a non-macOS host -> PARTIAL, not BLOCKED', run.state, 'PARTIAL');
+    t.equal('the result is PARTIAL', run.result, 'PARTIAL');
+    t.ok('the run is flagged partial', run.partial === true);
+    t.ok('the summary names the passed stages', /source generation: PASS|static validation: PASS/i.test(run.resultReason));
+    t.ok('the evidence names the blocked stage reasons', /MACOS_(XCODE|SIMULATOR)_REQUIRED/i.test(JSON.stringify(run.adapterResult.stages)));
+    t.ok('the SwiftUI project WAS generated', (run.artifacts.generatedFiles || []).some((p) => /ContentView\.swift$/.test(p)) && (run.artifacts.generatedFiles || []).some((p) => /Package\.swift$/.test(p)));
+    t.equal('the adapter reported PARTIAL', run.adapterResult && run.adapterResult.status, 'PARTIAL');
+    t.equal('the iOS evidence records per-stage results', run.adapterResult.stages.sourceGeneration, 'PASS');
+  }
+
+  /* ---------- 8a. RUNTIME TARGET: iOS on a full macOS host -> VERIFIED ---------- */
+  {
+    const { win } = makeEnv(baseWorld({
+      adapterResult: {
+        status: 'PASS', capability: 'native-mobile', platform: 'ios', evidenceFile: 'mobile-ios-evidence.json',
+        stages: { target: 'ios', host: 'macos', projectType: 'swiftui', sourceGeneration: 'PASS', staticValidation: 'PASS',
+          build: 'PASS', signing: 'PASS', deviceExecution: 'NOT_RUN', simulatorExecution: 'PASS', runtimeAdapter: 'xcode', blockers: [] },
+        evidence: { target: 'ios', status: 'PASS', sourceGeneration: 'PASS', staticValidation: 'PASS', build: 'PASS', signing: 'PASS', simulatorExecution: 'PASS', deviceExecution: 'NOT_RUN', blockers: [] }
+      }
+    }));
+    const run = await win.Engine.UltraMode.start({ prompt: 'a native iOS SwiftUI app for tasks', useLLM: false });
+    t.equal('iOS full verification -> VERIFIED', run.state, 'VERIFIED');
+    t.equal('result VERIFIED', run.result, 'VERIFIED');
   }
 
   /* ---------- 8b. RUNTIME TARGET: blockchain adapter PASS -> VERIFIED ---------- */

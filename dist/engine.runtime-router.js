@@ -107,6 +107,7 @@
       out.evm = shape('evm', h.evm);
       out.android = shape('android', h.android, 'canRun');
       out.ios = shape('ios', h.ios, 'canRun');
+      out.ios.available = true;   // SwiftUI generation + static validation run everywhere
       out['ml-training'] = shape('ml', h.ml);
       if (!target) return out;
       var r = out[target] || { available: false, canRun: false, detail: {} };
@@ -117,7 +118,12 @@
         if (!r.detail.emulator || !r.detail.avds || !r.detail.avds.length) missing.push('emulator + an AVD');
         if (!r.detail.accel) missing.push('emulator hardware acceleration');
       }
-      if (target === 'ios' && !r.canRun) missing.push('a macOS worker with Xcode');
+      if (target === 'ios') {
+        // source generation + static validation run on every host; only the
+        // build/runtime stages may be host-limited.
+        if (!r.detail.swift && !r.detail.xcode) missing.push('a Swift toolchain (for full static type-checking)');
+        if (r.detail.os !== 'macos' && !r.detail.xcross && !r.detail.theos) missing.push('Xcode (macOS) or a compatible xcross/Theos adapter (for build + runtime)');
+      }
       if (target === 'ml-training') {
         if (!r.detail.python) missing.push('Python'); if (!r.detail.torch) missing.push('PyTorch');
       }
