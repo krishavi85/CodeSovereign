@@ -279,6 +279,27 @@ module.exports = async function (t) {
     t.equal('DoD: privacyRespected PASSES once the leaks are gone', win.Engine.DoD.evaluate().criteria.privacyRespected, true);
   }
 
+  /* ---------- 9. Universal.buildPlan reflects the real contract stack (20-stage -> Ultra Mode) ---------- */
+  {
+    const win = loadEngines(['engine.contract.js', 'engine-universal.js']);
+    const U = win.Universal || win.Engine.Universal;
+    const react = await win.Engine.Contract.deriveFromPrompt('A React SPA with a GraphQL API and live WebSocket updates, user accounts, products. Node backend, Postgres, Docker + Kubernetes.', { useLLM: false });
+    const rp = U.buildPlan(react);
+    t.ok('buildPlan: react + graphql + websocket show up in the stack summary',
+      /react/i.test(rp.stack.frontend) && /GraphQL/.test(rp.stack.api) && /WebSocket/.test(rp.stack.api));
+    t.ok('buildPlan: it plans the graphql + ws + frontend files', rp.files.some((f) => /graphql\/execute\.js/.test(f)) && rp.files.some((f) => /\/src\/ws\.js/.test(f)) && rp.files.some((f) => /vendor\/vdom\.js/.test(f)));
+    t.ok('buildPlan: architecture + privacy scan steps are in the plan', rp.steps.some((s) => s.kind === 'architecture-scan') && rp.steps.some((s) => s.kind === 'privacy-scan'));
+    t.ok('buildPlan: every step still carries a requirementIds array', rp.steps.every((s) => Array.isArray(s.requirementIds)));
+
+    const py = await win.Engine.Contract.deriveFromPrompt('A Python FastAPI backend with user accounts and orders, background jobs, Postgres.', { useLLM: false });
+    const pp = U.buildPlan(py);
+    t.ok('buildPlan: python backend -> app/main.py, not server.js', pp.files.some((f) => /\/app\/main\.py/.test(f)) && !pp.files.some((f) => f === '/server.js') && /Python/.test(pp.stack.backend));
+
+    const micro = await win.Engine.Contract.deriveFromPrompt('Split into microservices: an orders service and a catalog service, user accounts, Node, Postgres, Docker Compose.', { useLLM: false });
+    const mp = U.buildPlan(micro);
+    t.ok('buildPlan: microservices -> gateway + compose in the file plan', mp.files.some((f) => /gateway\/server\.js/.test(f)) && mp.files.some((f) => /docker-compose\.prod\.yml/.test(f)) && /gateway/.test(mp.stack.architecture));
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

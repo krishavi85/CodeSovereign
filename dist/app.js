@@ -3379,9 +3379,10 @@ function renderUniversal() {
     + '</div>'
     // CTAs
     + '<div style="display:flex;gap:10px;margin-top:18px;align-items:center">'
+    +   '<button id="buildUltraFromUniversal" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border:none;border-radius:10px;background:linear-gradient(135deg,#34d399,#22d3ee);color:#04121a;font:700 13.5px Inter,sans-serif;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex">⚡</span>Build with Ultra Mode (closed loop)</button>'
     +   '<button id="runSpecAgent" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border:none;border-radius:10px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 13.5px Inter,sans-serif;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex">' + I.run + '</span>Send to Agent (build code)</button>'
     +   '<button id="openPipelineFromUniversal" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border:1px solid rgba(34,211,238,.4);border-radius:10px;background:rgba(34,211,238,.08);color:#22d3ee;font:600 13.5px Inter,sans-serif;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex">' + I.deploy + '</span>Pick Pipeline</button>'
-    +   '<span class="cs-muted">Sends prompt + build state to the existing Agent and IDE flow.</span>'
+    +   '<span class="cs-muted">Ultra Mode derives a contract, generates the repo, runs real tests/build, observes it, repairs, and gates on the 10-criterion DoD.</span>'
     + '</div>'
   + '</div>';
 }
@@ -3433,6 +3434,28 @@ function bindUniversal() {
     if (!S.univ || !S.univ.state) { toast('No build plan yet', '#f59e0b'); return; }
     S.prompt = Universal.PromptComposer.fields.prompt;
     genApp();
+  };
+  const buildUltra = a('buildUltraFromUniversal');
+  if (buildUltra) buildUltra.onclick = () => {
+    const prompt = (Universal.PromptComposer.fields.prompt || '').trim();
+    if (prompt.length < 8) { toast('Describe the application first', '#f59e0b'); return; }
+    const UM = window.Engine && window.Engine.UltraMode;
+    if (!UM || !UM.start) { toast('Ultra Mode engine not loaded', '#ef4444'); return; }
+    if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
+    const st = UM.status && UM.status();
+    const go = () => {
+      buildUltra.disabled = true; buildUltra.textContent = 'Starting Ultra Mode…';
+      const useLLM = !!(window.Engine.AI && window.Engine.AI.ready && window.Engine.AI.ready());
+      UM.start({ prompt, useLLM, injectedContext: (S.univ && S.univ.state) ? { source: 'universal-composer', classification: S.univ.state.classification, stack: S.univ.state.stack } : null })
+        .then(() => { try { renderAll(); } catch (_) {} });
+      S.screen = 'ultra';
+      S.lastPrompt = prompt;
+      renderAll();
+    };
+    if (st && !st.terminal && st.state && st.state !== 'NONE') {
+      if (!confirm('An Ultra Mode run is already in progress — start a new one? The current run will be replaced.')) return;
+      (UM.reset ? UM.reset() : Promise.resolve()).then(go);
+    } else { go(); }
   };
   const openPipeline = a('openPipelineFromUniversal');
   if (openPipeline) openPipeline.onclick = () => {

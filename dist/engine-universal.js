@@ -828,18 +828,31 @@ const Universal = {
     if (!contract || !Array.isArray(contract.requirements)) return null;
     const st = contract.supportedStack || {};
     const ents = (contract.entities || []).filter(e => ['user','session','job'].indexOf(e.name) < 0);
-    const dbFiles = st.database === 'postgres'
+    const isPy = st.backend === 'python';
+    const fe = st.frontend && st.frontend !== 'vanilla' ? st.frontend : 'vanilla';
+    const feKind = fe === 'svelte' || fe === 'angular' ? 'react' : fe;   // compiled frameworks map to the vendored VDOM runtime
+    const wantsGraphql = st.api === 'graphql';
+    const wantsWs = !!st.websocket;
+    const wantsMicro = st.architecture === 'multi-service';
+    const dbFiles = st.database === 'postgres' && !isPy
       ? ['/src/db.js','/src/db.json.js','/src/db.pg.js']
-      : ['/src/db.js'];
-    const scaffoldFiles = [
-      '/server.js','/src/schema.js','/package.json','/db/migrations/001_init.sql',
-      '/public/index.html','/public/app.js','/public/app.css',
-      '/test/db.test.js','/test/api.test.js','/scripts/migrate.js','/scripts/build.js','/scripts/lint.js',
+      : isPy ? ['/app/db.py'] : ['/src/db.js'];
+    const feFiles = fe === 'vanilla'
+      ? ['/public/index.html','/public/app.js','/public/app.css']
+      : ['/public/index.html','/public/app.js','/public/app.css','/public/vendor/' + (feKind === 'vue' ? 'vue-lite.js' : 'vdom.js'),'/test/frontend.test.js'];
+    const scaffoldFiles = (isPy
+      ? ['/app/main.py','/app/auth.py','/app/__init__.py','/tests/test_api.py','/requirements.txt']
+      : ['/server.js','/src/schema.js','/scripts/build.js','/scripts/lint.js','/test/db.test.js','/test/api.test.js']
+    ).concat([
+      '/package.json','/db/migrations/001_init.sql','/scripts/migrate.js',
       '/Dockerfile','/.github/workflows/ci.yml','/README.md','/.env.example'
-    ].concat(dbFiles)
-     .concat(st.auth ? ['/src/auth.js','/test/auth.test.js'] : [])
-     .concat(st.jobs ? ['/src/queue.js','/src/worker.js','/src/events.js','/src/jobs/welcome.js','/test/worker.test.js'] : [])
-     .concat(ents.map(e => '/src/services/' + e.name + '.js'));
+    ]).concat(dbFiles).concat(feFiles)
+     .concat(st.auth ? (isPy ? ['/app/auth.py'] : ['/src/auth.js','/test/auth.test.js']) : [])
+     .concat(st.jobs && !isPy ? ['/src/queue.js','/src/worker.js','/src/events.js','/src/jobs/welcome.js','/test/worker.test.js'] : [])
+     .concat(wantsGraphql ? ['/src/graphql/schema.graphql','/src/graphql/resolvers.js','/src/graphql/execute.js','/src/graphql/handler.js','/test/graphql.test.js'] : [])
+     .concat(wantsWs ? ['/src/ws.js','/public/ws-client.js','/test/ws.test.js'] : [])
+     .concat(wantsMicro ? ['/gateway/server.js','/gateway/registry.js','/docker-compose.prod.yml','/test/microservices.test.js'].concat(ents.map(e => '/services/' + e.name + '/server.js')) : [])
+     .concat(ents.map(e => isPy ? '/app/services/' + e.name + '.py' : '/src/services/' + e.name + '.js'));
 
     let step = 0;
     const mkStep = (kind, agent, produces, why, requirementIds) => ({
@@ -853,15 +866,26 @@ const Universal = {
     const steps = [
       mkStep('scaffold','scaffold', scaffoldFiles,
         'generate the runnable repo: schema + migrations + data layer' +
-        (st.auth ? ' + auth' : '') + (st.jobs ? ' + async queue/worker' : '') + ' + REST backend + frontend + unit tests',
-        contract.requirements.filter(r => /tests pass|builds|schema|account|records through a REST API|Background jobs|REST API surface/i.test(r.statement)).map(r => r.id)),
+        (st.auth ? ' + auth' : '') + (st.jobs && !isPy ? ' + async queue/worker' : '') +
+        ' + ' + (isPy ? 'pure-stdlib Python HTTP backend' : 'Node REST backend') +
+        (wantsGraphql ? ' + zero-dep GraphQL layer' : '') +
+        (wantsWs ? ' + RFC 6455 WebSocket endpoint' : '') +
+        ' + ' + (feKind === 'vanilla' ? 'vanilla' : feKind + ' component') + ' frontend' +
+        (wantsMicro ? ' + API gateway + per-domain services + compose' : '') + ' + unit tests',
+        contract.requirements.filter(r => /tests pass|builds|schema|account|records through a REST API|Background jobs|REST API surface|GraphQL|WebSocket|component app|independently-runnable services/i.test(r.statement)).map(r => r.id)),
       mkStep('testgen','test',
         ['/test/generated-api.test.js','/test/chaos.test.js'].concat(st.database ? [] : []).concat(['/test/a11y.test.js']),
         'generate API contract tests + an adversarial chaos suite' + (contract.requirements.some(r => /accessibility/i.test(r.statement)) ? ' + an accessibility suite' : ''),
         reqBy(/tests pass|accessibility|simulated, mocked/i)),
       mkStep('security-scan','security', [],
         'scan the generated source for injection / XSS / secrets / unauthenticated mutations; feeds the DoD security gate',
-        reqBy(/secret|password hash|role-based|simulated, mocked/i))
+        reqBy(/secret|password hash|role-based|simulated, mocked/i)),
+      mkStep('architecture-scan','security', [],
+        'check layering: no frontend->DB imports, no inverted dependencies, no cross-service filesystem reach; feeds the DoD architecture gate',
+        reqBy(/independently-runnable services|component app/i)),
+      mkStep('privacy-scan','security', [],
+        'scan for PII in logs / URLs, credentials in responses, third-party data egress; feeds the DoD privacy gate',
+        reqBy(/secret|password hash|account/i))
     ];
     if (st.deploy || (contract.deployment && (contract.deployment.targets || []).length)) {
       steps.push(mkStep('deploy-iac','deploy',
@@ -890,17 +914,21 @@ const Universal = {
       contractGeneratedAt: contract.generatedAt,
       product: contract.product,
       stack: {
-        frontend: 'vanilla HTML/CSS/JS', backend: 'Node.js (zero-dep HTTP)',
-        database: st.database, api: 'REST' + (st.jobs ? ' + SSE' : ''),
-        auth: !!st.auth, rbac: !!st.rbac, jobs: !!st.jobs
+        frontend: feKind === 'vanilla' ? 'vanilla HTML/CSS/JS' : feKind + ' (vendored runtime, no build)',
+        backend: isPy ? 'Python 3 (pure stdlib: http.server + sqlite3)' : 'Node.js (zero-dep HTTP)',
+        database: st.database,
+        api: (wantsGraphql ? 'GraphQL + REST' : 'REST') + (st.jobs && !isPy ? ' + SSE' : '') + (wantsWs ? ' + WebSocket' : ''),
+        architecture: wantsMicro ? 'gateway + per-domain services (compose)' : 'monolith',
+        auth: !!st.auth, rbac: !!st.rbac, jobs: !!st.jobs && !isPy
       },
       steps,
       files: Array.from(new Set(scaffoldFiles)).sort(),
-      buildCommands: ['npm run migrate','npm test','npm run build'].concat(st ? ['npm run lint'] : []),
+      buildCommands: ['npm run migrate','npm test','npm run build','npm run lint'],
       observationTargets: [{
         url: 'http://localhost:4319/',
         controls: (st.auth ? ['need an account?'] : []).concat(ents.map(e => 'add ' + e.name)),
         routes: (contract.apiRequirements || []).map(a => a.method + ' ' + a.path)
+          .concat(wantsGraphql ? ['POST /graphql'] : []).concat(wantsWs ? ['GET /ws (upgrade)'] : [])
       }],
       deployment: contract.deployment || { expectation: 'compose', targets: ['compose'] },
       traceability
