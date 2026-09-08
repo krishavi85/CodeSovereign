@@ -40,6 +40,13 @@ function makeEnv(world) {
     write: (p, d) => { if (d == null) { delete sov[p]; return true; } sov[p] = typeof d === 'string' ? d : JSON.stringify(d); return true; },
     analyze: () => {
       world.analyzeCalls++;
+      // model reality: a rolled-back bad repair (regression.js gone) restores the
+      // evidence to its pre-regression state on the next analysis.
+      if (world._regressed && !FS.exists('/public/regression.js')) {
+        world.ledgerFailing = world._preRegressFailing.slice();
+        world.validatorErrors = world._preRegressErrors;
+        world._regressed = false;
+      }
       Sovereign.write('decision-state.json', { counts: { errors: world.validatorErrors, warnings: world.validatorWarnings, mockSignals: world.mockSignals } });
       return { ok: true };
     },
@@ -105,6 +112,9 @@ function makeEnv(world) {
       world.repairCalls++;
       if (world.repairMakesWorse) {
         // regress: add a file and add failing requirements
+        world._regressed = true;
+        world._preRegressFailing = (world.ledgerFailing || []).slice();
+        world._preRegressErrors = world.validatorErrors;
         FS.write('/public/regression.js', 'console.log("bad repair")');
         world.ledgerFailing = ['REQ-001', 'REQ-002', 'REQ-003', 'REQ-004'];
         world.validatorErrors = 5;

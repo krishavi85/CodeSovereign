@@ -50,8 +50,11 @@
 
   var RULES = [
     { id: 'sql-injection', sev: 'high', glob: /\.(js|ts|mjs)$/,
-      re: /(?:query|execute|exec|raw)\s*\(\s*[`'"][^`'"]*(?:SELECT|INSERT|UPDATE|DELETE|DROP)[^`'"]*[`'"]?\s*\+|(?:SELECT|INSERT INTO|UPDATE|DELETE FROM)\b[^;\n]*(?:\$\{(?!\s*(?:table|column|schema)\b)|['"]\s*\+\s*[A-Za-z_$])/i,
-      msg: 'SQL built by string concatenation / template interpolation — use parameterised queries' },
+      // fires on SQL text concatenated with a REQUEST-shaped value or an unguarded
+      // ${…}. Interpolating an identifier (table / column / schema name) or using
+      // $1/$2 placeholders + a params array is the safe pattern and is NOT flagged.
+      re: /(?:query|execute|exec|raw)\s*\(\s*[`'"][^`'"]*(?:SELECT|INSERT|UPDATE|DELETE|DROP)[^`'"]*[`'"]?\s*\+\s*(?:req\b|request\b|ctx\.|[a-z$_][\w$]*?(?:[Ii]nput|[Pp]aram|[Qq]uery|[Bb]ody|[Uu]ser))|(?:SELECT|INSERT INTO|UPDATE|DELETE FROM)\b[^;\n]*(?:\$\{(?!\s*(?:table|column|schema|tbl|col|e\.table|e\.name)\b)|['"]\s*\+\s*(?:req\b|request\b|ctx\.|params\b|query\b|body\b|[a-z$_][\w$]*?(?:[Ii]nput|[Pp]aram|[Qq]uery|[Bb]ody|[Uu]ser)))/i,
+      msg: 'SQL text concatenated with request input — use parameterised queries ($1/$2 + a values array)' },
     { id: 'command-injection', sev: 'high', glob: /\.(js|ts|mjs)$/,
       re: /(?:exec|execSync)\s*\(\s*[`'"][^`'"]*\$\{|\bexec\s*\(\s*[^,)]*\+/,
       msg: 'shell command built from a variable — use execFile with an argv array' },

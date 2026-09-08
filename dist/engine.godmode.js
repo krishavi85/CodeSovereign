@@ -110,6 +110,7 @@
     run.history.push({ from: run.state, to: next, at: now(), note: note || null });
     run.state = next;
     if (run.history.length > 400) run.history = run.history.slice(-400);
+    try { if (window.__GM_TRACE) console.log('[gm-driver] -> ' + next + (note ? ' (' + note + ')' : '')); } catch (_) {}
   }
 
   function newRun(input) {
@@ -226,8 +227,22 @@
   function clean(e) {
     return e && e.dodPass === true && (e.ledgerFailing || []).length === 0;
   }
+  // A DoD-passing run can still have auto-repairable hygiene findings (a stray
+  // console.log, an <img> with no alt). We do ONE repair pass for those, then
+  // accept whatever residue Recovery genuinely cannot fix.
+  function hasHygieneFindings(e) {
+    return !!e && ((e.validatorErrors || 0) > 0 || (e.validatorWarnings || 0) > 0);
+  }
   function hasRepairableIssues(e) {
-    return !!e && (!e.dodPass || (e.ledgerFailing || []).length > 0 || (e.validatorErrors || 0) > 0 || (e.validatorWarnings || 0) > 0);
+    return !!e && (!e.dodPass || (e.ledgerFailing || []).length > 0 || hasHygieneFindings(e));
+  }
+  // did the last repair attempt actually change anything?
+  function lastRepairProgress(run) {
+    var steps = (run.artifacts.steps || []).filter(function (s) { return s.kind === 'repair'; });
+    var last = steps[steps.length - 1];
+    if (!last) return true;
+    if (last.rolledBack) return false;
+    return (last.repaired || 0) > 0;
   }
 
   // Are the remaining DoD failures things a repair can't fix here (they need a
@@ -425,12 +440,12 @@
         try { S().analyze(); } catch (_) {}
         return flush().then(function () {
           var e = recordEvidence(run, 'post-observe');
-          if (clean(e)) { transition(run, 'REVERIFYING', 'first pass clean'); return; }
-          if (hasRepairableIssues(e) && run.attempts.repair < run.bounds.maxRepairAttempts) {
-            transition(run, 'REPAIRING', 'issues after first pass');
+          var repairable = hasRepairableIssues(e);
+          if ((!repairable) || run.attempts.repair >= run.bounds.maxRepairAttempts) {
+            transition(run, 'REVERIFYING', repairable ? 'no repair budget left — verify honestly' : 'first pass clean');
             return;
           }
-          transition(run, 'REVERIFYING', 'no repair budget / not repairable — go verify honestly');
+          transition(run, 'REPAIRING', clean(e) ? 'DoD passes but hygiene findings remain' : 'issues after first pass');
         });
       };
       if (!observeAvailable()) {
@@ -509,12 +524,15 @@
 
         var cert = '';
         try { if (Engine.DoD && Engine.DoD.certificate) cert = Engine.DoD.certificate(); } catch (_) {}
-        var verified = clean(e) && /SOVEREIGN VERIFIED/.test(cert || '');
-        if (verified) {
+
+        // VERIFIED needs the DoD gate to pass with a real certificate. Residual
+        // hygiene warnings that Recovery genuinely cannot fix do NOT block it.
+        if (clean(e) && /SOVEREIGN VERIFIED/.test(cert || '')) {
           transition(run, 'VERIFIED', 'DoD gate passed + certificate written');
           return;
         }
-        if (run.attempts.repair < run.bounds.maxRepairAttempts && hasRepairableIssues(e)) {
+        // keep repairing only while there is budget AND the last attempt made progress
+        if (!clean(e) && run.attempts.repair < run.bounds.maxRepairAttempts && lastRepairProgress(run) && hasRepairableIssues(e)) {
           transition(run, 'REPAIRING', 'still failing — another repair attempt');
           return;
         }

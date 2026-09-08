@@ -67,12 +67,19 @@
     Object.keys(Engine.FS._data).forEach(function (p) {
       fsBases[p.split('/').pop().replace(/\.[a-z0-9]+$/i, '').toLowerCase()] = 1;
     });
+    // packages the project declares as optional / peer are allowed to be absent
+    var pj0 = pkg() || {};
+    var optionalPkgs = {};
+    ['optionalDependencies', 'peerDependencies'].forEach(function (k) {
+      Object.keys(pj0[k] || {}).forEach(function (n) { optionalPkgs[String(n).toLowerCase()] = 1; });
+    });
     var realBrokenEdges = (health.broken || []).filter(function (e) {
       var to = String(e.to || '').trim();
       if (NODE_CORE.test(to) || /^(node:)/.test(to)) return false;
       var stt = String(e.status || '').toUpperCase();
       if (['MISSING', 'CIRCULAR', 'INVALID'].indexOf(stt) < 0) return false;
       var base = to.split(/[\/\\]/).pop().replace(/\.[a-z0-9]+$/i, '').toLowerCase();
+      if (optionalPkgs[base] || optionalPkgs[to.toLowerCase()]) return false;
       return !fsBases[base];
     });
 
