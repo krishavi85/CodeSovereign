@@ -34,7 +34,7 @@ After the readiness gate, the harness exercises the P0 pipeline
 2. **`Engine.Ledger.build()`** checks every criterion against the `.sovereign/`
    evidence → `evidence-ledger.json` (claim → evidence → confidence + assertion
    count).
-3. **`Engine.DoD.evaluate()`** → `definition-of-done.json`: 12 criteria (incl. architecture/layering, privacy/PII, WCAG accessibility and visual-integrity gates). It
+3. **`Engine.DoD.evaluate()`** → `definition-of-done.json`: 13 criteria (adds architecture/layering, privacy/PII, WCAG accessibility, visual-integrity and licence-compatibility gates). It
    **refuses** while the fixture's planted MOCK `Export CSV`, MOCK `Help` and
    BROKEN `Clear all` controls exist.
 4. **`Engine.Orchestrator.run()`** executes a 3-task DAG. Each task's generator
@@ -72,7 +72,7 @@ build half of the loop:
 3. **Real `npm test` + `npm run build` + `npm run lint`** — all exit 0.
 4. `observe()` boots the generated server and crawls it — a real control observed,
    nothing observed fake.
-5. Evidence ledger + **Definition-of-Done gate: all 12 criteria PASS** →
+5. Evidence ledger + **Definition-of-Done gate: all 13 criteria PASS** →
    `release-certificate.md` = **SOVEREIGN VERIFIED**.
 
 This is the proof that CodeSovereign can *build* verified software from a spec,

@@ -13,7 +13,7 @@ Measures the current codebase against the two blueprints:
 
 The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
-repair → 12-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
+repair → 13-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
 (`node test/run.js` 556, `acceptance` 38, `acceptance:build` 22,
 `acceptance:ultramode` 53) prove it end to end in the real Electron renderer.
@@ -22,7 +22,7 @@ repair → 12-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` 
 
 | Area | Where it landed |
 |---|---|
-| Proof engine (contract · ledger · DoD · certificate) | **12 gates** incl. **architecture/layering** (`engine.archrules.js`), **privacy/PII** (`engine.privacy.js`), **WCAG accessibility** (`engine.a11y.js`) and **visual integrity** (`engine.visualcheck.js` — multi-breakpoint render, overflow/clipping/contrast/zero-size); zero-mock + no-fake enforced |
+| Proof engine (contract · ledger · DoD · certificate) | **13 gates** incl. **architecture/layering** (`engine.archrules.js`), **privacy/PII** (`engine.privacy.js`), **WCAG accessibility** (`engine.a11y.js`) and **visual integrity** (`engine.visualcheck.js` — multi-breakpoint render, overflow/clipping/contrast/zero-size); zero-mock + no-fake enforced |
 | Repo-scale generation | Node **and** pure-stdlib Python backends; vanilla / React / Preact / Vue / Svelte / Angular frontends (vendored VDOM); GraphQL executor; RFC 6455 WebSockets; monolith **and** microservices (gateway + per-domain services + compose) |
 | Deployment IaC | 10 targets — docker · compose · **kubernetes** · **helm** · **terraform** · fly · render · railway · vps · static (does not push — needs creds, by design) |
 | Ops | every generated backend: `/healthz` · `/readyz` · `/metrics` (Prometheus) · JSON access logs |
@@ -41,8 +41,8 @@ adjacent products, not core-loop gaps):
   a spellfix table, not a model.
 - **Ops depth** (§43–46): APM / traces / crash-reporting / performance profiling
   / memory-leak detection — ⬜ (each a hosted-collector product).
-- **Localization engine** (§48), **license intelligence** (§52), **dependency
-  intelligence** — compare / abandoned / safe-upgrade (§10) — ⬜/🟨.
+- **Localization engine** (§48) — ⬜. *(Dependency intelligence (§10) and licence
+  intelligence (§52) are **done** — `engine.depintel.js`.)*
 - **Delivery archive** (§19/20): a single downloadable bundle (report + cert +
   evidence + continuation state) — 🟨 (the pieces exist as separate
   `.sovereign/` files + `ultramode-report.md`).
@@ -118,7 +118,7 @@ chase the 68 framework / platform features.
 
 | § | Capability | State | Notes |
 |---|---|---|---|
-| 10 | Dependency intelligence (compare / abandoned / vuln / license / dedupe / safe-upgrade) | 🟨 | `npm audit` surfaced in CI; license notes in `dist/vendor/README.md`; requirements pack flags some. No comparison / abandonment / conflict / safe-upgrade engine. |
+| 10 | Dependency intelligence (compare / abandoned / vuln / license / dedupe / safe-upgrade) | ✅ | `dist/engine.depintel.js` — over `package.json` + `package-lock.json` (+ `requirements.txt`): **abandonment** (a bundled table of ~25 superseded/sabotaged packages → the modern replacement: `request`→fetch, `moment`→dayjs, `node-sass`→sass, `colors`/`faker`→safe forks…), **duplicate/conflicting major versions** across the resolved tree (`npm dedupe`), **known-vulnerable pins** (a bundled advisory table for the common ones; `npm audit` in CI is authoritative), **safe-upgrade** (semver-aware: in-range vs a major bump). `analyze()` → `.sovereign/dependency-intel.json` + `dependency-report.md`; runs in `Sovereign.analyze()`. `test/stacks.test.js` §14. |
 | 11 | UI generation from prompt / screenshot / Figma / wireframe | 🟨 | Prompt-to-UI only (LLM/templates). No vision input, no reconstruction. |
 | 12 | Visual validation (render → inspect clipping/overflow/contrast) | ✅ | `dist/engine.visualcheck.js` + `observer.visualProbe()`. The observer renders the running app at **mobile (375) / tablet (768) / desktop (1280)**, measures every element's box + computed style, and reports: page horizontal overflow, elements past the viewport edge, content clipped by `overflow:hidden`, covering fixed/sticky overlays, off-screen text, **zero-size interactive controls**, computed **contrast** below AA — with a screenshot per breakpoint. A static layer (no renderer) catches `overflow:hidden` on html/body, fixed pixel widths ≥ 500px, 100vw×100vh z-indexed overlays, missing viewport meta. `analyze()` → `.sovereign/visual-findings.json` + `visual-report.md`; new DoD criterion `visualIntegrityPass` — a **critical** defect (whole-page overflow, zero-size control, full-screen overlay) blocks release. `test/stacks.test.js` §13. |
 | 13 | Screenshot fidelity mode | ✅ | `Engine.VisualCheck.fidelity(a, b)` — pixel diff of two PNG data URLs (offscreen canvas) → `{ changedPixels, ratio }`. `observer.visualProbe()` captures the reference set; a re-run compares. Used for "did the repair change the layout" and drift checks. |
@@ -185,7 +185,7 @@ chase the 68 framework / platform features.
 |---|---|---|---|
 | 50 | Architecture drift | ✅ | Graph fingerprint + `driftDetected` + diagram regeneration. **Contract rules** now enforced: `dist/engine.archrules.js` scans for frontend→DB / frontend→server-code imports, server env vars read in the browser layer, auth crypto in the frontend, a service opening its own DB connection, the data layer importing a higher layer (inverted dependency), one microservice importing another's filesystem, and a contract entity with no service module. HIGH findings fail the `architectureSound` DoD criterion. |
 | 51 | Code-quality governance (max fn size / complexity / no circular / no dead code / no console / no TODO) | 🟨 | Validator finds some; not configurable policy, not a gate. |
-| 52 | License intelligence (deps + models + fonts + assets, conflict with distribution model) | ⬜ | Vendored libs documented manually. |
+| 52 | License intelligence (deps + models + fonts + assets, conflict with distribution model) | ✅ | `dist/engine.depintel.js` classifies every dependency's licence (SPDX-aware — handles `(A OR B)` / `A AND B` / `-or-later` / `WITH exception`) into permissive / weak-copyleft / strong-copyleft / **network-copyleft (AGPL/SSPL)** / commercial / unknown, using the lockfile's `license` field + a bundled table for packages that omit it. It flags **conflicts with the product's own distribution model**: a strong- or network-copyleft runtime dependency under a proprietary or permissively-licensed product → a **critical** `license-conflict` that fails the new `licensesCompatible` DoD criterion. → `.sovereign/license-report.json`. Model / font / asset licences: the same classifier applies when they're declared in `package.json`; a dedicated asset-manifest scan is not built. |
 | 53 | Existing-app reverse engineering (what is it / how complete / shippable?) | ✅ | This is essentially what `Engine.Sovereign.analyze()` + observe + evidence *is*, for an imported repo. |
 | 54 | Completion auditor (evidence-backed per-dimension %) | 🟨 | The evidence ledger's per-category pass/fail is the substrate now; a per-dimension % roll-up still reads `engine-universal.js CompletionScorer` (plan-based). |
 | 55 | Evidence ledger (CLAIM → EVIDENCE → CONFIDENCE, per claim) | ✅ | `dist/engine.ledger.js` → `.sovereign/evidence-ledger.json` — every requirement's claim with its evidence rows, assertion count, failure count and confidence. |

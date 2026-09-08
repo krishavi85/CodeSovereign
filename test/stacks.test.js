@@ -414,6 +414,37 @@ module.exports = async function (t) {
     t.equal('DoD: visualIntegrityPass PASSES once the render is clean at every breakpoint', win.Engine.DoD.evaluate().criteria.visualIntegrityPass, true);
   }
 
+  /* ---------- 14. Dependency + licence intelligence (§10 + §52) ---------- */
+  {
+    const win = loadEngines(['engine.depintel.js', 'engine.contract.js', 'engine.ledger.js', 'engine.dod.js']);
+    const clr = () => Object.keys(win.Engine.FS._data).forEach((k) => delete win.Engine.FS._data[k]);
+
+    // classifier
+    t.equal('depintel: MIT -> permissive', win.Engine.DepIntel.classifyLicense('MIT').class, 'permissive');
+    t.equal('depintel: GPL-3.0 -> strong-copyleft', win.Engine.DepIntel.classifyLicense('GPL-3.0').class, 'strong-copyleft');
+    t.equal('depintel: AGPL-3.0 -> network-copyleft', win.Engine.DepIntel.classifyLicense('AGPL-3.0-or-later').class, 'network-copyleft');
+    t.equal('depintel: "(MIT OR Apache-2.0)" -> permissive (least restrictive of an OR)', win.Engine.DepIntel.classifyLicense('(MIT OR Apache-2.0)').class, 'permissive');
+
+    // a dependency-free generated app is clean + compatible
+    clr();
+    win.Engine.FS.write('/package.json', JSON.stringify({ name: 'gen', private: true, dependencies: {} }));
+    const clean = win.Engine.DepIntel.analyze();
+    t.ok('depintel: a zero-dependency generated app has no findings', clean.findings.length === 0 && clean.licensesCompatible === true);
+    t.equal('DoD: licensesCompatible PASSES for a clean project', win.Engine.DoD.evaluate().criteria.licensesCompatible, true);
+
+    // a proprietary product + a GPL runtime dep + an abandoned dep + a vuln pin
+    clr();
+    win.Engine.FS.write('/package.json', JSON.stringify({ name: 'x', license: 'MIT', dependencies: { request: '^2.88.0', 'node-ffmpeg': '^1.0.0', lodash: '4.17.10' } }));
+    win.Engine.FS.write('/package-lock.json', JSON.stringify({ lockfileVersion: 3, packages: { '': { name: 'x' }, 'node_modules/request': { version: '2.88.2', license: 'Apache-2.0' }, 'node_modules/node-ffmpeg': { version: '1.0.0', license: 'GPL-2.0' }, 'node_modules/lodash': { version: '4.17.10', license: 'MIT' } } }));
+    const messy = win.Engine.DepIntel.analyze();
+    t.ok('depintel: flags an abandoned package (request)', messy.findings.some((f) => f.kind === 'abandoned' && f.dependency === 'request'));
+    t.ok('depintel: flags a known-vulnerable pin (lodash < 4.17.21)', messy.findings.some((f) => f.kind === 'vulnerable' && f.dependency === 'lodash'));
+    t.ok('depintel: a GPL runtime dep in an MIT product is a CRITICAL licence-conflict', messy.findings.some((f) => f.kind === 'license-conflict' && f.impact === 'critical'));
+    t.equal('depintel: licensesCompatible is false', messy.licensesCompatible, false);
+    t.equal('DoD: licensesCompatible FAILS on a copyleft conflict', win.Engine.DoD.evaluate().criteria.licensesCompatible, false);
+    t.ok('depintel: license-report.json classifies every dependency', (() => { const lr = win.Engine.Sovereign.read('license-report.json'); return lr && lr.dependencies.length === 3 && lr.compatible === false; })());
+  }
+
   function tryYaml() {
     try {
       const src = fs.readFileSync(path.join(__dirname, '..', 'dist', 'vendor', 'js-yaml.min.js'), 'utf8');

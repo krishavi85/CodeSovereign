@@ -84,6 +84,9 @@
     'visual-observations.json':   'Observer render at mobile/tablet/desktop — box + computed-style measurements + screenshots (spec §12-13)',
     'visual-findings.json':       'Visual validation — overflow / clipping / covering overlays / zero-size controls / low contrast',
     'visual-report.md':           'Readable visual-integrity findings + score',
+    'dependency-intel.json':      'Dependency intelligence — abandoned / duplicate-major / vulnerable pins / safe-upgrade (spec §10)',
+    'license-report.json':        'Licence classification of every dependency + conflicts with the distribution model (spec §52)',
+    'dependency-report.md':       'Readable dependency + licence findings',
     'blockchain-evidence.json':   'EVM target — solc compile + local-chain deploy + transactions + receipts + static analysis',
     'mobile-evidence.json':       'Native-mobile target — gradle build + emulator install/launch + logcat + screenshot',
     'ml-evidence.json':           'ML-training target — dataset inspection + real training loss curve + checkpoint + eval metric',
@@ -612,6 +615,9 @@
 
     // ---- visual validation (spec §12-13; static here, live via the observer) ----
     safe(function () { window.Engine.VisualCheck && window.Engine.VisualCheck.analyze(); });
+
+    // ---- dependency + licence intelligence (spec §10 + §52) ----
+    safe(function () { window.Engine.DepIntel && window.Engine.DepIntel.analyze(); });
 
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {

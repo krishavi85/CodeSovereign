@@ -6,10 +6,10 @@
    A feature/product is DONE only when every criterion below is true —
    never because code exists. Computed purely from `.sovereign/` evidence
    and the Evidence Ledger (blueprint §56, §67, §68). This generalises the
-   gate that electron/acceptance.js proves on the fixture: 12 criteria —
+   gate that electron/acceptance.js proves on the fixture: 13 criteria —
    implementation exists, dependencies connected, build, tests, runtime
    action, no fake implementation, security, architecture/layering,
-   privacy/PII, accessibility (WCAG), visual integrity, acceptance criteria.
+   privacy/PII, accessibility (WCAG), visual integrity, licence compatibility, acceptance criteria.
 
    window.Engine.DoD
      evaluate()     -> dod object (writes .sovereign/definition-of-done.json)
@@ -214,6 +214,9 @@
     var wantsA11y = !!contract && (contract.requirements || []).some(function (r) { return /accessib|a11y|wcag|screen reader/i.test(r.statement); });
     var visReport = j('visual-findings.json');
     var visCritical = visReport ? ((visReport.byImpact && visReport.byImpact.critical) || 0) : 0;
+    var depReport = j('dependency-intel.json');
+    var licensesCompatible = depReport ? depReport.licensesCompatible !== false : true;
+    var depCritical = depReport ? ((depReport.byImpact && depReport.byImpact.critical) || 0) : 0;
     var secReport = j('security-findings.json');
     var highSec;
     if (secReport) {
@@ -255,6 +258,10 @@
       // interactive control renders at zero size, a full-screen overlay covers
       // the app) genuinely breaks the product; serious/moderate are recorded.
       visualIntegrityPass: gate(!visReport ? true : visCritical === 0),
+      // a strong/network-copyleft runtime dependency under a non-copyleft
+      // distribution, a known-vulnerable pin, or an unlicensed commercial dep
+      // is a real legal / security blocker.
+      licensesCompatible: gate(!depReport ? true : (licensesCompatible && depCritical === 0)),
       acceptanceCriteriaPass: gate(ledgerFailing === 0 && !!ledger)
     };
     var PASS = Object.keys(criteria).every(function (k) { return criteria[k] === true; });
@@ -277,6 +284,9 @@
         accessibilityBlocking: a11yReport ? (a11yReport.findings || []).filter(function (f) { return f.impact === 'critical' || f.impact === 'serious'; }).slice(0, 8).map(function (f) { return f.rule + ' @ ' + f.file + (f.line > 1 ? ':' + f.line : ''); }) : [],
         visualScore: visReport ? visReport.score : null,
         visualCritical: visReport ? (visReport.findings || []).filter(function (f) { return f.impact === 'critical'; }).slice(0, 6).map(function (f) { return f.rule + (f.breakpoint ? ' @' + f.breakpoint : '') + ' — ' + (f.detail || ''); }) : [],
+        dependencyScore: depReport ? depReport.score : null,
+        licenseConflicts: depReport ? (depReport.licenseConflicts || []) : [],
+        dependencyBlocking: depReport ? (depReport.findings || []).filter(function (f) { return f.impact === 'critical'; }).map(function (f) { return f.kind + (f.dependency ? ' ' + f.dependency : ''); }) : [],
         ledgerFailing: ledgerFailing,
         openManualClaims: openManual,
         assertions: (ledger && ledger.totals && ledger.totals.assertions) || 0
@@ -372,6 +382,7 @@
       line('Privacy respected', c.privacyRespected) + '\n' +
       line('Accessibility', c.accessibilityPass) + '\n' +
       line('Visual integrity', c.visualIntegrityPass) + '\n' +
+      line('Licences compatible', c.licensesCompatible) + '\n' +
       line('Acceptance criteria', c.acceptanceCriteriaPass) + '\n\n' +
       (ledger ? '## Claims\n\n| Requirement | Confidence | Assertions |\n|---|---|---|\n' +
         (ledger.claims || []).map(function (cl) {

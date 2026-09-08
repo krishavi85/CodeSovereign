@@ -57,7 +57,7 @@ Factory · Recovery · **Ultra Mode** · Settings.
 `Engine.UltraMode` derives a machine-readable contract, generates a real
 project, runs its real tests/build, observes it running, repairs what fails, and
 returns **SOVEREIGN VERIFIED** or an honest blocked/failed result, gated on a
-12-criterion Definition-of-Done (adds WCAG accessibility + visual-integrity gates).
+13-criterion Definition-of-Done (adds WCAG accessibility, visual-integrity and licence-compatibility gates).
 
 **Web targets** — generated → run → verified: vanilla **or**
 React/Preact/Vue/Svelte/Angular frontends (vendored VDOM runtime, no build);
