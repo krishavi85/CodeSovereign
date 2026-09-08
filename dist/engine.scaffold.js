@@ -134,7 +134,7 @@
       var editable = e.fields.filter(function (f) { return ['id', 'timestamp'].indexOf(f.type) < 0 && !(f.type === 'ref' && f.ref === 'user'); });
       var inputs = editable.map(function (f) {
         var k = 'field.' + e.name + '.' + f.name;
-        if (f.type === 'bool') return '<label data-i18n="' + k + '"><input type="checkbox" data-f="' + f.name + '"> ' + f.name + '</label>';
+        if (f.type === 'bool') return '<label><input type="checkbox" data-f="' + f.name + '"> <span data-i18n="' + k + '">' + f.name + '</span></label>';
         var t = (f.type === 'int' || f.type === 'float') ? 'number' : 'text';
         var lbl = f.name + (f.type === 'ref' ? ' (id)' : '');
         var iid = e.name + '-' + f.name;
@@ -207,11 +207,13 @@
         ? "window.onSignedIn = () => { document.getElementById('entities').hidden = false; ENTITIES.forEach(loadEntity); };"
         : "ENTITIES.forEach(loadEntity);"
     ].join('\n') + '\n';
-    var css = "*{box-sizing:border-box}body{font:15px/1.5 system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 16px;color:#111}" +
-      "h1{margin:0 0 16px}.card{border:1px solid #ddd;border-radius:10px;padding:16px;margin-bottom:16px}" +
+    var css = "*{box-sizing:border-box}html{overflow-x:hidden;overflow-y:scroll}" +
+      "body{font:15px/1.5 system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 16px;color:#111}" +
+      "img,svg,video,canvas{max-width:100%;height:auto}" +
+      "h1{margin:0 0 16px;overflow-wrap:break-word}.card{border:1px solid #ddd;border-radius:10px;padding:16px;margin-bottom:16px}" +
       "h2{margin:0 0 10px;font-size:16px;text-transform:capitalize}form{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}" +
       "label{font-size:12px;color:#444;width:100%;margin-bottom:-4px}" +
-      "input:not([type=checkbox]){flex:1;min-width:120px;padding:8px 10px;border:1px solid #767676;border-radius:7px;min-height:24px}" +
+      "input:not([type=checkbox]){flex:1;min-width:0;padding:8px 10px;border:1px solid #767676;border-radius:7px;min-height:24px}" +
       "button{padding:9px 14px;border:1px solid #1d4ed8;background:#1d4ed8;color:#fff;border-radius:7px;cursor:pointer;min-height:24px}" +
       "button[data-del]{background:transparent;color:#b91c1c;border-color:#b91c1c;padding:6px 10px;font-size:12px}" +
       "ul{list-style:none;padding:0;margin:0}li{padding:6px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center}" +
@@ -367,7 +369,7 @@
       'scripts/build.js':
         "'use strict';\nconst fs = require('fs'); const path = require('path');\nconst root = path.join(__dirname, '..'); const out = path.join(root, 'dist');\n" +
         "fs.rmSync(out, { recursive: true, force: true }); fs.mkdirSync(out, { recursive: true });\n" +
-        "for (const f of fs.readdirSync(path.join(root, 'public'))) fs.copyFileSync(path.join(root, 'public', f), path.join(out, f));\n" +
+        "fs.cpSync(path.join(root, 'public'), out, { recursive: true });\n" +
         "fs.writeFileSync(path.join(out, 'manifest.json'), JSON.stringify({ builtAt: new Date().toISOString(), files: fs.readdirSync(out) }, null, 2));\n" +
         "console.log('built', fs.readdirSync(out).length, 'files -> dist/');\n",
       'scripts/lint.js':

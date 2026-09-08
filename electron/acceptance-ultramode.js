@@ -78,8 +78,8 @@ function driver() {
       Sc.generate = function (spec) {
         const files = origGen.call(Sc, spec);
         return files.map((f) => {
-          if (f.path === '/public/index.html' && !/<img[^>]*\\balt=/.test(f.content)) {
-            injected++; return { path: f.path, content: f.content.replace('<h1>', '<img src="logo.svg"><h1>') };
+          if (f.path === '/public/index.html' && !/<img[^>]*\\balt=/.test(f.content) && /<h1\\b/.test(f.content)) {
+            injected++; return { path: f.path, content: f.content.replace(/<h1\\b/, '<img src="logo.svg" width="1600"><h1') };
           }
           return f;
         });

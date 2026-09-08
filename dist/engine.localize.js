@@ -131,6 +131,7 @@
       "  function apply(root) {",
       "    root = root || document;",
       "    root.querySelectorAll('[data-i18n]').forEach(function (el) {",
+      "      if (el.children.length) return;  // never clobber a node that wraps elements",
       "      var v = {}; try { v = JSON.parse(el.getAttribute('data-i18n-vars') || '{}'); } catch (e) {}",
       "      el.textContent = t(el.getAttribute('data-i18n'), v);",
       "    });",

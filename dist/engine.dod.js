@@ -222,8 +222,11 @@
     // user journeys (§65): when the contract defines journeys and the test gate
     // has run, every journey must be covered (green) for acceptance to pass.
     var journeyReport = j('journey-evidence.json');
+    // only a *failing* journey blocks acceptance — a "planned" journey (suite
+    // generated, evidence gate not yet run) is advisory; the journey suite is
+    // already part of `npm test`, so `testsSucceed` catches a real failure.
     var journeysOk = !journeyReport || journeyReport.present === false ? true
-      : (scripts.test ? (journeyReport.uncovered === 0) : true);
+      : ((journeyReport.failing || 0) === 0);
     // localization (§48): only a gate when the contract asked for it — then
     // hard-coded strings / untranslated locales / missing RTL wiring block.
     var l10nReport = j('localization-findings.json');

@@ -185,20 +185,23 @@
     // did the generated journey suite run + pass? read the execution evidence.
     var exec = null;
     try { exec = S() && S().read('execution-evidence.json'); } catch (_) {}
-    var ranClean = false;
+    var ranClean = false, testsFailed = false;
     if (exec && typeof exec === 'object') {
       var testGate = (exec.gates && (exec.gates.test || exec.gates.tests)) || exec.test || null;
       var blob = JSON.stringify(exec);
-      ranClean = (testGate && (testGate.ok === true || testGate.pass === true)) ||
+      ranClean = (testGate && (testGate.ok === true || testGate.pass === true || testGate.testsPass === true)) ||
         (/journeys\.test\.js/.test(blob) && !/fail [1-9]/.test(blob));
+      testsFailed = (testGate && (testGate.ok === false || testGate.pass === false || testGate.testsPass === false)) ||
+        /journeys\.test\.js[\s\S]{0,200}fail [1-9]/.test(blob);
     }
+    var facetState = compiled.length ? (ranClean ? 'covered' : testsFailed ? 'failing' : 'planned') : 'none';
     var journeys = compiled.map(function (j) {
       return {
         id: j.id, title: j.title, actor: j.actor,
         requirementIds: j.requirementIds,
         entity: j.entity,
         mode: j.creatable ? 'full-crud' : 'endpoint-liveness',
-        status: compiled.length ? (ranClean ? 'covered' : 'planned') : 'none',
+        status: facetState,
         ops: j.ops.map(function (o) { return o.op; })
       };
     });
@@ -211,6 +214,8 @@
       total: journeys.length,
       covered: covered,
       uncovered: journeys.length - covered,
+      failing: journeys.filter(function (j) { return j.status === 'failing'; }).length,
+      status: facetState,
       requirementsExercised: Object.keys(reqSet),
       requirementsCovered: Object.keys(reqSet).filter(function (k) { return reqSet[k]; }),
       journeys: journeys,
