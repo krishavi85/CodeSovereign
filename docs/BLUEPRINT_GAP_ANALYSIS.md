@@ -16,7 +16,7 @@ prompt → contract → plan → generate → run in the right runtime → obser
 repair → 10-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
 (`node test/run.js` 556, `acceptance` 38, `acceptance:build` 22,
-`acceptance:ultramode` 52) prove it end to end in the real Electron renderer.
+`acceptance:ultramode` 53) prove it end to end in the real Electron renderer.
 
 **At / near 100% for the core loop:**
 
