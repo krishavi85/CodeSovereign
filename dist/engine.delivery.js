@@ -79,6 +79,7 @@
     'privacy-findings.json',
     'architecture-findings.json',
     'feature-graph.json',
+    'decision-log.json',
     'refactor-plan.json',
     'upgrade-plan.json',
     'design-spec.json',
@@ -92,7 +93,7 @@
   var DOC_FILES = [
     '/README.md', '/docs/API.md', '/docs/DATABASE.md',
     '/docs/DEPLOYMENT.md', '/docs/TROUBLESHOOTING.md', '/docs/DATA_MODEL.md',
-    '/docs/TS_MIGRATION.md'
+    '/docs/TS_MIGRATION.md', '/docs/DECISIONS.md'
   ];
 
   function collect() {

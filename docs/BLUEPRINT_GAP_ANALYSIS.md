@@ -15,61 +15,49 @@ The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
 repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 736, `acceptance` 38, `acceptance:build` 26,
+(`node test/run.js` 749, `acceptance` 38, `acceptance:build` 26,
 `acceptance:ultramode` 57) prove it end to end in the real Electron renderer.
+
+The last several sessions closed the breadth items from the blueprint's own
+list: **§43-46** ops depth (tracing / crash capture / p50-p95-p99 / memory-leak
+gate), **§49** documentation factory, **§19/20** the single delivery archive,
+**§19** e2e / install / upgrade test generation, **§65** user-journey testing,
+**§48** localization, **§60/§62** safe-refactor + dependency-upgrade engines,
+**§63-64** the feature-completion graph + builder, **§11** Figma/HTML design
+input, **§57-58** the ADR decision ledger, **§67-68** the zero-mock gate + the
+cross-gate certificate. Each ships as one `dist/engine.*.js`, wired into
+`Sovereign.analyze()`, and folded into the delivery archive.
 
 **At / near 100% for the core loop:**
 
 | Area | Where it landed |
 |---|---|
-| Proof engine (contract · ledger · DoD · certificate) | **14 gates** — the 8 core + **architecture/layering** (`engine.archrules.js`), **privacy/PII** (`engine.privacy.js`), **WCAG accessibility** (`engine.a11y.js`), **visual integrity** (`engine.visualcheck.js` — multi-breakpoint render), **licence compatibility** (`engine.depintel.js`), **performance health** (`engine.perfcheck.js` — p95 + memory-leak); zero-mock + no-fake enforced |
+| Proof engine (contract · ledger · DoD · certificate · ADR ledger) | **14 gates** — the 8 core + **architecture/layering** (`engine.archrules.js`), **privacy/PII** (`engine.privacy.js`), **WCAG accessibility** (`engine.a11y.js`), **visual integrity** (`engine.visualcheck.js` — multi-breakpoint render), **licence compatibility** (`engine.depintel.js`), **performance health** (`engine.perfcheck.js` — p95 + memory-leak); zero-mock + no-fake enforced; every consequential + rejected choice recorded as an ADR (`engine.decisions.js`) |
 | Repo-scale generation | Node **and** pure-stdlib Python backends; vanilla / React / Preact / Vue / Svelte / Angular frontends (vendored VDOM); GraphQL executor; RFC 6455 WebSockets; monolith **and** microservices (gateway + per-domain services + compose) |
 | Deployment IaC | 10 targets — docker · compose · **kubernetes** · **helm** · **terraform** · fly · render · railway · vps · static (does not push — needs creds, by design) |
 | Ops | every generated backend: `/healthz` · `/readyz` · `/metrics` (Prometheus — now with p50/p95/p99 latency, error + crash counters, heap gauge) · JSON access logs · **per-request tracing** (`x-trace-id`, span timings, `/debug/traces`) · **crash capture** (`uncaughtException`/`unhandledRejection` → `logs/crashes/`) |
 | Cross-platform packaging | Windows NSIS + portable · **macOS dmg/zip (x64+arm64)** · **Linux AppImage+deb** — CI jobs on native runners |
 | **Runtime-adapter targets** | **native Android** (real APK + headless emulator), **native iOS** (staged: source + static universal, build/sim via Xcode/xcross/Theos), **EVM contracts** (bundled solc + local chain — compile/deploy/transact/assert), **ML training** (real PyTorch run + checkpoint + metric). A missing host runtime → `BLOCKED <REASON>` / `PARTIAL`, never "unsupported" |
 
-**Genuinely still open** (roughly, by the blueprint's own sections — most are
-adjacent products, not core-loop gaps):
+**Genuinely still open** (none block the core loop — they need a resource the
+factory can't provide offline, or they are adjacent products):
 
-- **Design input** (§11): Figma-export + HTML ingestion → design spec + token
-  CSS is **done** (`engine.design.js`); **screenshot → layout** is staged —
-  the image becomes the visual-fidelity reference and returns
-  `BLOCKED / VISION_MODEL_REQUIRED` until a multimodal model is connected.
-  *Visual validation + screenshot fidelity (§12–13) are **done*** —
-  `engine.visualcheck.js` + `observer.visualProbe()`.
-- **Prompt intake — non-text** (stage 1): attachments / screenshots / audio /
-  repo import — 🟨. *(Model-driven intent for **text** (§2–3) is **done** —
-  `engine.intent.js`.)*
-- **Ops depth** (§43–46): traces / crash-capture / p50-p95-p99 / memory-leak are
-  **generated + gated** now (`engine.backend.js` tracing + crash handlers,
-  `engine.perfcheck.js`). A hosted APM integration (OTel collector, Sentry) is
-  still a config-only step for the user.
-- ~~**Localization engine** (§48)~~ — **done** — `engine.localize.js`: catalogue +
-  pseudo-locale + `window.t()` runtime (ICU plural, RTL) + a coverage audit that
-  gates when the contract asks for i18n. *(Dependency intelligence (§10) and
-  licence intelligence (§52) are also **done** — `engine.depintel.js`.)*
-- ~~**Delivery archive** (§19/20)~~ — **done** — `engine.delivery.js` assembles
-  one self-contained bundle under `/delivery/` (MANIFEST + README + certificate +
-  report + all evidence + continuation state + docs), exportable as a single
-  `.zip` (`workspace.exportDelivery()`).
-- ~~**Documentation factory** (§49)~~ — **done** — `engine.docs.js` generates
-  README + docs/API + docs/DATABASE + docs/DEPLOYMENT + docs/TROUBLESHOOTING
-  from the spec + real `.sovereign/` evidence.
-- ~~**Refactoring / migration / upgrade engines** (§60, §62)~~ — **done** —
-  `engine.refactor.js` (AST-safe rename + rename-export + staged JS→TS) and
-  `engine.upgrade.js` (rules-driven dependency upgrades with codemods).
-- ~~**Feature builder / completion graph** (§63–64)~~ — **done** —
-  `engine.features.js`: a 7-facet completion graph per feature + `build()` that
-  routes the next gap to its generator. *(User-journey testing (§65) is **done** —
-  `engine.journeys.js`.)*
-- ~~**e2e / install / upgrade test generation** (§19)~~ — **done** —
-  `engine.testgen.js` emits `test/e2e.test.js` + `test/install.test.js` +
-  `test/upgrade.test.js`, all proven green against a real server.
-  *(Accessibility as a full gate (§47) is **done** — `engine.a11y.js`.)*
+- **Screenshot → UI layout** (§11): needs a multimodal model. The image is
+  ingested and wired as the visual-fidelity reference; layout inference returns
+  `BLOCKED / VISION_MODEL_REQUIRED` until one is connected. *(Figma-export + HTML
+  ingestion → design spec + token CSS is **done** — `engine.design.js`.)*
+- **Prompt intake — non-text** (stage 1): repo import / audio / attachments — 🟨.
+  *(Model-driven intent for **text** (§2–3) is **done** — `engine.intent.js`.)*
+- **Hosted APM / release infra** (§43-46, §37-39): an OTel collector, a Sentry
+  DSN, changelog + signed releases, a full GitHub delivery workflow — all
+  config-only steps that need the user's accounts / credentials. The generated
+  code already emits the traces, metrics, crash records and CI these plug into.
+- **First-class UI surface breadth** (§1, §27, §33-36): the factory generates
+  full-stack web + native Android/iOS + EVM + ML-training targets; native
+  desktop apps, browser extensions, MSI / npm-publish / wheel / VST3 packaging,
+  and an environment bootstrapper are not built.
 
-None of these block the core "prompt → verified application" loop; they are
-breadth. The blueprint's own guidance (§ "Recommended Build Priority") is to
+The blueprint's own guidance (§ "Recommended Build Priority") is to
 **deepen the loop around the proof engine, not chase the 68 framework features** —
 which is what the last several sessions did.
 
@@ -204,9 +192,9 @@ chase the 68 framework / platform features.
 | 53 | Existing-app reverse engineering (what is it / how complete / shippable?) | ✅ | This is essentially what `Engine.Sovereign.analyze()` + observe + evidence *is*, for an imported repo. |
 | 54 | Completion auditor (evidence-backed per-dimension %) | 🟨 | The evidence ledger's per-category pass/fail is the substrate now; a per-dimension % roll-up still reads `engine-universal.js CompletionScorer` (plan-based). |
 | 55 | Evidence ledger (CLAIM → EVIDENCE → CONFIDENCE, per claim) | ✅ | `dist/engine.ledger.js` → `.sovereign/evidence-ledger.json` — every requirement's claim with its evidence rows, assertion count, failure count and confidence. |
-| 56 | Definition of Done engine | ✅ | `dist/engine.dod.js` → `.sovereign/definition-of-done.json` (9 criteria that block) + `release-certificate.md`. |
-| 57 | Sovereign memory (arch decisions / user decisions / rejected approaches / conventions / design language / security rules) | 🟨 | `.sovereign/decision-state.json` + `project.json` + `changes.md` + `assumptions.md`. No ADR ledger, no "rejected approaches", no conventions capture. |
-| 58 | Decision ledger (ADR-style) | ⬜ | `decisions.md` is referenced by the build-flow doc; not produced. |
+| 56 | Definition of Done engine | ✅ | `dist/engine.dod.js` → `.sovereign/definition-of-done.json` (**14** criteria that block) + `release-certificate.md`. |
+| 57 | Sovereign memory (arch decisions / user decisions / rejected approaches / conventions / design language / security rules) | ✅ | `.sovereign/decision-state.json` + `project.json` + `changes.md` + `assumptions.md` **plus** `dist/engine.decisions.js` (`Engine.Decisions`) — the ADR ledger below captures arch decisions, the contract's design language (`design-language.json` from `engine.design.js`), and **rejected approaches** (rolled-back repairs, refused-unsafe + out-of-scope requests). Conventions capture is still implicit. |
+| 58 | Decision ledger (ADR-style) | ✅ | `dist/engine.decisions.js` (`Engine.Decisions`). `harvest()` turns every consequential choice — and the ones deliberately *not* made — into ADRs: contract assumptions (ambiguity → conservative default), framework/stack substitutions, the runtime target, requests **refused as unsafe** or **declined as out of scope** (`Rejected`), **automated repairs that regressed the evidence and were rolled back** (`Rejected` — exactly what §57 asked to capture), environment-limited verification, deferred major dependency upgrades (`Proposed`), and the final release decision (`VERIFIED`/`PARTIAL`/`BLOCKED`). Stable `ADR-NNN` numbering survives regeneration (matched on a content key); `record()` appends hand-written ADRs that are preserved. `analyze()` → `.sovereign/decision-log.json` + `docs/DECISIONS.md`. Runs in `Sovereign.analyze()`, folded into the delivery archive. `test/decisions.test.js` (13 checks). |
 
 ### I. Evolution, Feature Completion & Chaos (§59–68)
 
@@ -220,8 +208,8 @@ chase the 68 framework / platform features.
 | 64 | Feature completion graph | ✅ | `Engine.Features.graph()` / `status()` turn each contract entity into a feature with 7 ordered facets — **data model → migration → service → REST endpoints → UI → automated test → user journey** — each with a repo detector (schema text, migration SQL, `src/services/<name>.js`, generic router, `data-entity=`, a test file naming the entity, a covered journey in `journey-evidence.json`). Output per feature: which facets are built, `completion` %, and the single **next actionable gap** (topologically ordered — a missing facet whose dependency isn't met is marked `blockedBy`). `nextTask()` picks the highest-value move (finish what's furthest along). `analyze()` → `.sovereign/feature-graph.json` + a ✅/· matrix in `feature-graph.md`. `test/features.test.js` (15 checks). |
 | 65 | User-journey testing | ✅ | `dist/engine.journeys.js` (`Engine.Journeys`) compiles every `contract.journeys` entry (`"sign in → create a project → see it in the list → delete it"`) into an ordered op list, emits **`test/journeys.test.js`** — one `test()` per journey, named with its `JRN-` id + the `REQ-` ids it exercises, driving the **booted server** through the exact calls its frontend makes (register/login/`me()`/create/list-contains/delete/404/logout). A journey that starts at "sign in" gets an implicit register; a journey whose entity needs an unseeded related record falls back to endpoint-liveness. `analyze()` writes `.sovereign/journey-evidence.json` (covered / uncovered + requirements exercised); the DoD `acceptanceCriteriaPass` gate now also requires **every journey covered** once the test gate has run. Proven green against a real server in `test/stacks.test.js` §19. |
 | 66 | Chaos mode | ✅ `dist/engine.testgen.js` `chaosSuite()` — see §20; generated `test/chaos.test.js` runs as a real gate |
-| 67 | Zero-Mock release gate | 🟨 detection exists (`mockscan`); not enforced as a gate |
-| 68 | Sovereign release certificate (cross-gate, evidence-backed) | 🟧 `engine.recovery.v4.js` has a "certificate" concept scoped to recovery runs; not the multi-gate SOVEREIGN VERIFIED cert |
+| 67 | Zero-Mock release gate | ✅ | `Engine.DoD` criterion **`noFakeImplementation`** = `fakeControls.length === 0 && controls > 0` — a MOCK/BROKEN control observed in the runtime crawl (`engine.mockscan.js` + the observer classification) hard-blocks the certificate. The acceptance fixture proves it: the DoD refuses while the planted MOCK `Export CSV` / MOCK `Help` / BROKEN `Clear all` exist and only flips to VERIFIED once each is observed REAL. |
+| 68 | Sovereign release certificate (cross-gate, evidence-backed) | ✅ | `dist/engine.dod.js` `certificate()` → `.sovereign/release-certificate.md` — one document rendering all 14 gate results, computed purely from `.sovereign/` evidence + the ledger. `**SOVEREIGN VERIFIED**` only when every criterion is `true`; `**SOVEREIGN VERIFIED — PARTIAL**` for a runtime target whose host-limited stages are BLOCKED; `**BLOCKED**` / `**NOT VERIFIED**` otherwise. Proven end-to-end by all three acceptance harnesses. |
 
 ### J. Autonomy Model & Pipeline (§69–72)
 

@@ -69,7 +69,7 @@ p50/p95/p99** in the backend, a **localization** substrate (`i18n/` catalogue +
 **delivery archive** (`/delivery/` — manifest + certificate + all evidence +
 continuation state). Engines: `engine.docs.js`, `engine.testgen.js`,
 `engine.journeys.js`, `engine.localize.js`, `engine.features.js`,
-`engine.refactor.js`, `engine.upgrade.js`, `engine.delivery.js`,
+`engine.refactor.js`, `engine.upgrade.js`, `engine.delivery.js`, `engine.decisions.js`,
 `engine.design.js`, `engine.perfcheck.js`, `engine.a11y.js`,
 `engine.visualcheck.js`, `engine.depintel.js`.
 

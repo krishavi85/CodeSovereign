@@ -17,7 +17,8 @@ prompt
   → Engine.Deploy.apply                 (Docker + Compose IaC — never pushed)
   → Engine.Docs.generate                (README + docs/API/DATABASE/DEPLOYMENT/TROUBLESHOOTING)
   → Engine.Sovereign.analyze            (static graph + validator + security + a11y + visual + deps/licences
-                                         + perf + localization + journeys + features + refactor + upgrade + design)
+                                         + perf + localization + journeys + features + refactor + upgrade
+                                         + design + docs + delivery + ADR decision ledger)
   → Engine.Sovereign.runEvidence        (REAL npm test / build / lint)
   → Engine.Sovereign.observe            (runtime crawl of the running app)
   → Engine.Ledger.build                 (claim → evidence → confidence)
@@ -202,7 +203,7 @@ falsely `VERIFIED`.
 ## Verification
 
 ```bash
-node test/run.js               # 736 checks incl. ultramode.test.js (101) + stacks.test.js (§1-20) + adapters.test.js
+node test/run.js               # 749 checks incl. ultramode.test.js (101) + stacks.test.js (§1-20) + adapters.test.js
 npm run smoke                   # renderer boots clean
 npm run smoke:observer          # observer classifies REAL / MOCK / BROKEN / SKIPPED
 npm run acceptance              # 38/38 — the 8 engines together on a fixture

@@ -102,6 +102,8 @@
     'upgrade-report.md':          'Readable dependency-upgrade plan',
     'feature-graph.json':         'Feature-completion graph — per-feature facet checklist (data/migration/service/API/UI/test/journey) + next task (spec §63-64)',
     'feature-graph.md':           'Readable feature-completion matrix',
+    'decision-log.json':          'Decision ledger — ADRs harvested from the build evidence (assumptions, substitutions, refusals, rolled-back repairs, release decision) (spec §57-58)',
+    'decision-report.md':         'Architecture Decision Records, newest first',
     'documentation-index.json':   'Documentation factory — which docs were (re)generated + folded-in verification evidence (spec §49)',
     'documentation-report.md':    'Readable summary of the documentation factory run',
     'delivery-manifest.json':     'Delivery archive manifest — verdict, DoD result, per-file hashes, content hash (spec §19-20)',
@@ -669,6 +671,9 @@
 
     // ---- documentation factory (spec §49) — after the gate so it folds in evidence ----
     safe(function () { window.Engine.Docs && window.Engine.Docs.analyze(); });
+
+    // ---- decision ledger / ADRs (spec §57-58) — after the gate for the release decision ----
+    safe(function () { window.Engine.Decisions && window.Engine.Decisions.analyze(); });
 
     // ---- delivery archive (spec §19-20) — one self-contained acceptance bundle ----
     safe(function () { window.Engine.Delivery && window.Engine.Delivery.write(); });
