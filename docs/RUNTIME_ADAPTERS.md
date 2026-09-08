@@ -82,15 +82,53 @@ verdict — `PASS` + DoD → **VERIFIED**, `FAIL` → **FAILED**, `BLOCKED` →
   dependency fetch), boot a headless AVD, `adb install` + launch, capture a
   screenshot, scan `logcat` for `FATAL EXCEPTION`, confirm the process is alive
   and foreground, then run Maestro if installed.
-- **run (iOS)** — off macOS: `BLOCKED MACOS_RUNNER_REQUIRED` (the project is
-  still generated). On a macOS worker: `xcodebuild -sdk iphonesimulator` +
-  `simctl` + Maestro.
+- **run (iOS)** — a full **staged** model, see below.
 - **evidence** — `.sovereign/mobile-evidence.json`: every step, the APK path +
   size, `applicationId`, the screenshot, a logcat tail.
 - **BLOCKED reasons** — `ANDROID_SDK_REQUIRED`, `GRADLE_UNAVAILABLE`,
   `GRADLE_DEPENDENCIES_UNAVAILABLE`, `NO_EMULATOR_ACCELERATION`, `NO_AVD`,
   `EMULATOR_BOOT_TIMEOUT`. When the APK builds but the emulator can't run, that
   is called out explicitly — the build evidence is kept.
+
+### Native iOS — staged  (`Engine.MobileIOS` + `electron/lib/ios.js`)
+
+_Implements `CodeSovereign_Native_iOS_Cross_Platform_Runtime_Spec.md`._
+
+iOS is **SUPPORTED WITH TARGET-SPECIFIC EXECUTION** — not one coarse
+`MACOS_RUNNER_REQUIRED` flag. Verification is split into six independent stages:
+
+| Stage | Windows / Linux | macOS |
+|---|---|---|
+| `sourceGeneration` | **full** — a real SwiftUI + SwiftPM + xcodegen + Theos project | full |
+| `staticValidation` | **full** — `swift build` / `swiftc -typecheck` when a toolchain is present, else a real structural check (delimiter balance, `@main`, a `View`, imports) | full — type-checked against the iOS SDK |
+| `build` | Flutter-iOS → **xcross**; plain-Swift lower-level → **Theos**; else stage-`BLOCKED` `MACOS_XCODE_REQUIRED` | **Xcode** (`xcodegen generate` + `xcodebuild -sdk iphonesimulator`) |
+| `signing` | **zsign** with `CS_IOS_P12` (+ `CS_IOS_P12_PASS`, `CS_IOS_MOBILEPROVISION`), captured **independently of build** | Apple `codesign` identity |
+| `deviceExecution` | xcross / Theos + `libimobiledevice` / `pymobiledevice3` on a real iPhone | Xcode / `ios-deploy` |
+| `simulatorExecution` | stage-`BLOCKED` `MACOS_SIMULATOR_REQUIRED` (always — the Simulator is Apple-only) | `xcrun simctl boot / install / launch` + screenshot |
+
+`electron/lib/ios.js`:
+
+- **ProjectInspector** — `swiftui` / `flutter-ios` / `kmp` / `swift`; Xcode-only
+  features (asset catalogs, storyboards, `CoreML`/`ARKit`/`WidgetKit`…, recent
+  SDK gates); entitlements.
+- **HostProbe** — OS, Swift toolchain + version, LLVM/clang, Xcode/xcrun/simctl,
+  `xcross`, Theos (`$THEOS`), `zsign`, `libimobiledevice`/`pymobiledevice3`, a
+  paired physical device, codesigning identities.
+- **RuntimeRouter** — Xcode (canonical macOS) → xcross (Flutter-iOS off-Mac) →
+  Theos (compatible plain-Swift) → source-only. Experimental adapters are
+  **labelled** in the evidence (`experimental: ["xcross"]`).
+- **Overall status** — `PASS` (build + device/simulator verified), `PARTIAL`
+  (source + static pass, runtime stages host-limited — **the honest off-Mac
+  outcome**, never `FAIL`, never a blanket `BLOCKED`), `FAIL` (a Swift syntax
+  error or a real build failure), `BLOCKED` (project could not be generated).
+
+Evidence: `.sovereign/mobile-ios-evidence.json` (the spec's schema — `target`,
+`support`, `host`, `projectType`, per-stage results, `runtimeAdapter`,
+`blockers[]` each with a stage-specific `reason`).
+
+The DoD splits into the same stages; the certificate reads
+**`SOVEREIGN VERIFIED — PARTIAL`** when build/runtime need host tooling and lists
+the host-limited stages.
 
 ### ML model training — `Engine.ML`
 
@@ -135,14 +173,20 @@ contracts + on-chain transaction count; for ML, the model metric.
 - an **ERC-20** prompt → real `solc` compile → deploy on a local chain → real
   transfer / approve / transferFrom / revert transactions → every assertion
   passes → DoD → **SOVEREIGN VERIFIED**
-- an **iOS-only** prompt → the SwiftUI project is generated → **BLOCKED
-  `MACOS_RUNNER_REQUIRED`** (not "unsupported")
+- an **iOS-only** prompt → a real SwiftUI + SwiftPM + xcodegen project generated
+  → `sourceGeneration: PASS`, `staticValidation: PASS`,
+  `build: BLOCKED (MACOS_XCODE_REQUIRED)`, `simulator: BLOCKED
+  (MACOS_SIMULATOR_REQUIRED)` → overall **`PARTIAL`** (`SOVEREIGN VERIFIED —
+  PARTIAL`), never "unsupported"
 
-`test/adapters.test.js` (40 checks) additionally proves ERC-721 + voting
-contracts, and a genuine char-LM / classifier / regressor training run with a
-decreasing loss curve and a hashed checkpoint. The full Android path (Gradle
-build → 5.7 MB APK → headless Pixel_4 emulator → install → launch → screenshot)
-is exercised by the adapter and confirmed on this machine.
+`test/adapters.test.js` (53 checks) additionally proves ERC-721 + voting
+contracts; a genuine char-LM / classifier / regressor training run with a
+decreasing loss curve and a hashed checkpoint; and the iOS ProjectInspector +
+HostProbe + staged verification (source/static PASS, build/simulator
+stage-BLOCKED with precise reasons, a Swift syntax error → `staticValidation:
+FAIL` → status `FAIL`). The full Android path (Gradle build → 5.7 MB APK →
+headless Pixel_4 emulator → install → launch → screenshot) is exercised by the
+adapter and confirmed on this machine.
 
 ## Vendored dependencies
 

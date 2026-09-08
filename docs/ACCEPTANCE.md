@@ -107,9 +107,13 @@ flow — see `docs/ULTRAMODE_CLOSED_LOOP.md`:
    `resume()` completes it to `VERIFIED` **without regenerating** the project.
 9. **Negative — unsafe**: a covert-keylogger request ends `BLOCKED`, nothing
    generated, explicit reason.
-10. **Runtime target — iOS**: a native-iOS-only request is detected as the `ios`
-    target; the SwiftUI project **is** generated; with no macOS worker the run
-    ends `BLOCKED MACOS_RUNNER_REQUIRED` (not "unsupported").
+10. **Runtime target — iOS (staged)**: a native-iOS-only request is detected as
+    the `ios` target; a real SwiftUI + SwiftPM + xcodegen project is generated;
+    `electron/lib/ios.js` runs `sourceGeneration` + `staticValidation` (PASS on
+    every host), and `build` + `simulator` are **stage-BLOCKED** with
+    `MACOS_XCODE_REQUIRED` / `MACOS_SIMULATOR_REQUIRED` — the overall run is
+    **`PARTIAL`** (`SOVEREIGN VERIFIED — PARTIAL`), never a blanket BLOCKED, never
+    "unsupported". A Swift syntax error would instead be `FAILED`.
 11. **Runtime target — EVM**: an ERC-20 request is detected as the `evm` target;
     `Engine.Blockchain` generates a real Solidity contract; `electron/lib/adapters.js`
     compiles it with `solc` and deploys it on a `@ethereumjs/vm` local chain, runs

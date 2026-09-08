@@ -21,7 +21,7 @@ prompt
   → Engine.Ledger.build                 (claim → evidence → confidence)
   → Engine.Recovery.run                 (snapshot → repair → verify)
   → Engine.DoD.evaluate + certificate   (10 blocking gates)
-  → SOVEREIGN VERIFIED  |  BLOCKED  |  FAILED
+  → SOVEREIGN VERIFIED  |  PARTIAL  |  BLOCKED  |  FAILED
 ```
 
 ## State machine
@@ -45,8 +45,9 @@ call `Engine.UltraMode.resume()`.
 | `REPAIRING` | snapshot `pre-repair-N` → `Recovery.run` → re-analyze; roll back if worse |
 | `REVERIFYING` | re-run execution + observation + analyze; evaluate the DoD gate |
 | `VERIFIED` | every DoD gate passed **with a real certificate** |
-| `BLOCKED` | safety refusal, out-of-scope request, unanswered blocking question, or the environment cannot verify (browser mode) |
-| `FAILED` | the DoD gate did not pass after the repair budget, or an internal error |
+| `PARTIAL` | a runtime-adapter target (currently iOS off-macOS) where every stage this host **can** run passed — `sourceGeneration` + `staticValidation` — and the rest are stage-`BLOCKED` on host tooling. `SOVEREIGN VERIFIED — PARTIAL`. Not a FAIL, not a blanket BLOCKED |
+| `BLOCKED` | safety refusal, unanswered blocking question, a required runtime prerequisite is entirely missing, or the environment cannot verify (browser mode) |
+| `FAILED` | the DoD gate did not pass after the repair budget, a static-validation / build failure, or an internal error |
 | `CANCELLED` | `Engine.UltraMode.cancel()` |
 
 ### Bounded behaviour
@@ -158,7 +159,7 @@ execution + verification adapter. Full detail: **[`RUNTIME_ADAPTERS.md`](RUNTIME
 |---|---|---|---|
 | **EVM smart contracts** | ERC-20 / ERC-721 / voting / escrow Solidity (audited patterns, zero imports) + Foundry layout + a local-chain scenario | bundled `solc` + `@ethereumjs/vm` local deterministic chain — compile → deploy → run the transactions → inspect receipts/events/gas/state → static analysis (`+ forge test` when Foundry is installed) | never blocks — the runtime ships with CodeSovereign; a Solidity error is `FAIL` |
 | **Native Android** | a buildable Kotlin/View Gradle project + a Maestro UI flow | `gradle assembleDebug` → headless AVD → `adb install` + launch → screenshot → `logcat` crash scan → Maestro | `BLOCKED ANDROID_SDK_REQUIRED` / `NO_EMULATOR_ACCELERATION` / … — the APK build evidence is kept |
-| **Native iOS** | a SwiftUI project + xcodegen spec | `xcodebuild -sdk iphonesimulator` + `simctl` + Maestro | `BLOCKED MACOS_RUNNER_REQUIRED` — the project is generated and ready |
+| **Native iOS** (staged — see [`RUNTIME_ADAPTERS.md`](RUNTIME_ADAPTERS.md#native-ios--staged)) | SwiftUI + SwiftPM + xcodegen + Theos project | `sourceGeneration` + `staticValidation` on **every host**; then Xcode (macOS) / xcross (Flutter-iOS) / Theos (plain-Swift) / source-only. `simctl` on macOS | per-stage: `build` / `simulator` return `MACOS_XCODE_REQUIRED` / `MACOS_SIMULATOR_REQUIRED`; the run is **`PARTIAL`** (SOVEREIGN VERIFIED — PARTIAL), not BLOCKED |
 | **ML model training** | a real PyTorch project (char-LM / classifier / regressor) + dataset inspector + `config.yaml` for the LLM scale-up | `python train.py` for real → decreasing loss curve + hashed checkpoint + held-out metric | `BLOCKED PYTORCH_NOT_INSTALLED` / `DATASET_REQUIRED` / `INSUFFICIENT_COMPUTE (suggestedStrategy: QLoRA)` |
 
 `BLOCKED` always names the exact missing prerequisite and the command to install
@@ -202,7 +203,7 @@ Mobile / ML engines and stubbed verification engines (driven by a mutable
 world): happy path → `VERIFIED`; defect → bounded repair → `VERIFIED`; repair
 budget exhausted → `FAILED`; rollback of a worsening repair; cancellation; resume
 after a simulated crash with no regeneration; unsafe → `BLOCKED`; **runtime
-target iOS with no macOS worker → `BLOCKED` (artifact still generated)**;
+target iOS on a non-macOS host → `PARTIAL` (source + static verified; build/simulator host-limited)**;
 **blockchain adapter PASS → `VERIFIED`**; **ML adapter FAIL → `FAILED`**;
 blocking-question → `NEEDS_INPUT` → answer → continue; browser-mode degradation;
 deterministic ids; requirement traceability; secret redaction.
@@ -211,7 +212,7 @@ deterministic ids; requirement traceability; secret redaction.
 workspace, the acceptance prompt, a repairable defect injected into the generated
 output, real `npm test/build/lint`, a real runtime crawl, a real `Recovery`
 repair, DoD `PASS`, `SOVEREIGN VERIFIED` — then a resumed run, an unsafe →
-`BLOCKED`, an iOS request → `BLOCKED MACOS_RUNNER_REQUIRED` (SwiftUI project
+`BLOCKED`, an iOS request → `PARTIAL` (SwiftUI + SwiftPM project
 generated), and an **ERC-20 request → real `solc` compile → deploy on a local
 chain → real transactions → SOVEREIGN VERIFIED**.
 
@@ -228,7 +229,7 @@ chain → real transactions → SOVEREIGN VERIFIED**.
   runtime adapters (see [`RUNTIME_ADAPTERS.md`](RUNTIME_ADAPTERS.md)). When the
   host lacks the runtime (no Android SDK, no macOS worker, no PyTorch, no GPU for
   a large model) the run ends `BLOCKED` with the exact prerequisite — the
-  artifact is still generated. iOS always needs a macOS worker; large-model
+  artifact is still generated. iOS build/simulator stages need macOS or a compatible xcross/Theos target (source + static verification run everywhere → PARTIAL); large-model
   fine-tuning always needs a GPU.
 - Email/SMS job *delivery* is logged, not wired to a provider — that needs the
   user's credentials.
