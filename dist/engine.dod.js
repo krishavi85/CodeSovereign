@@ -35,8 +35,69 @@
 
   var NODE_CORE = /^(node:)?(fs|path|http|https|os|url|vm|crypto|events|stream|util|assert|child_process|net|zlib|buffer|timers|dns|tls|readline|worker_threads|perf_hooks|process|module|string_decoder|querystring|test|sqlite|inspector|constants|console)$/;
 
+  // A runtime-adapter target run (native mobile / ML training / blockchain) is
+  // gated on its adapter evidence, not the web-observer criteria.
+  function targetEvaluate(contract) {
+    var target = contract.target;
+    var evName = target === 'evm' ? 'blockchain-evidence.json'
+      : (target === 'android' || target === 'ios') ? 'mobile-evidence.json'
+      : target === 'ml-training' ? 'ml-evidence.json' : null;
+    var tev = evName ? j(evName) : null;
+    var arch = j('architecture-findings.json');
+    var priv = j('privacy-findings.json');
+    var secR = j('security-findings.json');
+    var status = tev && tev.status;
+    var anyFiles = Object.keys(Engine.FS._data).some(function (p) {
+      return Engine.FS.isFile(p) && !/^\/?(\.sovereign|node_modules)\//.test(p) && /\.(sol|kt|swift|py|js|ts|xml|kts|toml|yaml|yml|json)$/.test(p);
+    });
+    function g(v) { return v === true; }
+    var evmHighStatic = (target === 'evm' && tev && tev.staticAnalysis && tev.staticAnalysis.high) || 0;
+    var criteria = {
+      implementationExists: g(anyFiles && !!contract && (contract.requirements || []).length >= 0),
+      artifactGenerated: g(!!tev),
+      buildSucceeds: g(!!tev && tev.status !== 'BLOCKED' ? (
+        target === 'evm' ? (tev.contracts || []).length > 0 && !(tev.compileErrors && tev.compileErrors.length)
+        : target === 'ml-training' ? tev.trainerExit === 0 || (tev.loss_curve && tev.loss_curve.length > 0)
+        : (tev.steps || []).some(function (s) { return s.step === 'gradle-assembleDebug' && s.ok; }) || tev.buildOk === true
+      ) : (status === 'PASS')),
+      runtimeVerified: g(status === 'PASS'),
+      testsSucceed: g(status === 'PASS' && (
+        target === 'evm' ? (tev.assertions || []).every(function (a) { return a.pass; }) && (tev.assertions || []).length > 0
+        : target === 'ml-training' ? tev.loss_decreased !== false
+        : (tev.steps || []).every(function (s) { return s.ok !== false; })
+      )),
+      noFakeImplementation: g(status === 'PASS'),
+      securityGatesPass: g(((secR && secR.bySeverity && secR.bySeverity.high) || 0) === 0 && evmHighStatic === 0),
+      architectureSound: g(!arch || ((arch.bySeverity && arch.bySeverity.high) || 0) === 0),
+      privacyRespected: g(!priv || ((priv.bySeverity && priv.bySeverity.high) || 0) === 0)
+    };
+    var PASS = status === 'PASS' && Object.keys(criteria).every(function (k) { return criteria[k] === true; });
+    var dod = {
+      generatedAt: Date.now(), PASS: PASS, mode: 'target', target: target,
+      criteria: criteria,
+      detail: {
+        adapterStatus: status || null,
+        adapterReason: (tev && tev.reason) || null,
+        runtime: (tev && tev.runtime) || (tev && tev.framework) || (tev && tev.platform) || null,
+        evidenceFile: evName,
+        blocked: status === 'BLOCKED',
+        contracts: (tev && tev.contracts) || null,
+        metric: (tev && tev.metric) || null,
+        transactions: (tev && (tev.transactions || []).length) || 0
+      }
+    };
+    if (S()) {
+      S().write('definition-of-done.json', dod);
+      var ds2 = j('decision-state.json') || {};
+      ds2.definitionOfDone = { at: dod.generatedAt, pass: PASS, mode: 'target', target: target, failing: Object.keys(criteria).filter(function (k) { return !criteria[k]; }) };
+      S().write('decision-state.json', ds2);
+    }
+    return dod;
+  }
+
   function evaluate() {
     var contract = Engine.Contract && Engine.Contract.load();
+    if (contract && contract.target && contract.target !== 'web') return targetEvaluate(contract);
     var ledger = Engine.Ledger && Engine.Ledger.load();
     var ev = j('execution-evidence.json') || {};
     var gates = ev.gates || {};
@@ -166,6 +227,33 @@
     var name = (contract && contract.product && contract.product.name) || 'project';
     var line = function (label, ok) { return '| ' + label + (Array(Math.max(2, 26 - label.length)).join(' ')) + ' | ' + (ok === true ? 'PASS' : ok === false ? 'FAIL' : 'n/a') + ' |'; };
     var c = dod.criteria || {};
+
+    // ---- runtime-adapter target certificate ----
+    if (dod.mode === 'target') {
+      var d = dod.detail || {};
+      var tmd =
+        '# CodeSovereign Release Certificate\n\n_Generated ' + new Date(dod.generatedAt).toISOString() + '_\n\n' +
+        '- **Project:** ' + name + '\n' +
+        '- **Target:** ' + (contract && contract.targetLabel || dod.target) + '  (runtime adapter)\n' +
+        '- **Runtime:** ' + (d.runtime || 'n/a') + '\n' +
+        '- **Status:** ' + (dod.PASS ? '**SOVEREIGN VERIFIED**' : (d.blocked ? '**BLOCKED** — ' + (d.adapterReason || 'runtime prerequisite missing') : '**NOT VERIFIED**')) + '\n' +
+        (d.contracts ? '- **Contracts:** ' + d.contracts.join(', ') + '\n' : '') +
+        (d.transactions ? '- **On-chain transactions executed:** ' + d.transactions + '\n' : '') +
+        (d.metric ? '- **Model metric:** ' + d.metric.name + ' = ' + d.metric.value + '\n' : '') + '\n' +
+        '| Gate | Result |\n|---|---|\n' +
+        line('Artifact generated', c.artifactGenerated) + '\n' +
+        line('Build / compile', c.buildSucceeds) + '\n' +
+        line('Runtime verified', c.runtimeVerified) + '\n' +
+        line('Tests / assertions', c.testsSucceed) + '\n' +
+        line('No fake implementation', c.noFakeImplementation) + '\n' +
+        line('Security gates', c.securityGatesPass) + '\n' +
+        line('Architecture sound', c.architectureSound) + '\n' +
+        line('Privacy respected', c.privacyRespected) + '\n\n' +
+        '_Evidence: `.sovereign/' + (d.evidenceFile || 'target-evidence.json') + '`_\n';
+      if (S()) S().write('release-certificate.md', tmd);
+      return tmd;
+    }
+
     var md =
       '# CodeSovereign Release Certificate\n\n' +
       '_Generated ' + new Date(dod.generatedAt).toISOString() + '_\n\n' +

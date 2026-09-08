@@ -64,11 +64,22 @@ function makeEnv(world) {
     snapshots: { create: (r) => { world.snapshots.push(r); return Promise.resolve({ ok: true, id: 'snap-' + world.snapshots.length }); } }
   } : undefined;
 
+  // ---- runtime-adapter bridge shim (native mobile / ML / blockchain), driven by `world` ----
+  win.CSAdapters = world.desktop ? {
+    available: () => true, isDesktop: () => true,
+    probe: () => Promise.resolve(world.adapterProbe || { host: { platform: 'test' }, evm: { available: true }, android: { available: true, canRun: !!world.adapterCanRun }, ios: { available: false, canRun: false }, ml: { available: true } }),
+    evm: () => Promise.resolve(world.adapterResult || { status: 'BLOCKED', reason: 'NO_WORLD_RESULT' }),
+    android: () => Promise.resolve(world.adapterResult || { status: 'BLOCKED', reason: 'NO_WORLD_RESULT' }),
+    ios: () => Promise.resolve(world.adapterResult || { status: 'BLOCKED', capability: 'native-mobile', platform: 'ios', reason: 'MACOS_RUNNER_REQUIRED', need: 'a macOS worker with Xcode' }),
+    ml: () => Promise.resolve(world.adapterResult || { status: 'BLOCKED', reason: 'NO_WORLD_RESULT' })
+  } : undefined;
+
   win.Engine = { FS, Sovereign };
   vm.createContext(win);
   for (const f of ['engine-universal.js', 'engine.schema.js', 'engine.auth.js', 'engine.jobs.js',
                    'engine.backend.js', 'engine.scaffold.js', 'engine.testgen.js', 'engine.deploy.js',
-                   'engine.contract.js']) {
+                   'engine.contract.js', 'engine.runtime-router.js', 'engine.blockchain.js',
+                   'engine.mobile.js', 'engine.ml.js']) {
     vm.runInContext(load(f), win, { filename: f });
   }
 
@@ -86,6 +97,16 @@ function makeEnv(world) {
   };
   win.Engine.DoD = {
     evaluate: () => {
+      // runtime-adapter target run: gate on the adapter evidence
+      const tev = Sovereign.read('blockchain-evidence.json') || Sovereign.read('mobile-evidence.json') || Sovereign.read('ml-evidence.json');
+      const contract = Sovereign.read('product-contract.json');
+      if (contract && contract.target && contract.target !== 'web') {
+        const ok = tev && tev.status === 'PASS';
+        const crit = { artifactGenerated: !!tev, buildSucceeds: ok, runtimeVerified: ok, testsSucceed: ok, noFakeImplementation: ok, securityGatesPass: true, architectureSound: true, privacyRespected: true };
+        const dod = { PASS: !!ok, mode: 'target', target: contract.target, criteria: crit, generatedAt: Date.now() };
+        Sovereign.write('definition-of-done.json', dod);
+        return dod;
+      }
       const crit = {
         implementationExists: true, dependenciesConnected: true,
         buildSucceeds: !!world.gates.buildPasses, testsSucceed: !!world.gates.testsPass,
@@ -307,16 +328,52 @@ module.exports = async function (t) {
     t.ok('nothing was generated for an unsafe request', (run.artifacts.generatedFiles || []).length === 0);
   }
 
-  /* ---------- 8. NEGATIVE: fully-unsupported request -> BLOCKED ---------- */
+  /* ---------- 8. RUNTIME TARGET: iOS with no macOS worker -> BLOCKED (artifact still generated) ---------- */
   {
     const { win } = makeEnv(baseWorld());
     const run = await win.Engine.UltraMode.start({
       prompt: 'Build a native iOS mobile app only, written in Swift with SwiftUI, no web version',
       useLLM: false
     });
-    t.equal('unsupported core -> BLOCKED', run.state, 'BLOCKED');
-    t.notEqual('unsupported is never VERIFIED', run.result, 'VERIFIED');
-    t.ok('unsupported reason is specific', /outside what CodeSovereign can generate/i.test(run.resultReason));
+    t.equal('iOS target: target detected', run.target, 'ios');
+    t.equal('iOS target with no macOS worker -> BLOCKED', run.state, 'BLOCKED');
+    t.notEqual('a BLOCKED runtime target is never VERIFIED', run.result, 'VERIFIED');
+    t.ok('the BLOCKED reason names the missing runtime', /MACOS_RUNNER_REQUIRED|macOS worker/i.test(run.resultReason));
+    t.ok('the iOS artifact WAS generated (capability supported, runtime missing)', (run.artifacts.generatedFiles || []).some((p) => /ContentView\.swift$/.test(p)));
+  }
+
+  /* ---------- 8b. RUNTIME TARGET: blockchain adapter PASS -> VERIFIED ---------- */
+  {
+    const { win } = makeEnv(baseWorld({
+      adapterResult: {
+        status: 'PASS', capability: 'blockchain', evidenceFile: 'blockchain-evidence.json',
+        evidence: { capability: 'blockchain', status: 'PASS', runtime: 'ethereumjs-local', solcVersion: '0.8.28',
+          contracts: ['AcmeToken'], transactions: [{ kind: 'deploy' }, { kind: 'tx' }],
+          assertions: [{ step: 'transfer(address,uint256)', pass: true }],
+          staticAnalysis: { tool: 'cs-lint', findings: [], high: 0 }, failure: null }
+      }
+    }));
+    const run = await win.Engine.UltraMode.start({
+      prompt: 'Build an ERC-20 token smart contract called AcmeToken with mint, transfer and approve',
+      useLLM: false
+    });
+    t.equal('blockchain target detected', run.target, 'evm');
+    t.ok('the Solidity contract was generated', (run.artifacts.generatedFiles || []).some((p) => /\.sol$/.test(p)));
+    t.equal('adapter PASS -> VERIFIED', run.state, 'VERIFIED');
+    t.equal('result is VERIFIED', run.result, 'VERIFIED');
+    t.equal('the run recorded a PASS adapter result', run.adapterResult && run.adapterResult.status, 'PASS');
+  }
+
+  /* ---------- 8c. RUNTIME TARGET: ML adapter FAIL -> FAILED ---------- */
+  {
+    const { win } = makeEnv(baseWorld({
+      adapterResult: { status: 'FAIL', capability: 'ml-training', reason: 'LOSS_DID_NOT_DECREASE', evidenceFile: 'ml-evidence.json',
+        evidence: { capability: 'ml-training', status: 'FAIL', loss_decreased: false } }
+    }));
+    const run = await win.Engine.UltraMode.start({ prompt: 'Train a transformer language model from scratch', useLLM: false });
+    t.equal('ML target detected', run.target, 'ml-training');
+    t.equal('adapter FAIL -> FAILED', run.state, 'FAILED');
+    t.ok('the FAILED reason carries the adapter reason', /LOSS_DID_NOT_DECREASE|verification failed/i.test(run.resultReason));
   }
 
   /* ---------- 9. CLARIFICATION: blocking question -> NEEDS_INPUT -> answer -> continue ---------- */

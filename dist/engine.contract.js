@@ -213,20 +213,36 @@
   var BACKEND_RE = [
     [/\b(python|fastapi|django|flask)\b/i, 'python']
   ];
-  // Still genuinely out of scope: there is no way to generate + build + RUN +
-  // observe + verify these inside the loop, so the run is BLOCKED, not faked.
+  // Native mobile / ML training / blockchain are NO LONGER "unsupported" — each
+  // routes through a target-specific runtime adapter (Engine.RuntimeRouter +
+  // Engine.Mobile / Engine.ML / Engine.Blockchain). See TARGET_RE below. A
+  // target is fully supported even when THIS host lacks its runtime; the run
+  // then ends BLOCKED with a precise reason. Only these narrow cases remain.
   var UNSUPPORTED_RE = [
-    [/\b(react native|flutter|expo|swift ?ui|swift\b|kotlin|jetpack compose|android app|ios app|iphone app|ipad app|\.apk\b|\.ipa\b|app ?store|play ?store|native mobile|mobile-only)\b/i,
-      'native mobile app (no simulator/device + platform SDK in the loop — the runtime observer cannot drive an APK/IPA)'],
-    [/\b(train (a|an|the|our)? ?(ml |ai )?model|model training|fine-?tun(e|ing) (a|an|the)? ?(model|llm)|train a neural net|dataset .* training|reinforcement learning)\b/i,
-      'ML model training (needs a dataset + compute; no verifiable trained artifact to gate on) — inference against an existing model IS supported'],
-    [/\b(smart contract|solidity|deploy .* to (a|the)? ?(blockchain|chain|mainnet|testnet)|web3 (dapp|app)|on-chain|erc-?20|erc-?721|nft (mint|contract))\b/i,
-      'blockchain / smart-contract runtime (needs a live chain to deploy to; no in-loop runtime to observe)'],
     [/\b(gRPC|protobuf service)\b/i,
       'gRPC transport (the .proto + a Node service impl are generated, but cross-language stub generation via protoc is not run) — REST + GraphQL + WebSocket are fully supported'],
-    [/\b(desktop app|electron app|tauri|\.exe installer|dmg\b|appimage|msi\b)\b/i,
-      'desktop packaging OF THE GENERATED PRODUCT (CodeSovereign itself ships desktop; it does not package the apps it generates)']
+    [/\b(package (codesovereign|this app) (as|into)|repackage the ide)\b/i,
+      'desktop packaging OF CODESOVEREIGN ITSELF (it already ships desktop; generated desktop apps ARE packaged via electron-builder)']
   ];
+
+  // Prompt -> specialised runtime target. Non-web targets are SUPPORTED and
+  // verified by their adapter; contract.target drives Engine.RuntimeRouter.
+  var TARGET_RE = [
+    ['ios', /\b(swift ?ui|swiftui|\bswift\b|xcode|\.ipa\b|iphone app|ipad app|ios app|ios-only|for ios)\b/i],
+    ['android', /\b(android app|android application|\.apk\b|play ?store|jetpack compose|android kotlin|kotlin android|native android|react native|flutter|expo|native mobile|mobile app(?! ?builder)|mobile-only)\b/i],
+    ['evm', /\b(smart contract|solidity|\bevm\b|erc-?20|erc-?721|erc-?1155|nft (mint|contract|collection|drop)|on-chain|web3 (dapp|app|contract)|foundry|hardhat|defi protocol|dao (contract|governance)|token contract|blockchain app)\b/i],
+    ['ml-training', /\b(train (a|an|the|our|my)? ?(new )?(ml |ai |deep learning )?model|model training|fine-?tun(e|ing) (a|an|the|our)? ?(model|llm|network)|from-scratch training|pre-?train(ing)? (a|an)? ?(model|llm)|train a (neural net|transformer|classifier|lstm|cnn|rnn)|\blora\b|\bqlora\b|\bsft\b|\bdpo\b|\bgrpo\b|reinforcement learning from|rlhf)\b/i]
+  ];
+  function detectTarget(prompt) {
+    for (var i = 0; i < TARGET_RE.length; i++) if (TARGET_RE[i][1].test(prompt)) return TARGET_RE[i][0];
+    return 'web';
+  }
+  var TARGET_META = {
+    android: { label: 'Native Android app', adapter: 'mobile', runtime: 'Android SDK + emulator + adb (Gradle build, headless AVD, logcat, screenshots)' },
+    ios: { label: 'Native iOS app', adapter: 'mobile', runtime: 'macOS worker with Xcode + iOS Simulator + simctl' },
+    evm: { label: 'Ethereum / EVM smart contracts', adapter: 'blockchain', runtime: 'solc + a local deterministic chain (@ethereumjs/vm, or Foundry/anvil)' },
+    'ml-training': { label: 'ML model training', adapter: 'ml', runtime: 'Python + PyTorch (real training loop, checkpoint, held-out eval); GPU for large models' }
+  };
   // Requests that must NOT be built — recorded and the run is BLOCKED, never verified.
   var UNSAFE_RE = [
     [/\b(without (their|the user'?s?) (knowledge|consent|permission)|covert(ly)?|secretly|hidden from the user|stealth)\b/i, 'covert behaviour hidden from the end user'],
@@ -304,6 +320,10 @@
     var normalized = U ? U.Normalizer.normalize({ prompt: prompt }) : { projectGoal: prompt.slice(0, 200), applicationCategory: 'web_application', targetPlatforms: ['web'], primaryActors: ['user'], coreCapabilities: [] };
     var classification = U ? U.Classifier.classify(normalized) : { primaryType: 'web_application', complexity: 'standard', riskLevel: 'low' };
     var lc = prompt.toLowerCase();
+
+    /* ---- specialised runtime target (Engine.RuntimeRouter) ---- */
+    var target = detectTarget(prompt);
+    var targetMeta = TARGET_META[target] || null;
 
     /* ---- unsupported requests (recorded, never faked) ---- */
     var unsupported = [];
@@ -548,6 +568,10 @@
       blockingQuestions: blockingQuestions,
       unsupported: unsupported,
       unsafe: unsafe,
+      target: target,
+      targetLabel: targetMeta ? targetMeta.label : 'Web application',
+      targetAdapter: targetMeta ? targetMeta.adapter : null,
+      targetRuntime: targetMeta ? targetMeta.runtime : null,
       totals: {
         requirements: reqs.length,
         withMachineCriteria: reqs.filter(function (r) { return r.acceptanceCriteria.some(function (c) { return ACCEPT_KINDS.indexOf(c.kind) >= 0; }); }).length,
@@ -562,14 +586,16 @@
     // buildable functional core (everything asked for is outside the supported
     // stack). Partial-scope requests still build the supported part and report
     // the rest as `unsupported`.
-    var mentionsWeb = /\b(web ?app|webapp|website|web application|web platform|browser|dashboard|portal|admin panel|rest api|graphql|\bapi\b|saas|internal tool|service|backend|platform)\b/i.test(prompt) &&
-      !/\bno web\b|\bnot .{0,12}web\b|\bwithout .{0,12}web\b|web version/i.test(prompt);
-    // Only BLOCK for safety, or when the ENTIRE request is a genuinely-unsupported
-    // thing (native mobile / ML training / blockchain) with no web/service core.
-    var hardBlock = unsupported.some(function (u) { return /native mobile|ML model training|blockchain/.test(u.reason); });
+    // Nothing functional is "unsupported" anymore — native mobile / ML training /
+    // blockchain each route through a runtime adapter (contract.target). A run is
+    // only BLOCKED up front for safety; a missing host runtime is discovered at
+    // verification time and reported as BLOCKED with a precise reason.
     if (unsafe.length) contract.verdict = 'unsafe';
-    else if (hardBlock && !mentionsWeb && reqs.filter(function (r) { return r.category === 'functional' && r.priority === 'mandatory'; }).length <= 1) contract.verdict = 'unsupported';
     else contract.verdict = 'buildable';
+    if (target !== 'web') {
+      contract.mode = 'from-prompt';
+      contract.verdict = 'buildable';
+    }
 
     var finish = function (llmReqs) {
       if (llmReqs && llmReqs.length) {

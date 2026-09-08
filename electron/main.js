@@ -376,6 +376,26 @@ function registerIpc() {
     } catch (e) { return fail(e); }
   });
 
+  /* ---- runtime adapters (blockchain / native mobile / ML training) ----
+     Per the Three-Blocked-Capabilities plan: each specialised target runs
+     through a real runtime adapter. probe() is read-only and free; a real
+     adapter run (compile + local chain / gradle + emulator / python training)
+     needs the same one-time folder-trust prompt as any other command. */
+  ipcMain.handle('adapter:probe', async () => {
+    try { return ok(require('./lib/adapters').probe()); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('adapter:run', async (_e, opts) => {
+    try {
+      const o = opts || {};
+      const kind = String(o.kind || '');
+      if (['evm', 'android', 'ios', 'ml'].indexOf(kind) < 0) return fail('unknown adapter: ' + kind);
+      await ensureTrusted('runtime adapter: ' + kind + (kind === 'evm' ? ' (solidity compile + local chain)' : kind === 'android' ? ' (gradle build + emulator)' : kind === 'ml' ? ' (pytorch training run)' : ''));
+      const res = await require('./lib/adapters').run(kind, o.opts || {});
+      trust.audit({ kind: 'adapter', cmd: kind, cwd: workspace.getRoot(), status: res && res.status });
+      return ok(res);
+    } catch (e) { return fail(e); }
+  });
+
   /* ---- workspace trust ---- */
   ipcMain.handle('trust:status', () => {
     const root = workspace.getRoot();

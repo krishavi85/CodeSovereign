@@ -238,6 +238,11 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="engine.ledger.js"></script>
 <script src="engine.dod.js"></script>
 <script src="engine.orchestrator.js"></script>
+<!-- Runtime adapters: native mobile / ML training / blockchain via target-specific execution + verification -->
+<script src="engine.runtime-router.js"></script>
+<script src="engine.blockchain.js"></script>
+<script src="engine.mobile.js"></script>
+<script src="engine.ml.js"></script>
 <!-- Ultra Mode closed loop: prompt -> contract -> plan -> generate -> execute -> observe -> repair -> DoD -> VERIFIED -->
 <script src="engine.ultramode.js"></script>
 <script src="app.js"></script>
@@ -249,6 +254,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="desktop/desktop-terminal.js"></script>
 <script src="desktop/desktop-git.js"></script>
 <script src="desktop/desktop-exec.js"></script>
+<script src="desktop/desktop-adapters.js"></script>
 <script src="desktop/desktop-observe.js"></script>
 <script src="desktop/desktop-app.js"></script>
 </body>

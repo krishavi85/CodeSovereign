@@ -99,6 +99,11 @@ contextBridge.exposeInMainWorld('desktop', {
     probe: () => invoke('hw:probe')
   },
 
+  adapters: {
+    probe: () => invoke('adapter:probe'),
+    run: (kind, opts) => invoke('adapter:run', { kind, opts })
+  },
+
   ai: {
     discover: () => invoke('ai:discover'),
     request: (opts) => invoke('ai:request', opts),

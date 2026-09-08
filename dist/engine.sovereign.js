@@ -79,6 +79,10 @@
     'architecture-rules.md':      'Readable architecture violations + score',
     'privacy-findings.json':      'PII / data-protection scan — data in logs, PII in URLs, secrets in responses, egress (spec §18)',
     'privacy-report.md':          'Readable privacy findings + score',
+    'blockchain-evidence.json':   'EVM target — solc compile + local-chain deploy + transactions + receipts + static analysis',
+    'mobile-evidence.json':       'Native-mobile target — gradle build + emulator install/launch + logcat + screenshot',
+    'ml-evidence.json':           'ML-training target — dataset inspection + real training loss curve + checkpoint + eval metric',
+    'ultramode-plan.json':        'The build plan the Ultra Mode loop is executing (web steps or the runtime-adapter plan)',
     'deployment.json':           'Last generated deployment target + IaC + preflight (spec §41)'
   };
 

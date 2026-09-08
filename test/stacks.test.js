@@ -62,12 +62,23 @@ module.exports = async function (t) {
     const py = await win.Engine.Contract.deriveFromPrompt('Build a Python FastAPI service for orders with SQLite', { useLLM: false });
     t.equal('contract: python backend detected', py.supportedStack.backend, 'python');
 
+    // native mobile / ML training / blockchain are now SUPPORTED targets that route
+    // through a runtime adapter — not "unsupported". The contract records contract.target.
     const ios = await win.Engine.Contract.deriveFromPrompt('Build a native iOS app in Swift, no web version at all', { useLLM: false });
-    t.equal('contract: native mobile still BLOCKS', ios.verdict, 'unsupported');
-    t.ok('contract: mobile reason is specific', /native mobile/.test((ios.unsupported[0] || {}).reason || ''));
+    t.equal('contract: iOS is a buildable target, not unsupported', ios.verdict, 'buildable');
+    t.equal('contract: iOS target detected', ios.target, 'ios');
+    t.ok('contract: iOS target names its runtime', /Xcode/i.test(ios.targetRuntime || ''));
 
-    const ml = await win.Engine.Contract.deriveFromPrompt('Build a tool to train an ML model on our dataset', { useLLM: false });
-    t.equal('contract: ML training still BLOCKS', ml.verdict, 'unsupported');
+    const ml = await win.Engine.Contract.deriveFromPrompt('Build a tool to train an ML model from scratch on our dataset', { useLLM: false });
+    t.equal('contract: ML training is a buildable target', ml.verdict, 'buildable');
+    t.equal('contract: ML target detected', ml.target, 'ml-training');
+
+    const evm = await win.Engine.Contract.deriveFromPrompt('Build an ERC-20 token smart contract with mint and transfer', { useLLM: false });
+    t.equal('contract: blockchain is a buildable target', evm.verdict, 'buildable');
+    t.equal('contract: evm target detected', evm.target, 'evm');
+
+    const android = await win.Engine.Contract.deriveFromPrompt('Build a native Android app for tracking workouts', { useLLM: false });
+    t.equal('contract: android target detected', android.target, 'android');
 
     const vue = await win.Engine.Contract.deriveFromPrompt('Build a Vue dashboard for tracking expenses with a REST API', { useLLM: false });
     t.equal('contract: vue detected', vue.supportedStack.frontend, 'vue');

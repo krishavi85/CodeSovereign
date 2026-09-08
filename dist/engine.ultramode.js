@@ -131,6 +131,8 @@
       bounds: Object.assign({}, DEFAULT_BOUNDS, input.bounds || {}, { startedAt: now() }),
       history: [],
       degraded: { browserMode: !isDesktop(), execution: false, observation: false, reasons: [] },
+      target: null,               // 'web' | 'android' | 'ios' | 'evm' | 'ml-training'
+      adapterResult: null,        // { status, reason, need, ... } for a runtime-adapter run
       contract: null,             // summary; full contract in product-contract.json
       plan: null,                 // summary; full plan in ultramode-plan.json
       clarification: { blockingQuestions: [], answered: {}, assumptions: [], unsupported: [], unsafe: [] },
@@ -255,6 +257,20 @@
     return out;
   }
 
+  /* ---------------- runtime-adapter target runs ----------------
+     Native mobile / ML training / blockchain don't run in the web observer.
+     When contract.target != 'web' the loop routes through Engine.RuntimeRouter
+     to the matching adapter (Engine.Mobile / Engine.ML / Engine.Blockchain),
+     which generates the real artifact, runs it in a real runtime, and returns
+     PASS / FAIL / BLOCKED with evidence. */
+  function isTargetRun(run) { return !!(run && run.target && run.target !== 'web'); }
+  function routerFor(run) {
+    var R = window.Engine && Engine.RuntimeRouter;
+    if (!R) return null;
+    var contract = Engine.Contract.load();
+    return R.route(contract || { target: run.target });
+  }
+
   /* ---------------- state handlers ---------------- */
   var HANDLERS = {
 
@@ -292,6 +308,10 @@
           run.clarification.assumptions = contract.assumptions || [];
           run.clarification.unsupported = contract.unsupported || [];
           run.clarification.unsafe = contract.unsafe || [];
+          run.target = contract.target || 'web';
+          run.contract.target = run.target;
+          run.contract.targetLabel = contract.targetLabel || null;
+          run.contract.targetRuntime = contract.targetRuntime || null;
 
           // 1) hard safety stop
           if (contract.verdict === 'unsafe') {
@@ -334,6 +354,32 @@
 
     PLANNING: function (run) {
       var contract = Engine.Contract.load();
+
+      // ---- runtime-adapter target: a short, adapter-specific plan ----
+      if (isTargetRun(run)) {
+        var route = routerFor(run);
+        if (!route || !route.engine) {
+          run.resultReason = 'No runtime adapter is registered for target "' + run.target + '".';
+          transition(run, 'FAILED', 'no adapter');
+          return Promise.resolve();
+        }
+        var tplan = {
+          schemaVersion: 1, generatedAt: now(),
+          target: run.target, adapter: route.adapter, label: route.label,
+          runtimeRequirements: route.requirements || [],
+          steps: [
+            { id: 'STEP-001', kind: 'generate-artifact', agent: route.adapter, produces: [], requirementIds: (contract.requirements || []).map(function (r) { return r.id; }) },
+            { id: 'STEP-002', kind: 'runtime-verify', agent: route.adapter, produces: [], requirementIds: [] }
+          ],
+          files: [], buildCommands: [], observationTargets: []
+        };
+        if (S()) S().write('ultramode-plan.json', tplan);
+        run.plan = { steps: tplan.steps.map(function (s) { return { id: s.id, kind: s.kind, agent: s.agent, produces: 0, requirementIds: s.requirementIds }; }),
+          files: 0, stack: { target: run.target, adapter: route.adapter }, target: run.target, runtimeRequirements: tplan.runtimeRequirements };
+        transition(run, 'GENERATING', 'target: ' + run.target);
+        return flush();
+      }
+
       var U = window.Universal || Engine.Universal;
       var plan = (U && U.buildPlan) ? U.buildPlan(contract) : null;
       if (!plan) {
@@ -354,6 +400,35 @@
     },
 
     GENERATING: function (run) {
+      // ---- runtime-adapter target: generate the real artifact via the adapter ----
+      if (isTargetRun(run)) {
+        if (Engine.Autonomy && Engine.Autonomy.allows && !Engine.Autonomy.allows('generate')) {
+          run.resultReason = 'Autonomy level "' + Engine.Autonomy.get() + '" does not permit code generation.';
+          transition(run, 'BLOCKED', 'autonomy: generate denied');
+          return Promise.resolve();
+        }
+        var route = routerFor(run);
+        var contract = Engine.Contract.load();
+        return snapshot(run, 'pre-generate').then(function () {
+          var written = [];
+          try {
+            var spec = Engine.Scaffold && Engine.Scaffold.specFromContract ? Engine.Scaffold.specFromContract(contract) : { name: (contract.product && contract.product.name) || 'app', entities: contract.entities || [] };
+            spec.prompt = (contract.product && contract.product.prompt) || run.prompt;
+            var files = route.engine.generate(spec);
+            files.forEach(function (f) { FS.write(f.path, f.content); written.push(f.path); });
+            run.artifacts.steps.push({ kind: 'generate-artifact', at: now(), adapter: route.adapter, target: run.target, files: files.length });
+          } catch (e) {
+            run.resultReason = run.target + ' artifact generation failed: ' + (e && e.message || e);
+            transition(run, 'FAILED', 'adapter generate error');
+            return;
+          }
+          run.artifacts.generatedFiles = Array.from(new Set(written)).sort();
+          run.artifacts.generatedAt = now();
+          transition(run, 'VALIDATING', 'target artifact generated');
+          return flush();
+        });
+      }
+
       // resume-safe: if the repo is already on disk from a prior run, don't regenerate
       var alreadyGenerated = run.artifacts.generatedAt && FS.exists('/server.js') && FS.exists('/package.json');
       if (alreadyGenerated) {
@@ -418,6 +493,38 @@
     },
 
     EXECUTING: function (run) {
+      // ---- runtime-adapter target: run the artifact in its real runtime ----
+      if (isTargetRun(run)) {
+        var route = routerFor(run);
+        var probe = (Engine.RuntimeRouter && Engine.RuntimeRouter.probe) ? Engine.RuntimeRouter.probe(run.target) : Promise.resolve(null);
+        return probe.then(function (pr) {
+          run.artifacts.steps.push({ kind: 'runtime-probe', at: now(), target: run.target, canRun: pr && pr.canRun, missing: (pr && pr.missing) || [] });
+          return route.engine.verify({});
+        }).then(function (res) {
+          res = res || { status: 'FAIL', reason: 'ADAPTER_NO_RESULT' };
+          run.adapterResult = {
+            status: res.status, reason: res.reason || null, need: res.need || null,
+            evidenceFile: res.evidenceFile || null, platform: res.platform || null,
+            note: res.note || null
+          };
+          // Persist the adapter evidence into the Sovereign store (the real adapter
+          // already wrote it to .sovereign/ on disk; this keeps the in-memory store
+          // and any resumed run consistent, and feeds Engine.DoD).
+          var evFile = res.evidenceFile || ({ evm: 'blockchain-evidence.json', android: 'mobile-evidence.json', ios: 'mobile-evidence.json', 'ml-training': 'ml-evidence.json' })[run.target];
+          if (evFile && res.evidence && S()) { try { S().write(evFile, res.evidence); } catch (_) {} }
+          run.artifacts.steps.push({ kind: 'runtime-verify', at: now(), target: run.target, status: res.status, reason: res.reason || null, evidenceFile: evFile || null });
+          try { S().analyze(); } catch (_) {}
+          return flush();
+        }).then(function () {
+          recordEvidence(run, 'post-runtime-verify');
+          transition(run, 'REVERIFYING', 'adapter result: ' + (run.adapterResult && run.adapterResult.status));
+        }).catch(function (e) {
+          run.adapterResult = { status: 'FAIL', reason: 'ADAPTER_EXCEPTION', need: String(e && e.message || e) };
+          run.artifacts.steps.push({ kind: 'runtime-verify', at: now(), target: run.target, error: String(e && e.message || e) });
+          transition(run, 'REVERIFYING', 'adapter exception');
+        });
+      }
+
       if (!execAvailable()) {
         run.degraded.execution = true;
         if (run.degraded.reasons.indexOf('execution') < 0) run.degraded.reasons.push('execution');
@@ -519,6 +626,41 @@
     },
 
     REVERIFYING: function (run) {
+      // ---- runtime-adapter target: the adapter result IS the verdict ----
+      if (isTargetRun(run)) {
+        var ar = run.adapterResult || { status: 'FAIL', reason: 'NO_ADAPTER_RESULT' };
+        try { S().analyze(); } catch (_) {}
+        var cert = '';
+        try { if (Engine.DoD && Engine.DoD.certificate) cert = Engine.DoD.certificate(); } catch (_) {}
+        return flush().then(function () {
+          recordEvidence(run, 'post-reverify');
+          var route = routerFor(run);
+          var reqLines = (route && route.requirements || []).map(function (r) { return r.tool + ' — ' + r.install; });
+          if (ar.status === 'BLOCKED') {
+            run.resultReason = 'Runtime BLOCKED (' + (ar.reason || 'PREREQUISITE_MISSING') + '): ' + (ar.need || 'a required runtime is not available on this host') +
+              (ar.note ? ' — ' + ar.note : '') +
+              '. This capability IS supported; the artifact is generated and ready. Provide the runtime to complete verification:\n  ' + reqLines.join('\n  ');
+            transition(run, 'BLOCKED', 'runtime prerequisite missing: ' + ar.reason);
+            return;
+          }
+          if (ar.status === 'FAIL') {
+            run.resultReason = 'The ' + run.target + ' artifact ran but verification failed' +
+              (ar.reason ? ' (' + ar.reason + ')' : '') + (ar.need ? ': ' + ar.need : '') + '.';
+            transition(run, 'FAILED', 'adapter verification failed');
+            return;
+          }
+          // PASS — the DoD gate must also agree (it now reads the *-evidence.json)
+          var e = run.evidence.latest || {};
+          if (e.dodPass && /SOVEREIGN VERIFIED/.test(cert || '')) {
+            transition(run, 'VERIFIED', run.target + ' verified on its real runtime + DoD gate passed');
+            return;
+          }
+          run.resultReason = 'The ' + run.target + ' artifact PASSED its runtime verification but the Definition-of-Done gate did not clear: ' +
+            ((e.dodFailing || []).join(', ') || 'no certificate') + '.';
+          transition(run, 'FAILED', 'DoD gate did not pass on a PASS adapter result');
+        });
+      }
+
       var chain = Promise.resolve();
       if (execAvailable()) chain = chain.then(function () { return S().runEvidence({ steps: ['test', 'build', 'lint'] }).catch(function () {}); });
       if (observeAvailable()) {
@@ -732,6 +874,10 @@
       prompt: run.prompt,
       product: run.contract && run.contract.name,
       verdict: run.contract && run.contract.verdict,
+      target: run.target || 'web',
+      targetLabel: run.contract && run.contract.targetLabel || null,
+      targetRuntime: run.contract && run.contract.targetRuntime || null,
+      adapterResult: run.adapterResult || null,
       requirements: run.contract && run.contract.requirements,
       blockingQuestions: (run.clarification.blockingQuestions || []).filter(function (q) { return !(run.clarification.answered || {})[q.id]; }),
       assumptions: run.clarification.assumptions || [],
