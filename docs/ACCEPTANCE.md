@@ -78,7 +78,7 @@ build half of the loop:
 This is the proof that CodeSovereign can *build* verified software from a spec,
 not only verify software that already exists. CI job **Desktop → acceptance-build**.
 
-## `npm run acceptance:ultramode` — the closed Ultra Mode loop (52 checks)
+## `npm run acceptance:ultramode` — the closed Ultra Mode loop (53 checks)
 
 `electron/acceptance-ultramode.js` starts from an **empty** workspace and **one
 natural-language request** and drives `Engine.UltraMode` through the entire real
