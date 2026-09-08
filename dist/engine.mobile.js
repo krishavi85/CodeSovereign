@@ -159,14 +159,7 @@
 
   function generate(spec) {
     spec = spec || {};
-    var plat = platformOf(spec);
-    if (plat === 'ios') {
-      // ship both: a buildable Android project AND the iOS skeleton, so a
-      // cross-platform request still produces a verifiable artifact.
-      var ios = iosFiles(spec);
-      return ios;
-    }
-    return androidFiles(spec);
+    return platformOf(spec) === 'ios' ? iosFiles(spec) : androidFiles(spec);
   }
 
   function verify(opts) {
