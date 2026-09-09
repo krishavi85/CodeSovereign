@@ -52,13 +52,16 @@
     s.locales = Array.isArray(spec.locales) ? spec.locales : (Array.isArray(spec.languages) ? spec.languages : []);
     s.backend = spec.backend === 'python' || spec.pyBackend ? 'python' : 'node';   // idempotent
     s.pyBackend = s.backend === 'python';
+    // §16 — auth methods beyond password (mfa / oauth / passkeys)
+    var am = spec.authMethods || {};
+    s.authMethods = { password: true, mfa: !!am.mfa && s.auth, oauth: !!am.oauth && s.auth, passkeys: !!am.passkeys && s.auth };
     var names = s.entities.map(function (e) { return e.name; });
     var prepend = function (ent) {
       if (names.indexOf(ent.name) >= 0) return;
       s.entities = [S().normalizeSpec({ name: s.name, entities: [ent] }).entities[0]].concat(s.entities);
       names.unshift(ent.name);
     };
-    if (s.auth) A().entities().slice().reverse().forEach(prepend);
+    if (s.auth) A().entities(s).slice().reverse().forEach(prepend);
     if (s.jobs && Engine.Jobs) prepend(Engine.Jobs.entity());
     return s;
   }
@@ -101,6 +104,7 @@
     return normalize({
       name: (contract.product && contract.product.name) || 'app',
       auth: st.auth !== false,
+      authMethods: st.authMethods || null,
       jobs: !!st.jobs,
       stack: (contract.storage && contract.storage.choice) === 'postgres' ? 'node-pg' : 'node-vanilla',
       frontend: FRONTENDS.indexOf(st.frontend) >= 0 ? st.frontend : 'vanilla',
@@ -150,7 +154,7 @@
         fields: editable.map(function (f) { return { name: f.name, type: f.type }; })
       };
     });
-    var authFrag = s.auth ? A().uiFragment() : { html: '', js: '' };
+    var authFrag = s.auth ? A().uiFragment(s) : { html: '', js: '' };
     var html =
       '<!doctype html>\n<html lang="en" dir="ltr">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="design-tokens.css">\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
       '  <a href="#main" class="skip-link" data-i18n="app.skipToContent">Skip to content</a>\n' +
@@ -446,7 +450,7 @@
     } else {
       files['/src/db.js'] = S().dbModule(s);
     }
-    if (s.auth) files['/src/auth.js'] = A().module();
+    if (s.auth) files['/src/auth.js'] = A().module(s);
     s.entities.filter(function (e) { return e.name !== 'user' && e.name !== 'session' && e.name !== 'job'; }).forEach(function (e) {
       files['/src/services/' + e.name + '.js'] = B().serviceModule(e);
     });

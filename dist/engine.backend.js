@@ -33,10 +33,21 @@
       "async function list(query, user) {",
       "  const where = {};",
       "  for (const k of Object.keys(query || {})) if (!['limit', 'offset'].includes(k)) where[k] = query[k];",
-      owned ? "  if (user && user.role !== 'admin') where." + ownerField.name + " = user.id;" : "  // public listing",
+      owned ? "  // owned resource: a non-admin only ever sees their own rows; an" : "  // public listing",
+      owned ? "  // unauthenticated caller sees nothing (the route also requires auth)." : "",
+      owned ? "  if (!user) return { rows: [], total: 0 };" : "",
+      owned ? "  if (user.role !== 'admin') where." + ownerField.name + " = user.id;" : "",
       "  return db.list(ENTITY, { where, limit: query.limit, offset: query.offset });",
       "}",
-      "async function get(id) { return db.get(ENTITY, id); }",
+      owned
+        ? "async function get(id, user) {\n" +
+          "  const row = await db.get(ENTITY, id);\n" +
+          "  if (!row) return null;\n" +
+          "  if (user && user.role !== 'admin' && row." + ownerField.name + " !== user.id) throw Object.assign(new Error('forbidden'), { status: 403 });\n" +
+          "  if (!user && row." + ownerField.name + " != null) throw Object.assign(new Error('authentication required'), { status: 401 });\n" +
+          "  return row;\n" +
+          "}"
+        : "async function get(id) { return db.get(ENTITY, id); }",
       "async function create(input, user) {",
       "  const data = Object.assign({}, input);",
       owned ? "  data." + ownerField.name + " = user.id;" : "",
@@ -184,9 +195,10 @@
       lines.push("    await auth.attachUser(req);");
       lines.push("    if (seg[0] === 'api' && seg[1] === 'auth') {");
       lines.push("      if (seg[2] === 'register' && req.method === 'POST') { const b = await readBody(req); return send(res, 201, await auth.register(b.email, b.password)); }");
-      lines.push("      if (seg[2] === 'login' && req.method === 'POST') { const b = await readBody(req); return send(res, 200, await auth.login(b.email, b.password)); }");
+      lines.push("      if (seg[2] === 'login' && req.method === 'POST') { const b = await readBody(req); return send(res, 200, await auth.login(b.email, b.password, b.code)); }");
       lines.push("      if (seg[2] === 'logout' && req.method === 'POST') { return send(res, 200, await auth.logout(auth.bearer(req))); }");
       lines.push("      if (seg[2] === 'me' && req.method === 'GET') { return send(res, 200, { user: req.user || null }); }");
+      lines.push("      if (await auth.route(seg, req, res, { send, readBody: () => readBody(req), query: q })) return;");
       lines.push("      return send(res, 404, { error: 'not found' });");
       lines.push("    }");
     }
@@ -202,10 +214,10 @@
     lines.push("      const r = map[seg[1]];");
     lines.push("      if (r) {");
     lines.push("        const id = seg[2];");
-    lines.push("        if (!id && req.method === 'GET') return send(res, 200, await span(req, r.ent + '.list', () => r.svc.list(q, " + (withAuth ? "req.user" : "null") + ")));");
+    lines.push("        if (!id && req.method === 'GET') { " + (withAuth ? "if (r.svc.owned) auth.requireAuth(req); " : "") + "return send(res, 200, await span(req, r.ent + '.list', () => r.svc.list(q, " + (withAuth ? "req.user" : "null") + "))); }");
     if (withAuth) lines.push("        if (!id && req.method === 'POST') { auth.requireAuth(req); const _b = await readBody(req); return send(res, 201, await span(req, r.ent + '.create', () => r.svc.create(_b, req.user))); }");
     else lines.push("        if (!id && req.method === 'POST') { const _b = await readBody(req); return send(res, 201, await span(req, r.ent + '.create', () => r.svc.create(_b, null))); }");
-    lines.push("        if (id && req.method === 'GET') { const row = await span(req, r.ent + '.get', () => r.svc.get(id)); return row ? send(res, 200, row) : send(res, 404, { error: 'not found' }); }");
+    lines.push("        if (id && req.method === 'GET') { " + (withAuth ? "if (r.svc.owned) auth.requireAuth(req); " : "") + "const row = await span(req, r.ent + '.get', () => r.svc.get(id, " + (withAuth ? "req.user" : "null") + ")); return row ? send(res, 200, row) : send(res, 404, { error: 'not found' }); }");
     lines.push("        if (id && (req.method === 'PUT' || req.method === 'PATCH')) { " + (withAuth ? "auth.requireAuth(req); " : "") + "const _b = await readBody(req); const row = await span(req, r.ent + '.update', () => r.svc.update(id, _b, " + (withAuth ? "req.user" : "null") + ")); return row ? send(res, 200, row) : send(res, 404, { error: 'not found' }); }");
     lines.push("        if (id && req.method === 'DELETE') { " + (withAuth ? "auth.requireAuth(req); " : "") + "const ok = await span(req, r.ent + '.remove', () => r.svc.remove(id, " + (withAuth ? "req.user" : "null") + ")); return send(res, ok ? 200 : 404, { ok }); }");
     lines.push("      }");
@@ -218,7 +230,7 @@
     lines.push("      return send(res, 200, fs.readFileSync(f, 'utf8'), MIME[path.extname(f)] || 'text/plain');");
     lines.push("    send(res, 404, { error: 'not found' });");
     lines.push("  } catch (e) {");
-    lines.push("    send(res, e.status || 500, { error: String(e.message || e) });");
+    lines.push("    send(res, e.status || 500, e.code ? { error: String(e.message || e), code: e.code } : { error: String(e.message || e) });");
     lines.push("  }");
     lines.push("});");
     lines.push("");

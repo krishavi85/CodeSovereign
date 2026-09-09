@@ -489,6 +489,10 @@
     /* ---- the shape of the thing ---- */
     var wantsAuth = /\b(account|accounts|sign ?up|sign ?in|log ?in|auth|users?|role|permission|rbac|tenant)\b/.test(lc);
     var wantsRBAC = /\b(role|roles|rbac|permission|admin|manager|owner|access control)\b/.test(lc);
+    // §16 — authentication methods beyond password
+    var wantsMFA = /\b(mfa|2fa|two[- ]?factor|multi[- ]?factor|totp|authenticator app|one[- ]?time (code|password)|otp\b)\b/.test(lc);
+    var wantsOAuth = /\b(oauth|sso\b|single sign[- ]?on|social (login|sign[- ]?in|auth)|sign ?in with (google|github|apple|microsoft)|log ?in with (google|github)|google (login|sign[- ]?in)|github (login|sign[- ]?in))\b/.test(lc);
+    var wantsPasskeys = /\b(passkey|passkeys|webauthn|web ?authn|fido2?|biometric (login|auth)|face ?id login|touch ?id login|security key)\b/.test(lc);
     var wantsJobs = /\b(job|jobs|queue|worker|background|reminder|reminders|email|notification|notifications|schedule|cron|digest|async)\b/.test(lc);
     var wantsApi = /\b(api|rest|endpoint|endpoints|integrat)\b/.test(lc) || classification.primaryType === 'api_service';
     var wantsA11y = /\b(accessib|a11y|wcag|screen reader)\b/.test(lc);
@@ -700,6 +704,11 @@
     sec('No secret, token or credential is committed to source.');
     if (wantsAuth) sec('Passwords are stored only as a slow salted hash (scrypt).', (reqs.find(function (r) { return /password hash/i.test(r.statement); }) || {}).id);
     if (wantsAuth) sec('Every mutating API route requires an authenticated session.');
+    if (wantsAuth) sec('A user can only read and modify their own rows; cross-user (IDOR) access is rejected.');
+    if (wantsRBAC) sec('Privileged routes reject a non-admin session (no privilege escalation).');
+    if (wantsAuth && wantsMFA) sec('When TOTP MFA is enrolled, login is not complete until a valid 6-digit code is supplied.');
+    if (wantsAuth && wantsOAuth) sec('OAuth client secrets are read from the environment only, never stored in source or the database.');
+    if (wantsAuth && wantsPasskeys) sec('A passkey assertion signature is verified against the stored credential public key before a session is issued.');
     sec('User input is validated at the API boundary; no SQL is built by string concatenation.');
     sec('The API applies per-IP rate limiting.');
 
@@ -727,6 +736,7 @@
         database: storage.choice, api: apiStyle, websocket: wantsWs,
         architecture: wantsMicroservices ? 'multi-service' : 'monolith',
         jobs: wantsJobs, auth: wantsAuth, rbac: wantsRBAC, deploy: wantsDocker,
+        authMethods: { password: wantsAuth, mfa: wantsAuth && wantsMFA, oauth: wantsAuth && wantsOAuth, passkeys: wantsAuth && wantsPasskeys },
         deployTargets: deployTargetsFor(lc)
       },
       capabilitiesReference: SUPPORTED,
