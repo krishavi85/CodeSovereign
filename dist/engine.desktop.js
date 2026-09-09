@@ -68,13 +68,30 @@
       '', '[build-dependencies]', 'tauri-build = { version = "2", features = [] }',
       '', '[dependencies]', 'tauri = { version = "2", features = [] }', 'serde = { version = "1", features = ["derive"] }', 'serde_json = "1"', ''
     ].join('\n');
-    out['/src-tauri/build.rs'] = 'fn main() {\n    tauri_build::build()\n}\n';
+    // build.rs writes a minimal valid icon set if none exists, so `cargo check`
+    // / `cargo build` succeed on a fresh checkout without a design pass.
+    out['/src-tauri/build.rs'] = [
+      'use std::{fs, path::Path};',
+      '',
+      'const ICO: &[u8] = &[0,0,1,0,1,0,1,1,0,0,1,0,32,0,48,0,0,0,22,0,0,0,40,0,0,0,1,0,0,0,2,0,0,0,1,0,32,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,216,78,29,0,0,0,0];',
+      "const PNG: &[u8] = &[137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,1,0,0,0,1,8,6,0,0,0,31,21,196,137,0,0,0,13,73,68,65,84,120,156,99,248,207,192,240,31,0,5,5,2,0,221,239,213,240,0,0,0,0,73,69,78,68,174,66,96,130];",
+      '',
+      'fn main() {',
+      '    let dir = Path::new("icons");',
+      '    let _ = fs::create_dir_all(dir);',
+      '    for (name, bytes) in [("icon.ico", ICO), ("icon.png", PNG), ("32x32.png", PNG), ("128x128.png", PNG), ("128x128@2x.png", PNG)] {',
+      '        let p = dir.join(name);',
+      '        if !p.exists() { let _ = fs::write(p, bytes); }',
+      '    }',
+      '    tauri_build::build()',
+      '}', ''
+    ].join('\n');
     out['/src-tauri/tauri.conf.json'] = JSON.stringify({
       $schema: 'https://schema.tauri.app/config/2',
       productName: s.title, version: '0.1.0', identifier: s.identifier,
       build: { frontendDist: '../', devUrl: 'http://localhost:1420' },
       app: { windows: [{ title: s.title, width: 900, height: 640, resizable: true }], security: { csp: null } },
-      bundle: { active: true, targets: 'all' }
+      bundle: { active: true, targets: 'all', icon: ['icons/32x32.png', 'icons/128x128.png', 'icons/128x128@2x.png', 'icons/icon.ico'] }
     }, null, 2) + '\n';
     out['/src-tauri/src/lib.rs'] = [
       '#[tauri::command]',

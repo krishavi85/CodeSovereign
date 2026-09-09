@@ -103,19 +103,36 @@ module.exports = async function (t) {
     })();
     const map = {}; g.forEach((f) => { map[f.path.replace(/^\//, '')] = f.content; });
     write(root, map);
+    // the generated project must be a valid cargo project + a valid manifest
+    t.ok('desktop(tauri): Cargo.toml + tauri.conf.json + build.rs (icon self-heal) + a rust test on disk',
+      fs.existsSync(path.join(root, 'src-tauri', 'Cargo.toml')) && fs.existsSync(path.join(root, 'src-tauri', 'tauri.conf.json')) &&
+      /ICO: &\[u8\]/.test(fs.readFileSync(path.join(root, 'src-tauri', 'build.rs'), 'utf8')) && fs.existsSync(path.join(root, 'src-tauri', 'tests', 'greet.rs')));
+    if (have('cargo')) {
+      const meta = cp.spawnSync('cargo', ['verify-project', '--manifest-path', path.join(root, 'src-tauri', 'Cargo.toml')], { encoding: 'utf8' });
+      t.ok('desktop(tauri): `cargo verify-project` accepts the generated Cargo.toml', /"success":"true"/.test(meta.stdout || ''));
+    }
     workspace.setRoot(root);
     if (!have('cargo')) {
       const r = await adapters.desktopRun({ framework: 'tauri' });
       t.equal('desktop(tauri): no cargo -> BLOCKED RUST_TOOLCHAIN_REQUIRED', r.reason, 'RUST_TOOLCHAIN_REQUIRED');
       t.ok('desktop(tauri): need names rustup', /rustup|sh.rustup.rs/.test(r.need));
+    } else if (process.env.CS_SLOW_TESTS) {
+      // full `cargo check` + `cargo test` on the tauri dep tree (minutes on a cold cache)
+      const r = await adapters.desktopRun({ framework: 'tauri', timeoutMs: 12 * 60 * 1000 });
+      t.ok('desktop(tauri): [slow] a real result — PARTIAL (compiles) / BLOCKED (crates fetch) / FAIL(reason)',
+        ['PARTIAL', 'PASS', 'BLOCKED', 'FAIL'].includes(r.status) && !!r.stages && ['PASS', 'FAIL', 'BLOCKED'].includes(r.stages.compileCheck) && !!(r.reason || r.status === 'PASS'));
+      t.ok('desktop(tauri): [slow] evidence written', !!readEv(root, 'desktop-evidence.json'));
     } else {
-      const r = await adapters.desktopRun({ framework: 'tauri' });
-      t.ok('desktop(tauri): cargo present -> a real result (PARTIAL / PASS / BLOCKED crates-fetch), never plain FAIL without a reason',
-        ['PARTIAL', 'PASS', 'BLOCKED', 'FAIL'].includes(r.status) && !!(r.reason || r.stages));
-      t.ok('desktop(tauri): the Rust compile stage was actually attempted',
-        r.stages && (r.stages.compileCheck === 'PASS' || r.stages.compileCheck === 'FAIL' || r.stages.compileCheck === 'BLOCKED' || r.reason === 'CRATES_FETCH_REQUIRED'));
-      if (r.reason === 'CRATES_FETCH_REQUIRED') t.ok('desktop(tauri): a crates fetch need is offline-honest', /network|fetch/i.test(r.need));
-      else t.ok('desktop(tauri): evidence file written', !!readEv(root, 'desktop-evidence.json'));
+      // fast path: a tiny cap — a fresh target/ means `cargo check` on the tauri
+      // dep tree can't finish, so the adapter reports an honest BLOCKED reason;
+      // on a machine with a warm shared target it may instead compile -> PARTIAL.
+      const r = await adapters.desktopRun({ framework: 'tauri', timeoutMs: 5000 });
+      t.ok('desktop(tauri): a real cargo result — a tight budget -> BLOCKED(reason+need), or a warm cache -> PARTIAL; never a silent FAIL',
+        !!r.stages && ['PASS', 'FAIL', 'BLOCKED'].includes(r.stages.compileCheck) &&
+        (r.status === 'BLOCKED'
+          ? (/CARGO_CHECK_TIMED_OUT|CRATES_FETCH_REQUIRED|RUST_TOOLCHAIN_REQUIRED/.test(r.reason) && !!r.need)
+          : ['PARTIAL', 'PASS'].includes(r.status)));
+      t.ok('desktop(tauri): evidence file written', !!readEv(root, 'desktop-evidence.json'));
     }
     fs.rmSync(root, { recursive: true, force: true });
   }

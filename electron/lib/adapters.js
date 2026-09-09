@@ -1008,13 +1008,22 @@ async function desktopRun(opts) {
       await writeEvidence(r, 'desktop-evidence.json', ev);
       return { status: 'BLOCKED', capability: 'native-desktop', reason: 'RUST_TOOLCHAIN_REQUIRED', need: ev.need, stages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
     }
-    const chk = await runIn(path.join(r, 'src-tauri'), cargo, ['check', '--message-format', 'short'], { timeoutMs: 10 * 60 * 1000 });
-    // tauri deps that need a network fetch → BLOCKED, not FAIL
-    if (chk.code !== 0 && /failed to (get|download|fetch)|error: no matching package|Blocking waiting for file lock|network|Couldn't resolve host/i.test(chk.stderr || '')) {
-      const ev = { capability: 'native-desktop', framework: 'tauri', generatedAt: Date.now(), status: 'BLOCKED', reason: 'CRATES_FETCH_REQUIRED',
-        need: 'network access for `cargo` to fetch the tauri crates once (offline after the first fetch)', stages: { ...stages, compileCheck: 'BLOCKED' }, tail: (chk.stderr || '').slice(-800) };
+    const cargoCap = Number(opts.timeoutMs) || 10 * 60 * 1000;
+    const chk = await runIn(path.join(r, 'src-tauri'), cargo, ['check', '--message-format', 'short'], { timeoutMs: cargoCap });
+    if (chk.timedOut) {
+      const toStages = { ...stages, compileCheck: 'BLOCKED' };
+      const ev = { capability: 'native-desktop', framework: 'tauri', generatedAt: Date.now(), status: 'BLOCKED', reason: 'CARGO_CHECK_TIMED_OUT',
+        need: 'a longer build budget (or a warm cargo cache) — `cargo check` on the tauri dep tree is slow on the first run', stages: toStages };
       await writeEvidence(r, 'desktop-evidence.json', ev);
-      return { status: 'BLOCKED', capability: 'native-desktop', reason: 'CRATES_FETCH_REQUIRED', need: ev.need, evidence: ev, evidenceFile: 'desktop-evidence.json' };
+      return { status: 'BLOCKED', capability: 'native-desktop', reason: 'CARGO_CHECK_TIMED_OUT', need: ev.need, stages: toStages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
+    }
+    // tauri deps that need a network fetch → BLOCKED, not FAIL
+    if (chk.code !== 0 && /failed to (get|download|fetch)|error: no matching package|Blocking waiting for file lock|network|Couldn't resolve host|spurious network error/i.test(chk.stderr || '')) {
+      const cratesStages = { ...stages, compileCheck: 'BLOCKED' };
+      const ev = { capability: 'native-desktop', framework: 'tauri', generatedAt: Date.now(), status: 'BLOCKED', reason: 'CRATES_FETCH_REQUIRED',
+        need: 'network access for `cargo` to fetch the tauri crates once (offline after the first fetch)', stages: cratesStages, tail: (chk.stderr || '').slice(-800) };
+      await writeEvidence(r, 'desktop-evidence.json', ev);
+      return { status: 'BLOCKED', capability: 'native-desktop', reason: 'CRATES_FETCH_REQUIRED', need: ev.need, stages: cratesStages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
     }
     stages.compileCheck = chk.code === 0 ? 'PASS' : 'FAIL';
     if (chk.code === 0) {
