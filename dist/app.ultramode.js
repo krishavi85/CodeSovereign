@@ -147,6 +147,17 @@
       '</div>');
     h.push('<p class="cs-muted" style="font-size:12px;margin:0 0 8px">' + esc(st.prompt) + '</p>');
 
+    // §70 — the terse Ultra Mode command syntax, when the request used it
+    var _dsl = (run.contract && run.contract.dsl) || null;
+    if (_dsl && _dsl.syntax === 'ultra-command') {
+      h.push('<div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:0 0 8px">' +
+        '<span style="font:10px/1 JetBrains Mono,monospace;font-weight:700;color:#22d3ee;border:1px solid #22d3ee;border-radius:5px;padding:2px 6px">BUILD/TARGET/CONSTRAINTS</span>' +
+        (_dsl.target ? '<span class="cs-muted" style="font-size:11px">target: <code>' + esc(_dsl.target) + '</code></span>' : '') +
+        '<span class="cs-muted" style="font-size:11px">mode: <code>' + esc(_dsl.verifyMode || 'balanced') + '</code></span>' +
+        ((_dsl.constraints || []).length ? '<span class="cs-muted" style="font-size:11px">' + _dsl.constraints.length + ' constraint(s)</span>' : '') +
+        '</div>');
+    }
+
     // runtime target badge + adapter result
     if (st.target && st.target !== 'web') {
       var tgtColor = '#a78bfa';

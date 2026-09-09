@@ -84,6 +84,34 @@ module.exports = async function (t) {
     t.equal('contract: vue detected', vue.supportedStack.frontend, 'vue');
   }
 
+  /* ---------- 1b. the terse Ultra Mode command syntax (§70) ---------- */
+  {
+    const win = loadEngines(['engine-universal.js', 'engine.contract.js']);
+    const cmd = [
+      'BUILD: a task manager where a user signs in, creates projects and tasks, with role-based access',
+      'TARGET: extension',
+      'CONSTRAINTS: no external services, WCAG 2.1 AA, PostgreSQL only',
+      'MODE: strict'
+    ].join('\n');
+    const c = await win.Engine.Contract.deriveFromPrompt(cmd, { useLLM: false });
+    t.ok('DSL: recognised as the ultra-command syntax', c.dsl && c.dsl.syntax === 'ultra-command');
+    t.equal('DSL: TARGET: line pins contract.target', c.target, 'extension');
+    t.equal('DSL: MODE: strict recorded', c.dsl.verifyMode, 'strict');
+    t.ok('DSL: CONSTRAINTS parsed into a list', (c.dsl.constraints || []).length === 3 && c.dsl.constraints.indexOf('WCAG 2.1 AA') >= 0);
+    t.ok('DSL: BUILD text drives requirements (auth + rbac inferred)', c.supportedStack.auth === true && c.supportedStack.rbac === true);
+    t.ok('DSL: accessibility constraint folded into the prompt', /wcag|accessib/i.test(JSON.stringify(c.requirements)) || c.dsl.constraints.some((x) => /WCAG/i.test(x)));
+    t.equal('DSL: still a buildable contract', c.verdict, 'buildable');
+
+    // a plain prose request is untouched (dsl stays null)
+    const plain = await win.Engine.Contract.deriveFromPrompt('Build a small notes web app', { useLLM: false });
+    t.equal('DSL: plain prose is not treated as a command', plain.dsl, null);
+
+    // TARGET alias + no MODE
+    const c2 = await win.Engine.Contract.deriveFromPrompt('BUILD: an ERC-20 token\nTARGET: solidity', { useLLM: false });
+    t.equal('DSL: TARGET alias (solidity -> evm)', c2.target, 'evm');
+    t.equal('DSL: absent MODE defaults to balanced', c2.dsl.verifyMode, 'balanced');
+  }
+
   /* ---------- 2. React + Vue frontends generate + render ---------- */
   {
     const win = loadEngines(['engine.frontends.js']);

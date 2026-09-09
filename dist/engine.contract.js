@@ -314,9 +314,64 @@
     return ents;
   }
 
+  // §70 — the terse Ultra Mode command syntax. A request that leads with a
+  // `BUILD:` line (optionally followed by TARGET / CONSTRAINTS / MODE lines) is
+  // parsed as a structured declaration rather than free prose: BUILD becomes the
+  // objective, TARGET pins contract.target, CONSTRAINTS are folded into the text
+  // AND kept as an explicit list, MODE (strict|balanced) is recorded.
+  var DSL_TARGET_ALIAS = {
+    web: 'web', 'web app': 'web', webapp: 'web', spa: 'web', fullstack: 'web',
+    desktop: 'desktop', tauri: 'desktop', electron: 'desktop',
+    extension: 'extension', 'browser extension': 'extension', 'chrome extension': 'extension', mv3: 'extension',
+    ios: 'ios', iphone: 'ios', ipad: 'ios', swiftui: 'ios',
+    android: 'android', apk: 'android', kotlin: 'android',
+    evm: 'evm', solidity: 'evm', ethereum: 'evm', smartcontract: 'evm', 'smart contract': 'evm', web3: 'evm',
+    ml: 'ml-training', 'ml-training': 'ml-training', training: 'ml-training', model: 'ml-training', pytorch: 'ml-training'
+  };
+  function parseUltraDSL(text) {
+    var src = String(text || '');
+    if (!/^\s*BUILD\s*:/i.test(src)) return null;
+    var KEYS = 'BUILD|TARGET|CONSTRAINTS|CONSTRAINT|MODE|STACK|NOTES';
+    function grab(key) {
+      var re = new RegExp('(?:^|\\n)\\s*(?:' + key + ')\\s*:\\s*([\\s\\S]*?)(?=\\n\\s*(?:' + KEYS + ')\\s*:|$)', 'i');
+      var m = src.match(re);
+      return m ? m[1].trim() : null;
+    }
+    var build = grab('BUILD') || '';
+    var targetRaw = (grab('TARGET') || '').toLowerCase().trim();
+    var consRaw = grab('CONSTRAINTS') || grab('CONSTRAINT') || '';
+    var modeRaw = (grab('MODE') || '').toLowerCase().trim();
+    var stackRaw = grab('STACK') || '';
+    var notes = grab('NOTES') || '';
+    var target = null;
+    if (targetRaw) {
+      var tk = targetRaw.replace(/[_\s-]+/g, ' ').trim();
+      target = DSL_TARGET_ALIAS[tk] || DSL_TARGET_ALIAS[tk.replace(/\s+/g, '')] || (TARGET_META[targetRaw] ? targetRaw : null);
+    }
+    var constraints = consRaw
+      ? consRaw.split(/\n|;|,(?![^(]*\))/).map(function (s) { return s.replace(/^[-*\d.\s]+/, '').trim(); }).filter(Boolean)
+      : [];
+    var mode = /^(strict|hard|rigorous)$/.test(modeRaw) ? 'strict'
+      : /^(balanced|normal|default|lenient|soft)$/.test(modeRaw) ? 'balanced' : (modeRaw || null);
+    // reconstruct a natural-language prompt so the rest of the pipeline is unchanged
+    var prose = build;
+    if (stackRaw) prose += '. Stack: ' + stackRaw;
+    if (constraints.length) prose += '. Constraints: ' + constraints.join('; ') + '.';
+    if (notes) prose += ' ' + notes;
+    return { isDSL: true, prompt: prose.trim(), target: target, targetRaw: targetRaw || null, constraints: constraints, mode: mode, build: build };
+  }
+
   function deriveFromPrompt(prompt, opts) {
     opts = opts || {};
     prompt = String(prompt || '').trim();
+    // §70: a terse `BUILD:/TARGET:/CONSTRAINTS:/MODE:` command is parsed to a
+    // structured declaration before anything else touches the text.
+    var _dsl = parseUltraDSL(prompt);
+    if (_dsl) {
+      prompt = _dsl.prompt || prompt;
+      opts = Object.assign({}, opts, { _dsl: _dsl });
+      if (_dsl.target) opts._forceTarget = _dsl.target;
+    }
     // stage 1: fold an attached spec document (markdown / JSON schema / OpenAPI)
     // into the prompt so the rest of the pipeline sees it as prose intent, and
     // stash its parsed entities as an explicit hint for _derivePrompt.
@@ -362,7 +417,9 @@
     var lc = prompt.toLowerCase();
 
     /* ---- specialised runtime target (Engine.RuntimeRouter) ---- */
-    var target = detectTarget(prompt);
+    // an explicit DSL `TARGET:` pins it; otherwise infer from the prose.
+    var target = (opts._forceTarget && (opts._forceTarget === 'web' || TARGET_META[opts._forceTarget]))
+      ? opts._forceTarget : detectTarget(prompt);
     var targetMeta = TARGET_META[target] || null;
 
     /* ---- unsupported requests (recorded, never faked) ---- */
@@ -598,6 +655,10 @@
       generatedAt: Date.now(),
       source: 'prompt-rules',
       mode: 'from-prompt',
+      dsl: (opts._dsl && opts._dsl.isDSL)
+        ? { syntax: 'ultra-command', target: opts._dsl.target || null, targetRaw: opts._dsl.targetRaw,
+            constraints: opts._dsl.constraints, verifyMode: opts._dsl.mode || 'balanced' }
+        : null,
       product: {
         name: slugName(prompt),
         type: classification.primaryType,
