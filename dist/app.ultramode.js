@@ -17,6 +17,7 @@
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
   var poll = null;
   var draft = '';
+  var evSel = null;   // selected .sovereign/ artifact in the evidence browser
 
   var STATE_COLOR = {
     RECEIVED: '#7b859c', ANALYZING: '#22d3ee', NEEDS_INPUT: '#f59e0b', CONTRACT_READY: '#22d3ee',
@@ -59,6 +60,63 @@
       }).join('') + '</tbody></table>';
   }
 
+  function dodCard() {
+    var dod = null;
+    try { dod = window.Engine.DoD && window.Engine.DoD.load && window.Engine.DoD.load(); } catch (_) {}
+    if (!dod || !dod.criteria) return '';
+    var keys = Object.keys(dod.criteria);
+    var passed = keys.filter(function (k) { return dod.criteria[k] === true; }).length;
+    var label = dod.PASS ? 'ALL GATES PASS' : (dod.partial ? 'PARTIAL' : passed + '/' + keys.length);
+    var lc = dod.PASS ? 'var(--good)' : 'var(--warn,#f59e0b)';
+    return '<div class="card" style="padding:14px;margin:8px 0">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+      '<h3 class="cs-h3" style="margin:0">Definition of Done</h3>' +
+      '<span style="font:11px/1 JetBrains Mono,monospace;font-weight:700;color:' + lc + '">' + label + '</span></div>' +
+      '<div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px">' +
+      keys.map(function (k) {
+        var ok = dod.criteria[k] === true;
+        return '<div style="font-size:11.5px;display:flex;gap:7px;align-items:baseline">' +
+          '<span style="color:' + (ok ? 'var(--good)' : '#ef4444') + ';font-weight:700">' + (ok ? '✓' : '✗') + '</span>' +
+          '<span style="color:' + (ok ? '#c9cede' : 'var(--muted)') + '">' + esc(k.replace(/([A-Z])/g, ' $1').replace(/^./, function (c) { return c.toUpperCase(); })) + '</span></div>';
+      }).join('') + '</div></div>';
+  }
+
+  function certCard(st) {
+    var md = '';
+    try { md = window.Engine.Sovereign && window.Engine.Sovereign.read('release-certificate.md'); } catch (_) {}
+    if (!md) return '';
+    var open = (st.state === 'VERIFIED' || st.state === 'PARTIAL') ? ' open' : '';
+    return '<details class="card" style="padding:14px;margin:8px 0"' + open + '>' +
+      '<summary style="cursor:pointer;font-size:13px;font-weight:600">Sovereign Release Certificate</summary>' +
+      '<pre style="white-space:pre-wrap;font:11px/1.55 JetBrains Mono,monospace;color:#c9cede;margin:10px 0 0;max-height:320px;overflow:auto">' + esc(md) + '</pre></details>';
+  }
+
+  function evidenceStoreCard() {
+    var files = [];
+    try { files = (window.Engine.Sovereign && window.Engine.Sovereign.list && window.Engine.Sovereign.list()) || []; } catch (_) {}
+    if (!files.length) return '';
+    if (evSel && files.indexOf(evSel) < 0) evSel = null;
+    var body = '';
+    if (evSel) {
+      var val = '';
+      try {
+        var v = window.Engine.Sovereign.read(evSel);
+        val = (v == null) ? '(empty)' : (typeof v === 'string' ? v : JSON.stringify(v, null, 2));
+      } catch (e) { val = '(unreadable)'; }
+      body = '<pre style="white-space:pre-wrap;font:10.5px/1.55 JetBrains Mono,monospace;color:#c9cede;margin:10px 0 0;max-height:360px;overflow:auto;background:var(--bg-2);padding:10px;border-radius:6px">' + esc(val) + '</pre>';
+    }
+    return '<div class="card" style="padding:14px;margin:8px 0">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+      '<h3 class="cs-h3" style="margin:0">Evidence store</h3>' +
+      '<span class="cs-muted" style="font-size:11px">.sovereign/ · ' + files.length + ' artifact' + (files.length === 1 ? '' : 's') + '</span></div>' +
+      '<div style="display:flex;flex-wrap:wrap;gap:5px">' +
+      files.map(function (f) {
+        var on = f === evSel;
+        return '<button class="btn gm-ev" data-ev="' + esc(f) + '" style="padding:3px 9px;font:10.5px JetBrains Mono,monospace;' +
+          (on ? 'border-color:#22d3ee;color:#22d3ee' : '') + '">' + esc(f) + '</button>';
+      }).join('') + '</div>' + body + '</div>';
+  }
+
   function render() {
     var st = GM() ? GM().status() : { state: 'NONE' };
     var running = !st.terminal && st.state !== 'NONE' && st.state !== 'NEEDS_INPUT';
@@ -84,6 +142,7 @@
       (st.product ? '<span class="cs-muted">' + esc(st.product) + (st.verdict ? ' · ' + esc(st.verdict) : '') + '</span>' : '') +
       '<div style="flex:1"></div>' +
       (running ? '<button id="gmCancel" class="btn" style="padding:5px 12px;font-size:12px;border-color:#ef4444;color:#ef4444">Cancel</button>' : '') +
+      '<button id="gmExport" class="btn" style="padding:5px 12px;font-size:12px" title="Bundle the delivery archive (docs + evidence) as a .zip">Delivery archive</button>' +
       (st.terminal ? '<button id="gmNew" class="btn" style="padding:5px 12px;font-size:12px">New run</button>' : '') +
       '</div>');
     h.push('<p class="cs-muted" style="font-size:12px;margin:0 0 8px">' + esc(st.prompt) + '</p>');
@@ -176,6 +235,10 @@
     var et = evidenceTable(st);
     if (et) h.push('<div class="card" style="padding:14px;margin:8px 0"><h3 class="cs-h3" style="margin-bottom:4px">Evidence</h3>' + et + '</div>');
 
+    h.push(dodCard());
+    h.push(certCard(st));
+    h.push(evidenceStoreCard());
+
     h.push('</div>');
     return h.join('');
   }
@@ -226,6 +289,34 @@
     };
     var ide = main.querySelector('#gmOpenIde');
     if (ide) ide.onclick = function (e) { e.preventDefault(); window.S.screen = 'ide'; window.renderAll(); };
+
+    main.querySelectorAll('.gm-ev').forEach(function (b) {
+      b.onclick = function () { evSel = (evSel === b.dataset.ev) ? null : b.dataset.ev; try { window.renderAll(); } catch (_) {} };
+    });
+
+    var exp = main.querySelector('#gmExport');
+    if (exp) exp.onclick = function () {
+      var D = window.desktop && window.desktop.workspace;
+      if (D && D.exportDelivery) {
+        exp.disabled = true; exp.textContent = 'Exporting…';
+        D.exportDelivery().then(function (r) {
+          exp.disabled = false; exp.textContent = 'Delivery archive';
+          if (!r) return;                        // save dialog cancelled
+          if (r.ok === false || r.error) { window.toast && window.toast('Export failed: ' + (r.error || 'unknown'), '#ef4444'); return; }
+          var d = r.data || r;
+          window.toast && window.toast('Delivery archive → ' + (d.path || 'saved') + ' (' + (d.fileCount || '?') + ' files)', '#34d399');
+        }).catch(function (e) { exp.disabled = false; exp.textContent = 'Delivery archive'; window.toast && window.toast('Export failed: ' + (e && e.message || e), '#ef4444'); });
+      } else if (window.Engine && window.Engine.Delivery && window.Engine.Delivery.write) {
+        try {
+          var res = window.Engine.Delivery.write();
+          var n = (res && res.wrote && res.wrote.length) || 0;
+          window.toast && window.toast('Delivery bundle assembled into /delivery (' + n + ' files) — open a folder in the desktop app to save a .zip', '#22d3ee');
+          try { window.renderAll(); } catch (_) {}
+        } catch (e) { window.toast && window.toast('Delivery assembly failed: ' + (e && e.message || e), '#ef4444'); }
+      } else {
+        window.toast && window.toast('Delivery export needs the desktop app', '#f59e0b');
+      }
+    };
   }
 
   /* ---- inject a rail entry + intercept renderAll ---- */
