@@ -86,13 +86,23 @@ Helm/Terraform IaC.
 
 **Runtime-adapter targets** — native **Android** (`gradle assembleDebug` + a
 headless emulator + adb install/launch/screenshot/logcat), native **iOS**
-(xcodebuild + simulator on a macOS worker), **EVM smart contracts** (bundled
-`solc` + `@ethereumjs/vm` local deterministic chain — compile, deploy, run
-transactions, inspect receipts), and **ML model training** (a real `python
-train.py` run with a decreasing loss curve + a hashed checkpoint). Each
-generates a real artifact and verifies it in a real runtime; if this host lacks
-the runtime the run ends **BLOCKED** with the exact prerequisite —
-`support ≠ environment availability`. See
+(staged: source + static everywhere, xcodebuild/xcross/Theos for build/runtime),
+**EVM smart contracts** (bundled `solc` + `@ethereumjs/vm` local chain), **ML
+model training** (a real `python train.py` run), **native desktop** (Tauri —
+`cargo check` the Rust core; Electron — headless boot smoke + electron-forge),
+and **browser extensions** (MV3 — WXT / Plasmo / plain, static-validated +
+Playwright load-unpacked). Each generates a real artifact and verifies it in a
+real runtime; if this host lacks the runtime the run ends **BLOCKED** with the
+exact prerequisite — `support ≠ environment availability`.
+
+**Local proof, not hosted delivery** — `LOCAL CAPABILITY ≠ HOSTED-SERVICE
+DELIVERY`. Offline: local **Whisper** speech-to-text (`engine.audio.js`),
+**screenshot → component tree** by CV (`engine.vision.js`), **npm publish**
+proven via `npm pack` round-trip / Verdaccio (`engine.registry.js`), **artifact
+signing** — SHA-256 + SPDX SBOM + SLSA provenance + Cosign (`engine.signing.js`),
+**OpenTelemetry** to a local collector (`engine.observability.js`). Only the
+*final external publish* — npmjs.com, a signed GitHub Release, a hosted
+Sentry/APM account — needs the user's credentials. See
 [`docs/RUNTIME_ADAPTERS.md`](docs/RUNTIME_ADAPTERS.md) and
 [`docs/ULTRAMODE_CLOSED_LOOP.md`](docs/ULTRAMODE_CLOSED_LOOP.md).
 

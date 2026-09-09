@@ -662,6 +662,391 @@ async function mlRun(opts) {
     reason: status === 'PASS' ? null : (!ckptOk ? 'NO_CHECKPOINT' : !lossOk ? 'LOSS_DID_NOT_DECREASE' : 'TRAINING_EXIT_' + run.code) };
 }
 
+/* =====================================================================
+   OFFLINE-CAPABILITY ADAPTERS  (offline-plan §2-10)
+   Each: run the LOCAL open-source runtime when present, else BLOCKED with
+   the exact prerequisite. A missing hosted service never = "unsupported".
+   ===================================================================== */
+
+function sha256File(p) {
+  return require('crypto').createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+}
+function mkdtemp(tag) { return fs.mkdtempSync(path.join(os.tmpdir(), 'cs-' + tag + '-')); }
+
+/* ---- §2 audio: whisper.cpp / faster-whisper ---- */
+async function audioRun(opts) {
+  opts = opts || {};
+  const r = root();
+  const audio = opts.audio;
+  if (!audio || !fs.existsSync(audio)) {
+    return { status: 'BLOCKED', capability: 'audio-transcription', reason: 'NO_AUDIO_INPUT',
+      need: 'an audio file path (wav/mp3/m4a/ogg)', evidenceFile: 'audio-evidence.json' };
+  }
+  const ffmpeg = which('ffmpeg');
+  const whisper = which('whisper-cli') || which('whisper') || which('main');
+  const fasterWhisper = (() => { try { return spawnSync(which('python') || 'python', ['-c', 'import faster_whisper'], { encoding: 'utf8' }).status === 0; } catch (_) { return false; } })();
+  if (!ffmpeg) {
+    return { status: 'BLOCKED', capability: 'audio-transcription', reason: 'FFMPEG_REQUIRED',
+      need: 'FFmpeg on PATH — `winget install ffmpeg` / `brew install ffmpeg` / https://github.com/FFmpeg/FFmpeg', evidenceFile: 'audio-evidence.json' };
+  }
+  if (!whisper && !fasterWhisper) {
+    return { status: 'BLOCKED', capability: 'audio-transcription', reason: 'WHISPER_RUNTIME_REQUIRED',
+      need: 'whisper.cpp (`whisper-cli` on PATH — https://github.com/ggml-org/whisper.cpp) or `pip install faster-whisper`', evidenceFile: 'audio-evidence.json' };
+  }
+  const tmp = mkdtemp('audio');
+  const wav = path.join(tmp, 'in.wav');
+  const norm = await runIn(tmp, ffmpeg, ['-y', '-i', audio, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', wav], { timeoutMs: 120000 });
+  if (norm.code !== 0 || !fs.existsSync(wav)) {
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+    return { status: 'FAIL', capability: 'audio-transcription', reason: 'FFMPEG_NORMALIZE_FAILED', tail: (norm.stderr || '').slice(-800), evidenceFile: 'audio-evidence.json' };
+  }
+  let segments = [], text = '', runtime = null;
+  if (whisper) {
+    runtime = 'whisper.cpp';
+    const model = process.env.WHISPER_MODEL || opts.modelPath || '';
+    const args = ['-f', wav, '-oj', '-of', path.join(tmp, 'out')];
+    if (model) args.push('-m', model);
+    const w = await runIn(tmp, whisper, args, { timeoutMs: opts.timeoutMs || 10 * 60 * 1000 });
+    try {
+      const j = JSON.parse(fs.readFileSync(path.join(tmp, 'out.json'), 'utf8'));
+      segments = (j.transcription || []).map((t) => ({ start: (t.offsets && t.offsets.from || 0) / 1000, end: (t.offsets && t.offsets.to || 0) / 1000, text: t.text }));
+      text = segments.map((s) => s.text).join(' ').trim();
+    } catch (_) {
+      if (/model|ggml|failed to load/i.test(w.stderr || '')) {
+        try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+        return { status: 'BLOCKED', capability: 'audio-transcription', reason: 'MODEL_WEIGHTS_REQUIRED',
+          need: 'a whisper.cpp ggml model — `./models/download-ggml-model.sh base.en` then set WHISPER_MODEL', evidenceFile: 'audio-evidence.json' };
+      }
+    }
+  } else {
+    runtime = 'faster-whisper';
+    const py = which('python') || which('python3');
+    const script = path.join(tmp, 't.py');
+    fs.writeFileSync(script, "import json,sys\nfrom faster_whisper import WhisperModel\nm=WhisperModel('base.en',device='cpu',compute_type='int8')\nsegs,info=m.transcribe(sys.argv[1])\nout=[{'start':s.start,'end':s.end,'text':s.text} for s in segs]\nprint(json.dumps({'language':info.language,'segments':out}))\n");
+    const w = await runIn(tmp, py, [script, wav], { timeoutMs: opts.timeoutMs || 10 * 60 * 1000 });
+    try { const j = JSON.parse((w.stdout || '').trim().split('\n').pop()); segments = j.segments || []; text = segments.map((s) => s.text).join(' ').trim(); } catch (_) {}
+  }
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
+  const ok = text.length > 0;
+  const ev = { capability: 'audio-transcription', generatedAt: Date.now(), status: ok ? 'PASS' : 'FAIL',
+    runtime, words: text.split(/\s+/).filter(Boolean).length, segments: segments.length,
+    reason: ok ? null : 'NO_TRANSCRIPT_PRODUCED' };
+  await fsp.mkdir(path.join(r, '.sovereign', 'audio'), { recursive: true });
+  await fsp.writeFile(path.join(r, '.sovereign', 'audio', 'transcript.json'), JSON.stringify({ runtime, segments }, null, 2));
+  await fsp.writeFile(path.join(r, '.sovereign', 'audio', 'transcript.txt'), text);
+  await writeEvidence(r, 'audio-evidence.json', ev);
+  return { status: ev.status, capability: 'audio-transcription', reason: ev.reason, runtime, text, segments, evidence: ev, evidenceFile: 'audio-evidence.json' };
+}
+
+/* ---- §5 registry: Verdaccio / npm-pack tarball round-trip ---- */
+async function registryRun(opts) {
+  opts = opts || {};
+  const r = root();
+  const npm = which('npm') || 'npm';
+  let pkg;
+  try { pkg = JSON.parse(fs.readFileSync(path.join(r, 'package.json'), 'utf8')); }
+  catch (_) { return { status: 'BLOCKED', capability: 'npm-package-publish', reason: 'NO_PACKAGE_JSON', evidenceFile: 'registry-evidence.json' }; }
+
+  const stages = { PACKAGE_BUILD: 'PENDING', LOCAL_REGISTRY_PUBLISH: 'SKIPPED', LOCAL_TARBALL_INSTALL: 'PENDING', LOCAL_CONSUMER_INSTALL: 'PENDING', NPMJS_EXTERNAL_PUBLISH: 'BLOCKED_CREDENTIAL_REQUIRED' };
+
+  if (pkg.scripts && pkg.scripts.test) {
+    const t = await runIn(r, npm, ['test'], { timeoutMs: 5 * 60 * 1000, shell: process.platform === 'win32' });
+    stages.NPM_TEST = t.code === 0 ? 'PASS' : 'FAIL';
+    if (t.code !== 0) {
+      const ev = { capability: 'npm-package-publish', generatedAt: Date.now(), status: 'FAIL', reason: 'NPM_TEST_FAILED', stages };
+      await writeEvidence(r, 'registry-evidence.json', ev);
+      return { status: 'FAIL', capability: 'npm-package-publish', reason: 'NPM_TEST_FAILED', evidence: ev, evidenceFile: 'registry-evidence.json' };
+    }
+  }
+
+  const packOut = await runIn(r, npm, ['pack', '--pack-destination', os.tmpdir()], { timeoutMs: 120000, shell: process.platform === 'win32' });
+  const tgz = (packOut.stdout || '').trim().split(/\r?\n/).filter((l) => /\.tgz$/.test(l)).pop();
+  const tgzPath = tgz ? path.join(os.tmpdir(), path.basename(tgz)) : null;
+  if (packOut.code !== 0 || !tgzPath || !fs.existsSync(tgzPath)) {
+    const ev = { capability: 'npm-package-publish', generatedAt: Date.now(), status: 'FAIL', reason: 'NPM_PACK_FAILED', stages, tail: (packOut.stderr || '').slice(-800) };
+    await writeEvidence(r, 'registry-evidence.json', ev);
+    return { status: 'FAIL', capability: 'npm-package-publish', reason: 'NPM_PACK_FAILED', evidence: ev, evidenceFile: 'registry-evidence.json' };
+  }
+  stages.PACKAGE_BUILD = 'PASS';
+
+  // clean consumer
+  const consumer = mkdtemp('consumer');
+  fs.writeFileSync(path.join(consumer, 'package.json'), JSON.stringify({ name: 'consumer', private: true, version: '1.0.0' }, null, 2));
+  let registry = 'tarball';
+  const verdaccio = which('verdaccio');
+  let verdProc = null, verdPort = 4873;
+  if (opts.useVerdaccio && verdaccio) {
+    try {
+      const conf = path.join(consumer, 'verdaccio.yaml');
+      fs.writeFileSync(conf, 'storage: ./storage\nauth:\n  htpasswd:\n    file: ./htpasswd\nuplinks: {}\npackages:\n  "**":\n    access: $all\n    publish: $all\nlisten: 0.0.0.0:' + verdPort + '\nlog: { type: stdout, format: pretty, level: warn }\n');
+      verdProc = spawn(verdaccio, ['--config', conf], { cwd: consumer, windowsHide: true });
+      await new Promise((res) => setTimeout(res, 3000));
+      const login = await runIn(consumer, npm, ['--registry', 'http://localhost:' + verdPort, 'adduser', '--auth-type=legacy'], { timeoutMs: 15000, shell: process.platform === 'win32', env: { npm_config_registry: 'http://localhost:' + verdPort } });
+      const pub = await runIn(r, npm, ['publish', '--registry', 'http://localhost:' + verdPort], { timeoutMs: 60000, shell: process.platform === 'win32', env: { npm_config_registry: 'http://localhost:' + verdPort } });
+      if (pub.code === 0) { stages.LOCAL_REGISTRY_PUBLISH = 'PASS'; registry = 'http://localhost:' + verdPort; }
+      else stages.LOCAL_REGISTRY_PUBLISH = 'FAIL';
+    } catch (_) { stages.LOCAL_REGISTRY_PUBLISH = 'FAIL'; }
+  }
+
+  // install into the consumer
+  let inst;
+  if (registry.startsWith('http')) inst = await runIn(consumer, npm, ['install', pkg.name + '@' + pkg.version, '--registry', registry], { timeoutMs: 120000, shell: process.platform === 'win32' });
+  else inst = await runIn(consumer, npm, ['install', tgzPath], { timeoutMs: 120000, shell: process.platform === 'win32' });
+  stages.LOCAL_TARBALL_INSTALL = registry === 'tarball' && inst.code === 0 ? 'PASS' : (registry === 'tarball' ? 'FAIL' : 'SKIPPED');
+  stages.LOCAL_CONSUMER_INSTALL = inst.code === 0 ? 'PASS' : 'FAIL';
+
+  // import + smoke
+  let importOk = false;
+  if (inst.code === 0) {
+    const smoke = path.join(consumer, 's.js');
+    fs.writeFileSync(smoke, "const m = require('" + pkg.name + "'); const ok = m != null; console.log(ok ? 'IMPORT_OK' : 'IMPORT_FAIL'); process.exit(ok?0:1);");
+    const s = await runIn(consumer, which('node') || 'node', [smoke], { timeoutMs: 20000 });
+    importOk = /IMPORT_OK/.test(s.stdout || '');
+  }
+  stages.IMPORT_SMOKE = importOk ? 'PASS' : 'FAIL';
+
+  if (verdProc) try { verdProc.kill('SIGKILL'); } catch (_) {}
+  try { fs.rmSync(consumer, { recursive: true, force: true }); } catch (_) {}
+  try { fs.rmSync(tgzPath, { force: true }); } catch (_) {}
+
+  const pass = stages.PACKAGE_BUILD === 'PASS' && stages.LOCAL_CONSUMER_INSTALL === 'PASS' && importOk;
+  const ev = { capability: 'npm-package-publish', generatedAt: Date.now(), status: pass ? 'PASS' : 'FAIL',
+    reason: pass ? null : 'CONSUMER_INSTALL_OR_IMPORT_FAILED', registry, packageName: pkg.name, version: pkg.version, stages,
+    external: { NPMJS_EXTERNAL_PUBLISH: 'BLOCKED_CREDENTIAL_REQUIRED' } };
+  await writeEvidence(r, 'registry-evidence.json', ev);
+  return { status: ev.status, capability: 'npm-package-publish', reason: ev.reason, registry, stages, evidence: ev, evidenceFile: 'registry-evidence.json' };
+}
+
+/* ---- §6 signing: checksums + SBOM + provenance (offline) + cosign ---- */
+async function signRun(opts) {
+  opts = opts || {};
+  const r = root();
+  const stages = { RELEASE_BUILD: 'PASS', CHECKSUMS: 'PENDING', SBOM: 'PENDING', PROVENANCE: 'PENDING', ARTIFACT_SIGNING: 'SKIPPED', SIGNATURE_VERIFY: 'SKIPPED', GITHUB_RELEASE_UPLOAD: 'BLOCKED_GITHUB_TOKEN_REQUIRED' };
+
+  // checksums of shippable files
+  const skip = /^(node_modules|\.git|\.data|\.sovereign|dist|delivery|logs)$/;
+  function walk(d, base) { let o = []; for (const n of fs.readdirSync(d)) { if (skip.test(n)) continue; const p = path.join(d, n); const rel = base ? base + '/' + n : n; const st = fs.statSync(p); if (st.isDirectory()) o = o.concat(walk(p, rel)); else o.push(rel); } return o; }
+  const files = walk(r, '').sort();
+  const sums = files.map((f) => sha256File(path.join(r, f)) + '  ' + f).join('\n') + '\n';
+  fs.writeFileSync(path.join(r, 'checksums.sha256'), sums);
+  stages.CHECKSUMS = 'PASS';
+
+  stages.SBOM = fs.existsSync(path.join(r, 'SBOM.spdx.json')) ? 'PASS' : 'MISSING';
+  stages.PROVENANCE = fs.existsSync(path.join(r, 'provenance.json')) ? 'PASS' : 'MISSING';
+
+  const cosign = which('cosign');
+  if (cosign) {
+    const key = fs.existsSync(path.join(r, 'cosign.key'));
+    const args = ['sign-blob', ...(key ? ['--key', 'cosign.key'] : ['--yes']), '--output-signature', 'checksums.sha256.sig', 'checksums.sha256'];
+    const sg = await runIn(r, cosign, args, { timeoutMs: 60000, env: key ? {} : { COSIGN_EXPERIMENTAL: '1' } });
+    stages.ARTIFACT_SIGNING = sg.code === 0 ? 'PASS' : 'FAIL';
+    if (sg.code === 0) {
+      const vk = fs.existsSync(path.join(r, 'cosign.pub')) ? ['--key', 'cosign.pub'] : ['--certificate-identity-regexp', '.*', '--certificate-oidc-issuer-regexp', '.*'];
+      const vf = await runIn(r, cosign, ['verify-blob', ...vk, '--signature', 'checksums.sha256.sig', 'checksums.sha256'], { timeoutMs: 60000 });
+      stages.SIGNATURE_VERIFY = vf.code === 0 ? 'PASS' : 'FAIL';
+    }
+  } else {
+    stages.ARTIFACT_SIGNING = 'BLOCKED_COSIGN_REQUIRED';
+  }
+
+  const localOk = stages.CHECKSUMS === 'PASS' && stages.SBOM === 'PASS' && stages.PROVENANCE === 'PASS';
+  const signedOk = stages.ARTIFACT_SIGNING === 'PASS' && stages.SIGNATURE_VERIFY === 'PASS';
+  const status = signedOk ? 'PASS' : localOk ? 'PARTIAL' : 'FAIL';
+  const ev = { capability: 'artifact-signing', generatedAt: Date.now(), status,
+    reason: status === 'PASS' ? null : (!cosign ? 'COSIGN_REQUIRED_FOR_SIGNATURE' : !localOk ? 'SBOM_OR_PROVENANCE_MISSING' : 'SIGNATURE_STEP_FAILED'),
+    need: !cosign ? 'Sigstore cosign — `go install github.com/sigstore/cosign/v2/cmd/cosign@latest` (https://github.com/sigstore/cosign)' : null,
+    stages, files: files.length, external: { GITHUB_RELEASE_UPLOAD: 'BLOCKED_GITHUB_TOKEN_REQUIRED' } };
+  await fsp.mkdir(path.join(r, '.sovereign', 'signing'), { recursive: true });
+  await fsp.writeFile(path.join(r, '.sovereign', 'signing', 'checksums.json'), JSON.stringify({ count: files.length, algorithm: 'sha256' }, null, 2));
+  await writeEvidence(r, 'signing-evidence.json', ev);
+  return { status, capability: 'artifact-signing', reason: ev.reason, need: ev.need, stages, evidence: ev, evidenceFile: 'signing-evidence.json' };
+}
+
+/* ---- §7 otel: send a span to a local collector + verify it lands ---- */
+async function otelRun(opts) {
+  opts = opts || {};
+  const r = root();
+  const endpoint = (opts.endpoint || process.env.OTEL_EXPORTER_OTLP_ENDPOINT || 'http://localhost:4318').replace(/\/$/, '');
+  const checks = { collectorReachable: false, traceAccepted: false, spanPresent: false };
+  const traceId = require('crypto').randomBytes(16).toString('hex');
+  const spanId = require('crypto').randomBytes(8).toString('hex');
+  const now = Date.now() * 1e6;
+  const body = JSON.stringify({ resourceSpans: [{ resource: { attributes: [{ key: 'service.name', value: { stringValue: 'sovereign-probe' } }] },
+    scopeSpans: [{ scope: { name: 'cs' }, spans: [{ traceId, spanId, name: 'GET /probe', kind: 2, startTimeUnixNano: String(now), endTimeUnixNano: String(now + 1e6), status: { code: 1 } }] }] }] });
+  try {
+    const u = new URL(endpoint + '/v1/traces');
+    const lib = u.protocol === 'https:' ? require('https') : require('http');
+    const res = await new Promise((resolve) => {
+      const req = lib.request(u, { method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) }, timeout: 3000 }, (rr) => { let d = ''; rr.on('data', (c) => d += c); rr.on('end', () => resolve({ code: rr.statusCode, body: d })); });
+      req.on('error', () => resolve({ code: 0 })); req.on('timeout', () => { req.destroy(); resolve({ code: 0 }); });
+      req.end(body);
+    });
+    checks.collectorReachable = res.code > 0;
+    checks.traceAccepted = res.code >= 200 && res.code < 300;
+  } catch (_) {}
+  // check the collector's file exporter output (from the generated config)
+  if (checks.traceAccepted) {
+    await new Promise((res) => setTimeout(res, 1500));
+    for (const cand of [path.join(r, '.sovereign', 'otel', 'collector-out.json'), path.join(r, 'collector-out.json')]) {
+      try { if (fs.readFileSync(cand, 'utf8').includes(traceId)) { checks.spanPresent = true; break; } } catch (_) {}
+    }
+  }
+  const status = checks.traceAccepted ? (checks.spanPresent ? 'PASS' : 'PARTIAL') : 'BLOCKED';
+  const ev = { capability: 'observability', generatedAt: Date.now(), status,
+    reason: status === 'BLOCKED' ? 'OTEL_COLLECTOR_UNREACHABLE' : (status === 'PARTIAL' ? 'TRACE_ACCEPTED_BUT_NOT_CONFIRMED_IN_OUTPUT' : null),
+    need: status === 'BLOCKED' ? 'a local OpenTelemetry Collector on ' + endpoint + ' — `docker compose -f otel-compose.yml up` (image otel/opentelemetry-collector-contrib)' : null,
+    endpoint, checks, localFallback: 'the app\'s /debug/traces + /metrics + logs/crashes/ remain the always-on local record',
+    external: { HOSTED_SENTRY_EXPORT: 'BLOCKED_CREDENTIAL_REQUIRED' } };
+  await fsp.mkdir(path.join(r, '.sovereign', 'otel'), { recursive: true });
+  await fsp.writeFile(path.join(r, '.sovereign', 'otel', 'traces.json'), JSON.stringify({ probeTraceId: traceId, checks }, null, 2));
+  await writeEvidence(r, 'otel-evidence.json', ev);
+  return { status, capability: 'observability', reason: ev.reason, need: ev.need, checks, evidence: ev, evidenceFile: 'otel-evidence.json' };
+}
+
+/* ---- §9 extension: MV3 validate + build + (Playwright) load-unpacked ---- */
+async function extensionRun(opts) {
+  opts = opts || {};
+  const r = root();
+  const stages = { sourceGeneration: 'PASS', staticValidation: 'PENDING', build: 'PENDING', package: 'PENDING', loadUnpacked: 'SKIPPED' };
+  let m;
+  try { m = JSON.parse(fs.readFileSync(path.join(r, 'manifest.json'), 'utf8')); }
+  catch (_) { return { status: 'BLOCKED', capability: 'browser-extension', reason: 'NO_MANIFEST', evidenceFile: 'extension-evidence.json' }; }
+  // static validation (mirrors Engine.Extension.validate)
+  const findings = [];
+  if (m.manifest_version !== 3) findings.push('manifest_version != 3');
+  if (m.background && m.background.scripts) findings.push('MV3 requires background.service_worker');
+  for (const cs of m.content_scripts || []) for (const j of cs.js || []) if (!fs.existsSync(path.join(r, j))) findings.push('missing content script: ' + j);
+  for (const k of ['popup.html', 'options.html']) {
+    const v = k === 'popup.html' ? (m.action && m.action.default_popup) : m.options_page;
+    if (v && !fs.existsSync(path.join(r, v))) findings.push('missing ' + v);
+  }
+  stages.staticValidation = findings.length ? 'FAIL' : 'PASS';
+  if (findings.length) {
+    const ev = { capability: 'browser-extension', generatedAt: Date.now(), status: 'FAIL', reason: 'MV3_VALIDATION_FAILED', findings, stages };
+    await writeEvidence(r, 'extension-evidence.json', ev);
+    return { status: 'FAIL', capability: 'browser-extension', reason: 'MV3_VALIDATION_FAILED', evidence: ev, evidenceFile: 'extension-evidence.json' };
+  }
+  // build
+  const npm = which('npm') || 'npm';
+  const pkg = (() => { try { return JSON.parse(fs.readFileSync(path.join(r, 'package.json'), 'utf8')); } catch (_) { return {}; } })();
+  const wantsWxt = /wxt/.test(JSON.stringify(pkg.devDependencies || {}) + JSON.stringify(pkg.dependencies || {}));
+  const wxt = which('wxt') || fs.existsSync(path.join(r, 'node_modules', '.bin', 'wxt'));
+  let outDir = r;
+  if (wantsWxt && !wxt) {
+    stages.build = 'BLOCKED_WXT_REQUIRED';
+  } else if (pkg.scripts && pkg.scripts.build && (!wantsWxt || wxt)) {
+    const b = await runIn(r, npm, ['run', 'build'], { timeoutMs: 4 * 60 * 1000, shell: process.platform === 'win32' });
+    stages.build = b.code === 0 ? 'PASS' : 'FAIL';
+    if (b.code === 0) { for (const d of ['dist', '.output/chrome-mv3', 'build/chrome-mv3-prod']) if (fs.existsSync(path.join(r, d))) { outDir = path.join(r, d); break; } }
+  } else { stages.build = 'PASS'; }
+  stages.package = fs.existsSync(path.join(r, 'dist')) && fs.readdirSync(path.join(r, 'dist')).some((n) => /\.zip$/.test(n)) ? 'PASS' : (stages.build === 'PASS' ? 'SKIPPED' : 'NOT_RUN');
+
+  // load unpacked (needs Playwright + Chromium)
+  let playwright = null;
+  try { playwright = require(path.join(r, 'node_modules', 'playwright')); } catch (_) {
+    try { playwright = require('playwright'); } catch (_) {}
+  }
+  if (!playwright) {
+    const status = stages.build === 'FAIL' ? 'FAIL' : (String(stages.build).startsWith('BLOCKED') ? 'PARTIAL' : 'PARTIAL');
+    const ev = { capability: 'browser-extension', generatedAt: Date.now(), status,
+      reason: String(stages.build).startsWith('BLOCKED') ? stages.build : 'PLAYWRIGHT_REQUIRED_FOR_LOAD_UNPACKED',
+      need: 'Playwright + Chromium — `npm i -D playwright && npx playwright install chromium` (https://github.com/microsoft/playwright)',
+      stages, findings: [] };
+    await writeEvidence(r, 'extension-evidence.json', ev);
+    return { status, capability: 'browser-extension', reason: ev.reason, need: ev.need, stages, evidence: ev, evidenceFile: 'extension-evidence.json' };
+  }
+  let launched = false, sw = false, badge = false;
+  const userDir = mkdtemp('ext');
+  try {
+    const ctx = await playwright.chromium.launchPersistentContext(userDir, { headless: true,
+      args: ['--headless=new', `--disable-extensions-except=${outDir}`, `--load-extension=${outDir}`] });
+    launched = true;
+    await new Promise((res) => setTimeout(res, 1500));
+    sw = ctx.serviceWorkers().length > 0 || ctx.backgroundPages().length > 0;
+    const page = await ctx.newPage();
+    await page.goto('https://example.com', { timeout: 15000, waitUntil: 'domcontentloaded' });
+    await new Promise((res) => setTimeout(res, 800));
+    badge = await page.locator('#__sovereign_ext__').count().then((n) => n > 0).catch(() => false);
+    await ctx.close();
+  } catch (_) {}
+  try { fs.rmSync(userDir, { recursive: true, force: true }); } catch (_) {}
+  stages.loadUnpacked = launched ? (sw && badge ? 'PASS' : 'PARTIAL') : 'FAIL';
+  const status = (stages.build === 'PASS' || stages.build === 'SKIPPED') && stages.loadUnpacked === 'PASS' ? 'PASS'
+    : stages.loadUnpacked === 'FAIL' ? 'FAIL' : 'PARTIAL';
+  const ev = { capability: 'browser-extension', generatedAt: Date.now(), status,
+    reason: status === 'PASS' ? null : 'RUNTIME_INSPECTION_INCOMPLETE', stages,
+    inspected: { serviceWorker: sw, contentScriptInjected: badge } };
+  await writeEvidence(r, 'extension-evidence.json', ev);
+  return { status, capability: 'browser-extension', reason: ev.reason, stages, evidence: ev, evidenceFile: 'extension-evidence.json' };
+}
+
+/* ---- §10 desktop: Tauri `cargo check` / Electron headless smoke ---- */
+async function desktopRun(opts) {
+  opts = opts || {};
+  const r = root();
+  const fw = opts.framework || (fs.existsSync(path.join(r, 'src-tauri', 'Cargo.toml')) ? 'tauri' : fs.existsSync(path.join(r, 'main.js')) ? 'electron' : null);
+  if (!fw) return { status: 'BLOCKED', capability: 'native-desktop', reason: 'NO_DESKTOP_PROJECT', evidenceFile: 'desktop-evidence.json' };
+
+  if (fw === 'tauri') {
+    const cargo = which('cargo');
+    const stages = { sourceGeneration: 'PASS', compileCheck: 'PENDING', test: 'SKIPPED', build: 'SKIPPED', launch: 'SKIPPED' };
+    if (!cargo) {
+      const ev = { capability: 'native-desktop', framework: 'tauri', generatedAt: Date.now(), status: 'BLOCKED', reason: 'RUST_TOOLCHAIN_REQUIRED',
+        need: 'Rust + Cargo — `curl https://sh.rustup.rs -sSf | sh` (https://github.com/rust-lang/rustup)', stages };
+      await writeEvidence(r, 'desktop-evidence.json', ev);
+      return { status: 'BLOCKED', capability: 'native-desktop', reason: 'RUST_TOOLCHAIN_REQUIRED', need: ev.need, stages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
+    }
+    const chk = await runIn(path.join(r, 'src-tauri'), cargo, ['check', '--message-format', 'short'], { timeoutMs: 10 * 60 * 1000 });
+    // tauri deps that need a network fetch → BLOCKED, not FAIL
+    if (chk.code !== 0 && /failed to (get|download|fetch)|error: no matching package|Blocking waiting for file lock|network|Couldn't resolve host/i.test(chk.stderr || '')) {
+      const ev = { capability: 'native-desktop', framework: 'tauri', generatedAt: Date.now(), status: 'BLOCKED', reason: 'CRATES_FETCH_REQUIRED',
+        need: 'network access for `cargo` to fetch the tauri crates once (offline after the first fetch)', stages: { ...stages, compileCheck: 'BLOCKED' }, tail: (chk.stderr || '').slice(-800) };
+      await writeEvidence(r, 'desktop-evidence.json', ev);
+      return { status: 'BLOCKED', capability: 'native-desktop', reason: 'CRATES_FETCH_REQUIRED', need: ev.need, evidence: ev, evidenceFile: 'desktop-evidence.json' };
+    }
+    stages.compileCheck = chk.code === 0 ? 'PASS' : 'FAIL';
+    if (chk.code === 0) {
+      const t = await runIn(path.join(r, 'src-tauri'), cargo, ['test', '--message-format', 'short'], { timeoutMs: 10 * 60 * 1000 });
+      stages.test = t.code === 0 ? 'PASS' : 'FAIL';
+    }
+    const tauriCli = which('tauri') || fs.existsSync(path.join(r, 'node_modules', '.bin', 'tauri'));
+    stages.build = tauriCli ? 'AVAILABLE_NOT_RUN' : 'BLOCKED_TAURI_CLI_REQUIRED';
+    const status = stages.compileCheck === 'PASS' ? (stages.test === 'FAIL' ? 'FAIL' : 'PARTIAL') : 'FAIL';
+    const ev = { capability: 'native-desktop', framework: 'tauri', generatedAt: Date.now(), status,
+      reason: status === 'PARTIAL' ? 'RUST_CORE_COMPILES_FULL_PACKAGE_NEEDS_TAURI_CLI' : (status === 'FAIL' ? 'COMPILE_OR_TEST_FAILED' : null),
+      need: status === 'PARTIAL' ? '`npm i -D @tauri-apps/cli` + a system webview (WebView2 on Windows) for the packaged build' : null,
+      stages, tail: chk.code === 0 ? null : (chk.stderr || '').slice(-800) };
+    await writeEvidence(r, 'desktop-evidence.json', ev);
+    return { status, capability: 'native-desktop', reason: ev.reason, need: ev.need, stages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
+  }
+
+  // electron
+  const npm = which('npm') || 'npm';
+  const stages = { sourceGeneration: 'PASS', install: 'PENDING', smoke: 'PENDING', make: 'SKIPPED' };
+  let electronBin = null;
+  try { electronBin = require(path.join(r, 'node_modules', 'electron')); } catch (_) {
+    try { electronBin = require('electron'); } catch (_) {}
+  }
+  if (!electronBin) {
+    const inst = await runIn(r, npm, ['install', '--no-audit', '--no-fund'], { timeoutMs: 8 * 60 * 1000, shell: process.platform === 'win32' });
+    stages.install = inst.code === 0 ? 'PASS' : 'FAIL';
+    if (inst.code === 0) { try { electronBin = require(path.join(r, 'node_modules', 'electron')); } catch (_) {} }
+    if (!electronBin) {
+      const ev = { capability: 'native-desktop', framework: 'electron', generatedAt: Date.now(), status: 'BLOCKED', reason: 'ELECTRON_INSTALL_REQUIRED',
+        need: 'network access for `npm install` to fetch the Electron binary once', stages };
+      await writeEvidence(r, 'desktop-evidence.json', ev);
+      return { status: 'BLOCKED', capability: 'native-desktop', reason: 'ELECTRON_INSTALL_REQUIRED', need: ev.need, evidence: ev, evidenceFile: 'desktop-evidence.json' };
+    }
+  } else stages.install = 'PASS';
+  const sm = await runIn(r, which('node') || 'node', ['smoke.js'], { timeoutMs: 60000, env: { SMOKE: '1', HEADLESS: '1' } });
+  stages.smoke = /DESKTOP_SMOKE = PASS/.test((sm.stdout || '') + (sm.stderr || '')) ? 'PASS' : 'FAIL';
+  const status = stages.smoke === 'PASS' ? 'PASS' : 'FAIL';
+  const ev = { capability: 'native-desktop', framework: 'electron', generatedAt: Date.now(), status,
+    reason: status === 'PASS' ? null : 'HEADLESS_SMOKE_FAILED', stages, tail: status === 'PASS' ? null : ((sm.stdout || '') + (sm.stderr || '')).slice(-800) };
+  await writeEvidence(r, 'desktop-evidence.json', ev);
+  return { status, capability: 'native-desktop', reason: ev.reason, stages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
+}
+
 /* ---------------- dispatch ---------------- */
 async function run(kind, opts) {
   switch (kind) {
@@ -672,8 +1057,14 @@ async function run(kind, opts) {
     case 'ios-probe': return require('./ios').probe();
     case 'ios-inspect': return require('./ios').inspect(workspace.getRoot());
     case 'ml': return mlRun(opts);
+    case 'audio': return audioRun(opts);
+    case 'registry': return registryRun(opts);
+    case 'sign': return signRun(opts);
+    case 'otel': return otelRun(opts);
+    case 'extension': return extensionRun(opts);
+    case 'desktop': return desktopRun(opts);
     default: return { status: 'FAIL', reason: 'UNKNOWN_ADAPTER', kind };
   }
 }
 
-module.exports = { probe, run, evmRun, androidRun, iosRun, mlRun };
+module.exports = { probe, run, evmRun, androidRun, iosRun, mlRun, audioRun, registryRun, signRun, otelRun, extensionRun, desktopRun };

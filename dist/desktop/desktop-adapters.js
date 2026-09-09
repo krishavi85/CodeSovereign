@@ -64,6 +64,14 @@
       if (!desktop) return blocked('DESKTOP_REQUIRED', 'the ML training adapter (pytorch) runs in the desktop app');
       if (!hasWorkspace()) return blocked('NO_WORKSPACE', 'open the generated project folder first');
       return unwrap(D.adapters.run('ml', opts || {}));
+    },
+
+    // generic dispatch — used by the offline-capability adapters
+    // (audio / registry / sign / otel / extension / desktop) and any future kind
+    run: function (kind, opts) {
+      if (!desktop) return blocked('DESKTOP_REQUIRED', 'the "' + kind + '" runtime adapter runs in the desktop app through the local process bridge');
+      if (!hasWorkspace()) return blocked('NO_WORKSPACE', 'open the generated project folder first');
+      return unwrap(D.adapters.run(String(kind), opts || {}));
     }
   };
 

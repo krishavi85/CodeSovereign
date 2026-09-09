@@ -111,6 +111,13 @@
     'bootstrap-report.md':        'Readable environment-bootstrap summary',
     'release-notes.json':         'Release engineering — version, verdict, changelog + notes generation (spec §37)',
     'release-notes.md':           'The generated release announcement',
+    'audio-evidence.json':        'Offline speech-to-text (whisper.cpp / faster-whisper) — transcript + segments (offline-plan §2)',
+    'screenshot-analysis-evidence.json': 'Screenshot -> component tree via offline CV — regions, roles, palette (offline-plan §3)',
+    'signing-evidence.json':      'Artifact signing — checksums + SPDX SBOM + SLSA provenance offline; cosign when present (offline-plan §6)',
+    'otel-evidence.json':         'Observability — OTLP exporter wired + a local collector probe; /debug/traces is the always-on fallback (offline-plan §7)',
+    'registry-evidence.json':     'npm package publish proof — Verdaccio / npm-pack tarball round-trip into a clean consumer (offline-plan §5)',
+    'extension-evidence.json':    'Browser extension (MV3) — static validation + build + Playwright load-unpacked (offline-plan §9)',
+    'desktop-evidence.json':      'Native desktop (Tauri / Electron) — cargo check / headless boot smoke (offline-plan §10)',
     'documentation-index.json':   'Documentation factory — which docs were (re)generated + folded-in verification evidence (spec §49)',
     'documentation-report.md':    'Readable summary of the documentation factory run',
     'delivery-manifest.json':     'Delivery archive manifest — verdict, DoD result, per-file hashes, content hash (spec §19-20)',
@@ -687,6 +694,13 @@
 
     // ---- release engineering — changelog / notes / checksums (spec §37) ----
     safe(function () { window.Engine.Release && window.Engine.Release.analyze(); });
+
+    // ---- offline capability adapters (offline-plan §3-10): generate the local
+    //      proof artefacts (SBOM + provenance, OTLP exporter, screenshot CV) ----
+    safe(function () { window.Engine.Signing && window.Engine.Signing.analyze(); });
+    safe(function () { window.Engine.Observability && window.Engine.Observability.analyze(); });
+    safe(function () { window.Engine.Registry && window.Engine.Registry.analyze(); });
+    safe(function () { if (window.Engine.Vision && window.Engine.Sovereign.read('design-reference.txt')) { var vp = window.Engine.Vision.analyze(); if (vp && vp.catch) vp.catch(function () {}); } });
 
     // ---- decision ledger / ADRs (spec §57-58) — after the gate for the release decision ----
     safe(function () { window.Engine.Decisions && window.Engine.Decisions.analyze(); });

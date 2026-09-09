@@ -33,12 +33,13 @@
   var Engine = window.Engine || (window.Engine = {});
 
   var TARGETS = {
-    web:           { label: 'Web application',        adapter: 'web',     webPath: true },
-    desktop:       { label: 'Desktop application',    adapter: 'desktop', webPath: true },
-    android:       { label: 'Native Android app',     adapter: 'mobile',  webPath: false },
-    ios:           { label: 'Native iOS app',         adapter: 'mobile',  webPath: false },
+    web:           { label: 'Web application',        adapter: 'web',        webPath: true },
+    desktop:       { label: 'Desktop application (Tauri / Electron)', adapter: 'desktop', webPath: false },
+    extension:     { label: 'Browser extension (MV3)', adapter: 'extension', webPath: false },
+    android:       { label: 'Native Android app',     adapter: 'mobile',     webPath: false },
+    ios:           { label: 'Native iOS app',         adapter: 'mobile',     webPath: false },
     evm:           { label: 'Ethereum / EVM contracts', adapter: 'blockchain', webPath: false },
-    'ml-training': { label: 'ML model training',      adapter: 'ml',      webPath: false }
+    'ml-training': { label: 'ML model training',      adapter: 'ml',         webPath: false }
   };
 
   var REQUIREMENTS = {
@@ -61,12 +62,24 @@
       { tool: 'A dataset under dataset/ (for "train on our data")', why: 'there is no verifiable trained artifact without data', install: 'drop jsonl/csv/txt files in dataset/' },
       { tool: 'CUDA GPU (for large models)', why: 'full fine-tuning / pretraining needs VRAM; QLoRA/LoRA run smaller', install: 'https://pytorch.org/get-started/locally/' },
       { tool: 'Axolotl / TRL (optional, for LLM fine-tuning)', why: 'SFT / DPO / GRPO workflows', install: 'pip install axolotl-ai trl transformers datasets peft' }
+    ],
+    desktop: [
+      { tool: 'Rust + Cargo (Tauri)', why: '`cargo check` proves the Rust core compiles', install: 'curl https://sh.rustup.rs -sSf | sh  (https://github.com/rust-lang/rustup)' },
+      { tool: '@tauri-apps/cli + a system webview (WebView2 on Windows)', why: 'the packaged .app/.exe build', install: 'npm i -D @tauri-apps/cli' },
+      { tool: 'Electron (alternative)', why: 'headless boot smoke + electron-forge make', install: 'npm i -D electron @electron-forge/cli' }
+    ],
+    extension: [
+      { tool: 'zero deps for the plain path', why: 'static MV3 validation + a store-only zip run with nothing installed', install: 'ships with CodeSovereign' },
+      { tool: 'WXT / Plasmo (optional)', why: 'a bundled build with HMR', install: 'npm i -D wxt  (https://github.com/wxt-dev/wxt)' },
+      { tool: 'Playwright + Chromium', why: 'load the unpacked extension + drive the popup / content script / service worker', install: 'npm i -D playwright && npx playwright install chromium' }
     ]
   };
 
   // Prompt / contract -> target. Contract.deriveFromPrompt already sets .target;
   // this also works from a raw contract that predates that field.
   var TARGET_RE = [
+    ['extension', /\b(browser extension|chrome extension|firefox extension|edge extension|web ?extension|manifest v3|mv3 extension|content script|browser add-?on)\b/i],
+    ['desktop', /\b(desktop app(?:lication)?|native desktop|tauri app|electron app|menu ?bar app|system tray app|cross-platform desktop)\b/i],
     ['ios', /\b(swift ?ui|swiftui|\bswift\b|xcode|\.ipa\b|app ?store\b|iphone app|ipad app|ios app|ios-only|for ios)\b/i],
     ['android', /\b(android app|android application|\.apk\b|play ?store|jetpack compose|android kotlin|kotlin android|native android|react native|flutter|expo|native mobile|mobile app(?! ?builder)|mobile-only)\b/i],
     ['evm', /\b(smart contract|solidity|\bevm\b|erc-?20|erc-?721|erc-?1155|nft (mint|contract|collection)|on-chain|web3 (dapp|app|contract)|foundry|hardhat|defi protocol|dao contract|token contract)\b/i],
@@ -88,6 +101,8 @@
     if (t.adapter === 'blockchain') return Engine.Blockchain || null;
     if (t.adapter === 'mobile') return Engine.Mobile || null;
     if (t.adapter === 'ml') return Engine.ML || null;
+    if (t.adapter === 'desktop') return Engine.Desktop || null;
+    if (t.adapter === 'extension') return Engine.Extension || null;
     return null;
   }
 
@@ -103,7 +118,10 @@
         return { available: !!node.available, canRun: canKey ? !!node[canKey] : !!node.available, detail: node };
       }
       out.web = { available: true, canRun: !!(window.desktop && window.desktop.isDesktop) };
-      out.desktop = out.web;
+      // desktop + extension: generation + static validation run everywhere; the
+      // build/launch stages need a toolchain (cargo / electron / playwright).
+      out.desktop = { available: true, canRun: !!(h.host && (h.host.cargo || h.host.electron)) };
+      out.extension = { available: true, canRun: !!(window.desktop && window.desktop.isDesktop) };
       out.evm = shape('evm', h.evm);
       out.android = shape('android', h.android, 'canRun');
       out.ios = shape('ios', h.ios, 'canRun');

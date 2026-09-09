@@ -523,7 +523,7 @@
           // Persist the adapter evidence into the Sovereign store (the real adapter
           // already wrote it to .sovereign/ on disk; this keeps the in-memory store
           // and any resumed run consistent, and feeds Engine.DoD).
-          var evFile = res.evidenceFile || ({ evm: 'blockchain-evidence.json', android: 'mobile-evidence.json', ios: 'mobile-ios-evidence.json', 'ml-training': 'ml-evidence.json' })[run.target];
+          var evFile = res.evidenceFile || ({ evm: 'blockchain-evidence.json', android: 'mobile-evidence.json', ios: 'mobile-ios-evidence.json', 'ml-training': 'ml-evidence.json', desktop: 'desktop-evidence.json', extension: 'extension-evidence.json' })[run.target];
           if (evFile && res.evidence && S()) {
             try { S().write(evFile, res.evidence); } catch (_) {}
             // iOS: also mirror a generic mobile-evidence.json so the DoD/UI generic path sees it

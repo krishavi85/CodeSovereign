@@ -1,6 +1,9 @@
-# Runtime adapters — native mobile, ML training, blockchain
+# Runtime adapters — native mobile · ML · blockchain · desktop · extension · audio · vision · registry · signing · OTel
 
-_Implements `CodeSovereign_Three_Blocked_Capabilities_Master_Plan`._
+_Implements `CodeSovereign_Three_Blocked_Capabilities_Master_Plan` and
+`CodeSovereign_Offline_Capability_Completion_Plan` (LOCAL CAPABILITY ≠
+HOSTED-SERVICE DELIVERY — a capability is proven against a local / self-hosted
+open-source runtime; only the final external publish step is credential-gated)._
 
 ## The principle
 
@@ -30,7 +33,7 @@ differs by target; the honesty standard does not.
 
 | API | |
 |---|---|
-| `targetOf(contract)` | prompt/contract → `web` \| `android` \| `ios` \| `evm` \| `ml-training` |
+| `targetOf(contract)` | prompt/contract → `web` \| `desktop` \| `extension` \| `android` \| `ios` \| `evm` \| `ml-training` |
 | `requirements(target)` | `[{ tool, why, install }]` for that target |
 | `probe(target?)` | this host's capability for the target (`available`, `canRun`, `missing[]`) |
 | `route(contract)` | `{ target, adapter, engine, webPath, requirements }` |
@@ -193,3 +196,28 @@ adapter and confirmed on this machine.
 `solc`, `@ethereumjs/vm`, `@ethereumjs/tx`, `@ethereumjs/common`,
 `@ethereumjs/util` — all pure JavaScript, bundled with the desktop app, so the
 local chain needs no external toolchain.
+
+---
+
+## Offline-capability adapters (`CodeSovereign_Offline_Capability_Completion_Plan`)
+
+Same standard, different runtimes. Nothing hosted; a missing local runtime →
+`BLOCKED <REASON>` + the install command. Only the *final external publish* is
+credential-gated.
+
+| Capability | Engine | Local runtime | Runs offline here | External-only step |
+|---|---|---|---|---|
+| Audio → transcript | `engine.audio.js` + `adapters.audioRun` | `ffmpeg` + whisper.cpp / faster-whisper | BLOCKED (no ffmpeg/whisper on this host) with the exact reason | — |
+| Screenshot → component tree | `engine.vision.js` | offscreen-canvas CV (connected components, classification, containment tree, layout graph, HTML reconstruction) + `Engine.VisualCheck.fidelity` render-and-compare | ✅ (proven in a real browser: a synthetic 3-band image segmented exactly) | full model-grade component inference |
+| npm package publish | `engine.registry.js` + `adapters.registryRun` | Verdaccio, or `npm pack` → clean-consumer `npm install <tarball>` → `require()` | ✅ real round-trip (`test/adapters-offline.test.js`) | `npm publish` to npmjs.com — `BLOCKED_CREDENTIAL_REQUIRED` |
+| Artifact signing | `engine.signing.js` + `adapters.signRun` | SHA-256 + SPDX-2.3 SBOM + SLSA provenance (no tool) · `cosign sign-blob`/`verify-blob` when present | ✅ checksums + SBOM + provenance for real; PARTIAL without cosign | signed GitHub Release upload — `BLOCKED_GITHUB_TOKEN_REQUIRED` |
+| OpenTelemetry | `engine.observability.js` + `adapters.otelRun` | dependency-free OTLP/HTTP exporter (`src/otel.js`) → a local OTel Collector; `/debug/traces` + `/metrics` + `logs/crashes/` are the always-on fallback | ✅ real network probe → BLOCKED with the collector command when none is up | hosted Sentry/APM DSN — `BLOCKED_CREDENTIAL_REQUIRED` |
+| Native desktop | `engine.desktop.js` + `adapters.desktopRun` | Tauri: `cargo check` + `cargo test` (Rust core) · Electron: headless boot smoke + electron-forge | ✅ `cargo check` runs on this host; packaged bundle BLOCKED `<TOOL>_REQUIRED` | — |
+| Browser extension | `engine.extension.js` + `adapters.extensionRun` | MV3 static validation + a store-only zip (zero deps) + Playwright + Chromium load-unpacked | ✅ validate + zip + Playwright load-unpacked | Chrome Web Store submission |
+
+`Engine.RuntimeRouter` exposes `desktop` and `extension` as first-class targets
+(`contract.target`); the DoD has a **staged** `targetEvaluate` for them (like iOS:
+generation + compile/validation PASS everywhere; packaged-build / runtime-
+inspection stages may be host-limited → `SOVEREIGN VERIFIED — PARTIAL`). The
+non-target capabilities (audio / vision / registry / signing / otel) attach to a
+web build and fold into `Sovereign.analyze()` + the `/delivery/` archive.

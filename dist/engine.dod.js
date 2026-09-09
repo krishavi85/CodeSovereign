@@ -91,9 +91,61 @@
     return dod;
   }
 
+  // desktop (Tauri/Electron) + browser extension — a staged model like iOS:
+  // generation + static validation run everywhere; the packaged build / load-
+  // unpacked stages may be host-limited (BLOCKED, not FAIL).
+  function stagedTargetEvaluate(contract) {
+    var target = contract.target;
+    var evName = target === 'desktop' ? 'desktop-evidence.json' : 'extension-evidence.json';
+    var ev = j(evName) || {};
+    var st = ev.stages || {};
+    var arch = j('architecture-findings.json'), priv = j('privacy-findings.json'), secR = j('security-findings.json');
+    function g(v) { return v === true; }
+    var vals = Object.keys(st).map(function (k) { return st[k]; });
+    var anyFail = vals.indexOf('FAIL') >= 0;
+    var genPass = st.sourceGeneration === 'PASS' || st.staticValidation === 'PASS' || st.compileCheck === 'PASS';
+    var validationPass = st.staticValidation !== 'FAIL' && st.compileCheck !== 'FAIL';
+    var runtimePass = target === 'desktop'
+      ? (st.launch === 'PASS' || st.smoke === 'PASS' || st.build === 'AVAILABLE_NOT_RUN' || String(st.build || '').indexOf('BLOCKED') === 0 || st.test !== 'FAIL')
+      : (st.loadUnpacked === 'PASS' || st.loadUnpacked === 'PARTIAL' || st.loadUnpacked === 'SKIPPED' || String(st.build || '').indexOf('BLOCKED') === 0);
+    var criteria = {
+      artifactGenerated: g(!!ev.status),
+      sourceGeneration: g(genPass),
+      staticValidation: g(validationPass),
+      buildStage: g(!anyFail),
+      runtimeStage: g(!anyFail && runtimePass),
+      noStageFailed: g(!anyFail),
+      securityGatesPass: g(((secR && secR.bySeverity && secR.bySeverity.high) || 0) === 0),
+      architectureSound: g(!arch || ((arch.bySeverity && arch.bySeverity.high) || 0) === 0),
+      privacyRespected: g(!priv || ((priv.bySeverity && priv.bySeverity.high) || 0) === 0)
+    };
+    var fullyVerified = ev.status === 'PASS';
+    var PASS = (ev.status === 'PASS' || ev.status === 'PARTIAL' || ev.status === 'VALID' || ev.status === 'GENERATED') &&
+      !anyFail && genPass && validationPass &&
+      criteria.securityGatesPass && criteria.architectureSound && criteria.privacyRespected;
+    var dod = {
+      generatedAt: Date.now(), PASS: PASS, mode: 'target', target: target,
+      partial: PASS && !fullyVerified,
+      criteria: criteria,
+      detail: {
+        evidenceFile: evName, adapterStatus: ev.status || null, adapterReason: ev.reason || null,
+        framework: ev.framework || null, stages: st,
+        blockers: [].concat(ev.reason && String(ev.status) !== 'PASS' ? [ev.reason + (ev.need ? ' — ' + ev.need : '')] : [])
+      }
+    };
+    if (S()) {
+      S().write('definition-of-done.json', dod);
+      var dss = j('decision-state.json') || {};
+      dss.definitionOfDone = { at: dod.generatedAt, pass: PASS, mode: 'target', target: target, partial: dod.partial, failing: Object.keys(criteria).filter(function (k) { return !criteria[k]; }) };
+      S().write('decision-state.json', dss);
+    }
+    return dod;
+  }
+
   function targetEvaluate(contract) {
     var target = contract.target;
     if (target === 'ios') return iosTargetEvaluate(contract);
+    if (target === 'desktop' || target === 'extension') return stagedTargetEvaluate(contract);
     var evName = target === 'evm' ? 'blockchain-evidence.json'
       : target === 'android' ? 'mobile-evidence.json'
       : target === 'ml-training' ? 'ml-evidence.json' : null;
@@ -356,6 +408,24 @@
         '_Evidence: `.sovereign/mobile-ios-evidence.json`_\n';
       if (S()) S().write('release-certificate.md', imd);
       return imd;
+    }
+
+    // ---- desktop / browser-extension staged certificate ----
+    if (dod.mode === 'target' && (dod.target === 'desktop' || dod.target === 'extension')) {
+      var dd = dod.detail || {}; var ss = dd.stages || {};
+      var stg2 = function (label, v) { return '| ' + label + (Array(Math.max(2, 24 - label.length)).join(' ')) + ' | ' + (v || 'n/a') + ' |'; };
+      var head2 = dod.PASS
+        ? (dod.partial ? '**SOVEREIGN VERIFIED — PARTIAL** (generation + ' + (dod.target === 'desktop' ? 'compile check' : 'MV3 validation') + '; the packaged build / runtime inspection need a toolchain)' : '**SOVEREIGN VERIFIED**')
+        : (dd.adapterStatus === 'BLOCKED' ? '**BLOCKED** — ' + (dd.adapterReason || 'runtime prerequisite missing') : '**NOT VERIFIED**');
+      var smd = '# CodeSovereign Release Certificate\n\n_Generated ' + new Date(dod.generatedAt).toISOString() + '_\n\n' +
+        '- **Project:** ' + name + '\n- **Target:** ' + (dod.target === 'desktop' ? 'Native desktop (' + (dd.framework || 'Tauri/Electron') + ')' : 'Browser extension (Manifest V3)') + '  (staged runtime adapter)\n' +
+        '- **Status:** ' + head2 + '\n\n' +
+        '| Stage | Result |\n|---|---|\n' +
+        Object.keys(ss).map(function (k) { return stg2(k.replace(/([A-Z])/g, ' $1').replace(/^./, function (c0) { return c0.toUpperCase(); }), ss[k]); }).join('\n') + '\n\n' +
+        (dd.blockers && dd.blockers.length ? '**Needs a toolchain:** ' + dd.blockers.join('; ') + '\n\n' : '') +
+        '_Evidence: `.sovereign/' + dd.evidenceFile + '`_\n';
+      if (S()) S().write('release-certificate.md', smd);
+      return smd;
     }
 
     // ---- runtime-adapter target certificate ----

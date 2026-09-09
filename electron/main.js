@@ -419,9 +419,11 @@ function registerIpc() {
     try {
       const o = opts || {};
       const kind = String(o.kind || '');
-      if (['evm', 'android', 'ios', 'ml', 'ios-probe', 'ios-inspect'].indexOf(kind) < 0) return fail('unknown adapter: ' + kind);
+      if (['evm', 'android', 'ios', 'ml', 'ios-probe', 'ios-inspect', 'audio', 'registry', 'sign', 'otel', 'extension', 'desktop'].indexOf(kind) < 0) return fail('unknown adapter: ' + kind);
       if (kind === 'ios-probe' || kind === 'ios-inspect') return ok({ result: await require('./lib/adapters').run(kind, o.opts || {}) });
-      await ensureTrusted('runtime adapter: ' + kind + (kind === 'evm' ? ' (solidity compile + local chain)' : kind === 'android' ? ' (gradle build + emulator)' : kind === 'ml' ? ' (pytorch training run)' : kind === 'ios' ? ' (swift build / xcross / theos)' : ''));
+      const LABEL = { evm: ' (solidity compile + local chain)', android: ' (gradle build + emulator)', ml: ' (pytorch training run)', ios: ' (swift build / xcross / theos)',
+        audio: ' (ffmpeg + local whisper)', registry: ' (npm pack + local registry round-trip)', sign: ' (checksums + SBOM + cosign)', otel: ' (send a span to a local OTel collector)', extension: ' (MV3 build + load-unpacked)', desktop: ' (cargo check / electron smoke)' };
+      await ensureTrusted('runtime adapter: ' + kind + (LABEL[kind] || ''));
       const res = await require('./lib/adapters').run(kind, o.opts || {});
       trust.audit({ kind: 'adapter', cmd: kind, cwd: workspace.getRoot(), status: res && res.status });
       return ok(res);

@@ -228,6 +228,8 @@
   // Prompt -> specialised runtime target. Non-web targets are SUPPORTED and
   // verified by their adapter; contract.target drives Engine.RuntimeRouter.
   var TARGET_RE = [
+    ['extension', /\b(browser extension|chrome extension|firefox extension|edge extension|web ?extension|manifest v3|mv3 extension|content script|browser add-?on)\b/i],
+    ['desktop', /\b(desktop app(?:lication)?|native desktop|tauri app|electron app|menu ?bar app|system tray app|cross-platform desktop app)\b/i],
     ['ios', /\b(swift ?ui|swiftui|\bswift\b|xcode|\.ipa\b|iphone app|ipad app|ios app|ios-only|for ios)\b/i],
     ['android', /\b(android app|android application|\.apk\b|play ?store|jetpack compose|android kotlin|kotlin android|native android|react native|flutter|expo|native mobile|mobile app(?! ?builder)|mobile-only)\b/i],
     ['evm', /\b(smart contract|solidity|\bevm\b|erc-?20|erc-?721|erc-?1155|nft (mint|contract|collection|drop)|on-chain|web3 (dapp|app|contract)|foundry|hardhat|defi protocol|dao (contract|governance)|token contract|blockchain app)\b/i],
@@ -238,6 +240,8 @@
     return 'web';
   }
   var TARGET_META = {
+    extension: { label: 'Browser extension (Manifest V3)', adapter: 'extension', runtime: 'plain build + static MV3 validation everywhere; Playwright + Chromium for load-unpacked + popup/content/SW inspection' },
+    desktop: { label: 'Native desktop app (Tauri / Electron)', adapter: 'desktop', runtime: 'Tauri: `cargo check` compiles the Rust core anywhere; packaged build needs @tauri-apps/cli + a system webview. Electron: headless boot smoke + electron-forge' },
     android: { label: 'Native Android app', adapter: 'mobile', runtime: 'Android SDK + emulator + adb (Gradle build, headless AVD, logcat, screenshots)' },
     ios: { label: 'Native iOS app', adapter: 'mobile', runtime: 'macOS worker with Xcode + iOS Simulator + simctl' },
     evm: { label: 'Ethereum / EVM smart contracts', adapter: 'blockchain', runtime: 'solc + a local deterministic chain (@ethereumjs/vm, or Foundry/anvil)' },
@@ -649,9 +653,10 @@
     // verification time and reported as BLOCKED with a precise reason.
     if (unsafe.length) contract.verdict = 'unsafe';
     else contract.verdict = 'buildable';
+    // a non-web target is still fully supported — but a safety refusal always wins
     if (target !== 'web') {
       contract.mode = 'from-prompt';
-      contract.verdict = 'buildable';
+      if (!unsafe.length) contract.verdict = 'buildable';
     }
 
     var finish = function (llmReqs) {
