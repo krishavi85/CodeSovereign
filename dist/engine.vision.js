@@ -100,14 +100,14 @@
         if (n >= 3) dil[yy2 * GW + xx2] = 1;
       }
 
-      // connected components (union-find)
-      var parent = new Int32Array(GW * GH).fill(-1);
-      function find(a) { while (parent[a] >= 0) a = parent[a]; return a; }
+      // connected components (union-find; parent[i] === i is a root)
+      var parent = new Int32Array(GW * GH);
+      for (var pi = 0; pi < parent.length; pi++) parent[pi] = pi;
+      function find(a) { while (parent[a] !== a) { parent[a] = parent[parent[a]]; a = parent[a]; } return a; }
       function union(a, b) { a = find(a); b = find(b); if (a !== b) parent[a] = b; }
       for (var yy3 = 0; yy3 < GH; yy3++) for (var xx3 = 0; xx3 < GW; xx3++) {
         var idx = yy3 * GW + xx3;
         if (!dil[idx]) continue;
-        if (parent[idx] < 0) parent[idx] = idx;
         if (xx3 > 0 && dil[idx - 1]) union(idx, idx - 1);
         if (yy3 > 0 && dil[idx - GW]) union(idx, idx - GW);
       }
