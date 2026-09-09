@@ -207,7 +207,7 @@
         stages: { sourceGeneration: 'PASS', compileCheck: 'NOT_RUN', build: 'NOT_RUN', launch: 'NOT_RUN' } };
       persist(b); return Promise.resolve(b);
     }
-    return Promise.resolve(A.run('desktop', { framework: fw })).then(function (r) {
+    return Promise.resolve(A.run('desktop', { framework: fw, timeoutMs: opts.timeoutMs || undefined })).then(function (r) {
       r = r || { status: 'FAIL', reason: 'ADAPTER_NO_RESULT' }; r.framework = fw;
       persist(r); return r;
     }, function (e) { var f = { status: 'FAIL', reason: 'ADAPTER_ERROR', detail: String(e && e.message || e), framework: fw }; persist(f); return f; });

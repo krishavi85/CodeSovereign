@@ -43,6 +43,10 @@ const IOS_PROMPT =
   'Build a native iOS mobile app only, written in Swift with SwiftUI. No web version at all.';
 const EVM_PROMPT =
   'Build an ERC-20 token smart contract called AcmeToken with mint, transfer, approve and burn.';
+const DESKTOP_PROMPT =
+  'BUILD: a small cross-platform desktop application with a greeting window\nTARGET: tauri\nMODE: balanced';
+const EXT_PROMPT =
+  'Build a Manifest V3 browser extension that saves a short note per browser tab, with a popup and an options page.';
 
 const results = [];
 function check(name, pass, detail) {
@@ -228,6 +232,42 @@ function driver() {
         dodPass: (sj('definition-of-done.json') || {}).PASS,
         cert: /SOVEREIGN VERIFIED/.test(S.read('release-certificate.md') || '')
       };
+      // ================= 6. RUNTIME TARGET: desktop (Tauri) — staged, host-limited =================
+      log('runtime target: desktop (Tauri; staged)'); await GM.reset();
+      const dsk = await T('desktop', 5 * 60 * 1000,
+        GM.start({ prompt: ${JSON.stringify(DESKTOP_PROMPT)}, useLLM: false, bounds: { adapterTimeoutMs: 100000 } }));
+      const dev = sj('desktop-evidence.json') || {};
+      R.desktop = {
+        state: dsk.state, result: dsk.result, reason: dsk.resultReason, target: dsk.target,
+        partial: !!dsk.partial,
+        dslParsed: !!(dsk.contract && dsk.contract.dsl && dsk.contract.dsl.syntax === 'ultra-command'),
+        dslTarget: dsk.contract && dsk.contract.dsl && dsk.contract.dsl.target,
+        generated: (dsk.artifacts.generatedFiles || []).length,
+        hasCargoToml: (dsk.artifacts.generatedFiles || []).some((p) => /src-tauri\\/Cargo\\.toml$/.test(p)),
+        hasTauriConf: (dsk.artifacts.generatedFiles || []).some((p) => /tauri\\.conf\\.json$/.test(p)),
+        adapter: dsk.adapterResult && dsk.adapterResult.status,
+        adapterReason: dsk.adapterResult && dsk.adapterResult.reason,
+        support: dev.support,
+        stages: dev.stages || {},
+        cert: S.read('release-certificate.md') || ''
+      };
+
+      // ================= 7. RUNTIME TARGET: browser extension (MV3) — staged =================
+      log('runtime target: browser extension (MV3; staged)'); await GM.reset();
+      const ext = await T('extension', 4 * 60 * 1000, GM.start({ prompt: ${JSON.stringify(EXT_PROMPT)}, useLLM: false }));
+      const xev = sj('extension-evidence.json') || {};
+      R.extension = {
+        state: ext.state, result: ext.result, reason: ext.resultReason, target: ext.target,
+        partial: !!ext.partial,
+        generated: (ext.artifacts.generatedFiles || []).length,
+        hasManifest: (ext.artifacts.generatedFiles || []).some((p) => /manifest\\.json$/.test(p)),
+        adapter: ext.adapterResult && ext.adapterResult.status,
+        adapterReason: ext.adapterResult && ext.adapterResult.reason,
+        support: xev.support,
+        staticValidation: (xev.stages || {}).staticValidation || (xev.validation && xev.validation.ok ? 'PASS' : null),
+        cert: S.read('release-certificate.md') || ''
+      };
+
       log('all sections done');
 
     } catch (e) { R.errors.push(String((e && e.stack) || e)); }
@@ -238,10 +278,10 @@ function driver() {
 async function run() {
   let exitCode = 1, tmp = null;
   const watchdog = setTimeout(() => {
-    console.error('[acceptance-ultramode] FAIL — watchdog 20m');
+    console.error('[acceptance-ultramode] FAIL — watchdog 28m');
     try { observer.stop(); proc.killAll(); } catch (_) {}
     app.exit(1);
-  }, 20 * 60 * 1000);
+  }, 28 * 60 * 1000);
   watchdog.unref && watchdog.unref();
   try {
     try {
@@ -370,6 +410,32 @@ async function run() {
       check('RUNTIME TARGET: the DoD gate passed for the target run', EV.dodPass === true);
       check('RUNTIME TARGET: SOVEREIGN VERIFIED certificate written', EV.cert === true);
       check('RUNTIME TARGET: closed loop — prompt -> EVM contract -> VERIFIED', EV.state === 'VERIFIED' && EV.result === 'VERIFIED', EV.state + '/' + EV.result);
+
+      // ---- 12. runtime target: desktop (Tauri) — the terse command syntax + staged verification ----
+      const DK = report.desktop || {};
+      check('RUNTIME TARGET: a "TARGET: tauri" command is detected as the desktop target', DK.target === 'desktop', DK.target);
+      check('RUNTIME TARGET: the terse BUILD/TARGET command syntax was parsed', DK.dslParsed === true && DK.dslTarget === 'desktop', DK.dslTarget);
+      check('RUNTIME TARGET: a real Tauri project (Cargo.toml + tauri.conf.json) was generated', DK.hasCargoToml === true && DK.hasTauriConf === true, DK.generated + ' files');
+      check('RUNTIME TARGET: desktop is SUPPORTED and source generation PASSED', DK.support === 'SUPPORTED' && DK.stages.sourceGeneration === 'PASS', JSON.stringify(DK.stages));
+      check('RUNTIME TARGET: with the Rust build host-limited, the run is BLOCKED-with-reason or PARTIAL — never a blanket FAIL and never falsely VERIFIED',
+        (DK.state === 'BLOCKED' || DK.state === 'PARTIAL') && DK.state !== 'FAILED',
+        DK.state + ' / adapter=' + DK.adapter + ' (' + DK.adapterReason + ')');
+      check('RUNTIME TARGET: the desktop result names the exact prerequisite + says the capability is supported',
+        DK.state === 'PARTIAL'
+          ? /SOVEREIGN VERIFIED — PARTIAL/.test(DK.cert || '')
+          : (/CARGO_CHECK_TIMED_OUT|RUST_TOOLCHAIN_REQUIRED|CRATES_FETCH_REQUIRED|TAURI_CLI/.test(DK.adapterReason || DK.reason || '') && /capability IS supported/i.test(DK.reason || '')),
+        (DK.reason || '').slice(0, 160));
+
+      // ---- 13. runtime target: browser extension (MV3) — staged verification ----
+      const XT = report.extension || {};
+      check('RUNTIME TARGET: an MV3 extension request is detected as the extension target', XT.target === 'extension', XT.target);
+      check('RUNTIME TARGET: a real MV3 manifest + extension was generated', XT.hasManifest === true, XT.generated + ' files');
+      check('RUNTIME TARGET: extension is SUPPORTED and static MV3 validation PASSED', XT.support === 'SUPPORTED' && XT.staticValidation === 'PASS', XT.staticValidation);
+      check('RUNTIME TARGET: load-unpacked is host-limited -> PARTIAL (Playwright/Chromium), or PASS — never FAILED, never falsely VERIFIED',
+        (XT.state === 'PARTIAL' || XT.state === 'PASS' || XT.state === 'VERIFIED') && XT.state !== 'FAILED',
+        XT.state + ' / adapter=' + XT.adapter + ' (' + XT.adapterReason + ')');
+      check('RUNTIME TARGET: the extension certificate is SOVEREIGN VERIFIED (— PARTIAL when load-unpacked needs a browser)',
+        /SOVEREIGN VERIFIED/.test(XT.cert || ''), (XT.cert || '').split('\\n').find((l) => /Status/.test(l)) || '');
     }
     check('renderer produced no console errors', rendererErrors.length === 0, rendererErrors.slice(0, 4).join(' | '));
 

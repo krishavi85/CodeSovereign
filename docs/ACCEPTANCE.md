@@ -78,7 +78,7 @@ build half of the loop:
 This is the proof that CodeSovereign can *build* verified software from a spec,
 not only verify software that already exists. CI job **Desktop → acceptance-build**.
 
-## `npm run acceptance:ultramode` — the closed Ultra Mode loop (57 checks)
+## `npm run acceptance:ultramode` — the closed Ultra Mode loop (68 checks)
 
 `electron/acceptance-ultramode.js` starts from an **empty** workspace and **one
 natural-language request** and drives `Engine.UltraMode` through the entire real
@@ -119,6 +119,21 @@ flow — see `docs/ULTRAMODE_CLOSED_LOOP.md`:
     compiles it with `solc` and deploys it on a `@ethereumjs/vm` local chain, runs
     the transfer / approve / transferFrom / revert transactions, and every
     assertion passes; the target DoD gate passes → **SOVEREIGN VERIFIED**.
+12. **Runtime target — desktop (Tauri)** via the **terse command syntax**
+    (`BUILD: … / TARGET: tauri / MODE: balanced`): the DSL is parsed
+    (`contract.dsl.syntax === 'ultra-command'`), a real `src-tauri/` project is
+    generated, `electron/lib/adapters.js` runs `cargo check` + `cargo test` (the
+    Rust core compiles on any host with Rust), and the packaged build is
+    stage-BLOCKED on `@tauri-apps/cli` → **`PARTIAL`** (`SOVEREIGN VERIFIED —
+    PARTIAL`); on a host with no Rust it is `BLOCKED CARGO/RUST_TOOLCHAIN` with the
+    exact `rustup` command — never a blanket FAIL, never "unsupported".
+13. **Runtime target — browser extension (MV3)**: an extension request is detected
+    as the `extension` target, a real MV3 manifest + popup + options + content
+    script + service worker is generated, static MV3 validation PASSES, the plain
+    store-only zip is built, and `load-unpacked` runs under Playwright/Chromium →
+    **`PARTIAL`** when headless service-worker inspection can't fully confirm
+    (`SOVEREIGN VERIFIED — PARTIAL`); the non-gating build stage never sinks the
+    verdict.
 
 CI job **Desktop → acceptance-ultramode**.
 

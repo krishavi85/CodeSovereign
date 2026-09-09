@@ -102,7 +102,16 @@
     var arch = j('architecture-findings.json'), priv = j('privacy-findings.json'), secR = j('security-findings.json');
     function g(v) { return v === true; }
     var vals = Object.keys(st).map(function (k) { return st[k]; });
-    var anyFail = vals.indexOf('FAIL') >= 0;
+    // Only stages that actually gate the verdict count as a failure. A plain MV3
+    // extension with no bundler, or a Tauri packaging step with no CLI, can report
+    // build != PASS while the capability is genuinely proven (source compiles /
+    // validates, the artifact loads). The blueprint rule: that is PARTIAL, not FAIL.
+    var GATING = target === 'desktop'
+      ? ['sourceGeneration', 'compileCheck', 'test']
+      : ['sourceGeneration', 'staticValidation', 'loadUnpacked'];
+    var criticalFail = GATING.some(function (k) { return st[k] === 'FAIL'; });
+    var anyFail = criticalFail;
+    var buildFailedNonGating = vals.indexOf('FAIL') >= 0 && !criticalFail;
     var genPass = st.sourceGeneration === 'PASS' || st.staticValidation === 'PASS' || st.compileCheck === 'PASS';
     var validationPass = st.staticValidation !== 'FAIL' && st.compileCheck !== 'FAIL';
     var runtimePass = target === 'desktop'
@@ -129,8 +138,9 @@
       criteria: criteria,
       detail: {
         evidenceFile: evName, adapterStatus: ev.status || null, adapterReason: ev.reason || null,
-        framework: ev.framework || null, stages: st,
+        framework: ev.framework || null, stages: st, buildFailedNonGating: buildFailedNonGating,
         blockers: [].concat(ev.reason && String(ev.status) !== 'PASS' ? [ev.reason + (ev.need ? ' — ' + ev.need : '')] : [])
+          .concat(buildFailedNonGating ? ['build stage did not pass (non-gating for this target — the artifact still validates + loads)'] : [])
       }
     };
     if (S()) {

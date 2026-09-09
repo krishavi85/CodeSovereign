@@ -189,7 +189,7 @@
         stages: { sourceGeneration: 'PASS', staticValidation: v.ok ? 'PASS' : 'FAIL', build: 'NOT_RUN', loadUnpacked: 'NOT_RUN' }, validation: v };
       persist(b); return Promise.resolve(b);
     }
-    return Promise.resolve(A.run('extension', { adapter: opts.adapter || null })).then(function (r) {
+    return Promise.resolve(A.run('extension', { adapter: opts.adapter || null, timeoutMs: opts.timeoutMs || undefined })).then(function (r) {
       r = r || { status: 'FAIL', reason: 'ADAPTER_NO_RESULT' };
       r.validation = r.validation || v;
       persist(r); return r;

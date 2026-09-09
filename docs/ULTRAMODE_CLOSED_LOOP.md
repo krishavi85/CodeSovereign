@@ -208,7 +208,7 @@ npm run smoke                   # renderer boots clean
 npm run smoke:observer          # observer classifies REAL / MOCK / BROKEN / SKIPPED
 npm run acceptance              # 38/38 — the 8 engines together on a fixture
 npm run acceptance:build        # 26/26 — repo-scale generation from a spec, DoD 14/14
-npm run acceptance:ultramode    # 57/57 — the closed loop: prompt -> SOVEREIGN VERIFIED,
+npm run acceptance:ultramode    # 68/68 — the closed loop: prompt -> SOVEREIGN VERIFIED,
                                 #   + resume-after-interrupt, + negative + iOS-staged + EVM scenarios
 ```
 

@@ -55,7 +55,10 @@
   var DEFAULT_BOUNDS = {
     maxRepairAttempts: 3,
     runTimeoutMs: 25 * 60 * 1000,
-    observeMax: 25
+    observeMax: 25,
+    // per runtime-adapter verification step (cargo check, gradle build, solc +
+    // chain, …). Generous by default; an acceptance harness passes a tight cap.
+    adapterTimeoutMs: 10 * 60 * 1000
   };
 
   /* ---------------- helpers ---------------- */
@@ -306,7 +309,8 @@
             withMachineCriteria: (contract.totals && contract.totals.withMachineCriteria) || 0,
             mandatory: (contract.totals && contract.totals.mandatory) || 0,
             entities: (contract.entities || []).map(function (e) { return e.name; }),
-            stack: contract.supportedStack
+            stack: contract.supportedStack,
+            dsl: contract.dsl || null
           };
           run.clarification.assumptions = contract.assumptions || [];
           run.clarification.unsupported = contract.unsupported || [];
@@ -511,7 +515,7 @@
         var probe = (Engine.RuntimeRouter && Engine.RuntimeRouter.probe) ? Engine.RuntimeRouter.probe(run.target) : Promise.resolve(null);
         return probe.then(function (pr) {
           run.artifacts.steps.push({ kind: 'runtime-probe', at: now(), target: run.target, canRun: pr && pr.canRun, missing: (pr && pr.missing) || [] });
-          return route.engine.verify({});
+          return route.engine.verify({ timeoutMs: run.bounds && run.bounds.adapterTimeoutMs });
         }).then(function (res) {
           res = res || { status: 'FAIL', reason: 'ADAPTER_NO_RESULT' };
           run.adapterResult = {
@@ -912,6 +916,7 @@
       product: run.contract && run.contract.name,
       verdict: run.contract && run.contract.verdict,
       target: run.target || 'web',
+      dsl: (run.contract && run.contract.dsl) || null,
       targetLabel: run.contract && run.contract.targetLabel || null,
       targetRuntime: run.contract && run.contract.targetRuntime || null,
       adapterResult: run.adapterResult || null,

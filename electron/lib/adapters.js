@@ -935,18 +935,32 @@ async function extensionRun(opts) {
   stages.staticValidation = findings.length ? 'FAIL' : 'PASS';
   if (findings.length) {
     const ev = { capability: 'browser-extension', generatedAt: Date.now(), status: 'FAIL', reason: 'MV3_VALIDATION_FAILED', findings, stages };
-    await writeEvidence(r, 'extension-evidence.json', ev);
+    ev.support = ev.support || 'SUPPORTED'; await writeEvidence(r, 'extension-evidence.json', ev);
     return { status: 'FAIL', capability: 'browser-extension', reason: 'MV3_VALIDATION_FAILED', evidence: ev, evidenceFile: 'extension-evidence.json' };
   }
   // build
   const npm = which('npm') || 'npm';
   const pkg = (() => { try { return JSON.parse(fs.readFileSync(path.join(r, 'package.json'), 'utf8')); } catch (_) { return {}; } })();
-  const wantsWxt = /wxt/.test(JSON.stringify(pkg.devDependencies || {}) + JSON.stringify(pkg.dependencies || {}));
+  const buildScript = (pkg.scripts && pkg.scripts.build) || '';
+  const bundler = /wxt/.test(buildScript) ? 'wxt' : /plasmo/.test(buildScript) ? 'plasmo' : /(^|[^a-z])extension build/.test(buildScript) ? 'extensionjs' : 'plain';
+  const wantsWxt = bundler === 'wxt';
   const wxt = which('wxt') || fs.existsSync(path.join(r, 'node_modules', '.bin', 'wxt'));
   let outDir = r;
-  if (wantsWxt && !wxt) {
+  if (bundler === 'plain') {
+    // the plain adapter's "build" is scripts/pack.js — a zero-dep store-only zip.
+    // Run it directly (no npm indirection) so a missing npm shim or a locked
+    // global cache can't turn "packaged fine" into a spurious FAIL.
+    const packScript = path.join(r, 'scripts', 'pack.js');
+    if (fs.existsSync(packScript)) {
+      const b = await runIn(r, which('node') || 'node', ['scripts/pack.js'], { timeoutMs: 60000 });
+      const zipped = fs.existsSync(path.join(r, 'dist')) && fs.readdirSync(path.join(r, 'dist')).some((n) => /\.zip$/.test(n));
+      stages.build = (b.code === 0 && zipped) ? 'PASS' : 'FAIL';
+    } else {
+      stages.build = 'PASS';   // nothing to build — load the source dir unpacked
+    }
+  } else if (wantsWxt && !wxt) {
     stages.build = 'BLOCKED_WXT_REQUIRED';
-  } else if (pkg.scripts && pkg.scripts.build && (!wantsWxt || wxt)) {
+  } else if (buildScript) {
     const b = await runIn(r, npm, ['run', 'build'], { timeoutMs: 4 * 60 * 1000, shell: process.platform === 'win32' });
     stages.build = b.code === 0 ? 'PASS' : 'FAIL';
     if (b.code === 0) { for (const d of ['dist', '.output/chrome-mv3', 'build/chrome-mv3-prod']) if (fs.existsSync(path.join(r, d))) { outDir = path.join(r, d); break; } }
@@ -964,7 +978,7 @@ async function extensionRun(opts) {
       reason: String(stages.build).startsWith('BLOCKED') ? stages.build : 'PLAYWRIGHT_REQUIRED_FOR_LOAD_UNPACKED',
       need: 'Playwright + Chromium — `npm i -D playwright && npx playwright install chromium` (https://github.com/microsoft/playwright)',
       stages, findings: [] };
-    await writeEvidence(r, 'extension-evidence.json', ev);
+    ev.support = ev.support || 'SUPPORTED'; await writeEvidence(r, 'extension-evidence.json', ev);
     return { status, capability: 'browser-extension', reason: ev.reason, need: ev.need, stages, evidence: ev, evidenceFile: 'extension-evidence.json' };
   }
   let launched = false, sw = false, badge = false;
@@ -988,7 +1002,7 @@ async function extensionRun(opts) {
   const ev = { capability: 'browser-extension', generatedAt: Date.now(), status,
     reason: status === 'PASS' ? null : 'RUNTIME_INSPECTION_INCOMPLETE', stages,
     inspected: { serviceWorker: sw, contentScriptInjected: badge } };
-  await writeEvidence(r, 'extension-evidence.json', ev);
+  ev.support = ev.support || 'SUPPORTED'; await writeEvidence(r, 'extension-evidence.json', ev);
   return { status, capability: 'browser-extension', reason: ev.reason, stages, evidence: ev, evidenceFile: 'extension-evidence.json' };
 }
 
@@ -1005,7 +1019,7 @@ async function desktopRun(opts) {
     if (!cargo) {
       const ev = { capability: 'native-desktop', framework: 'tauri', generatedAt: Date.now(), status: 'BLOCKED', reason: 'RUST_TOOLCHAIN_REQUIRED',
         need: 'Rust + Cargo — `curl https://sh.rustup.rs -sSf | sh` (https://github.com/rust-lang/rustup)', stages };
-      await writeEvidence(r, 'desktop-evidence.json', ev);
+      ev.support = ev.support || 'SUPPORTED'; await writeEvidence(r, 'desktop-evidence.json', ev);
       return { status: 'BLOCKED', capability: 'native-desktop', reason: 'RUST_TOOLCHAIN_REQUIRED', need: ev.need, stages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
     }
     const cargoCap = Number(opts.timeoutMs) || 10 * 60 * 1000;
@@ -1014,7 +1028,7 @@ async function desktopRun(opts) {
       const toStages = { ...stages, compileCheck: 'BLOCKED' };
       const ev = { capability: 'native-desktop', framework: 'tauri', generatedAt: Date.now(), status: 'BLOCKED', reason: 'CARGO_CHECK_TIMED_OUT',
         need: 'a longer build budget (or a warm cargo cache) — `cargo check` on the tauri dep tree is slow on the first run', stages: toStages };
-      await writeEvidence(r, 'desktop-evidence.json', ev);
+      ev.support = ev.support || 'SUPPORTED'; await writeEvidence(r, 'desktop-evidence.json', ev);
       return { status: 'BLOCKED', capability: 'native-desktop', reason: 'CARGO_CHECK_TIMED_OUT', need: ev.need, stages: toStages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
     }
     // tauri deps that need a network fetch → BLOCKED, not FAIL
@@ -1022,7 +1036,7 @@ async function desktopRun(opts) {
       const cratesStages = { ...stages, compileCheck: 'BLOCKED' };
       const ev = { capability: 'native-desktop', framework: 'tauri', generatedAt: Date.now(), status: 'BLOCKED', reason: 'CRATES_FETCH_REQUIRED',
         need: 'network access for `cargo` to fetch the tauri crates once (offline after the first fetch)', stages: cratesStages, tail: (chk.stderr || '').slice(-800) };
-      await writeEvidence(r, 'desktop-evidence.json', ev);
+      ev.support = ev.support || 'SUPPORTED'; await writeEvidence(r, 'desktop-evidence.json', ev);
       return { status: 'BLOCKED', capability: 'native-desktop', reason: 'CRATES_FETCH_REQUIRED', need: ev.need, stages: cratesStages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
     }
     stages.compileCheck = chk.code === 0 ? 'PASS' : 'FAIL';
@@ -1037,7 +1051,7 @@ async function desktopRun(opts) {
       reason: status === 'PARTIAL' ? 'RUST_CORE_COMPILES_FULL_PACKAGE_NEEDS_TAURI_CLI' : (status === 'FAIL' ? 'COMPILE_OR_TEST_FAILED' : null),
       need: status === 'PARTIAL' ? '`npm i -D @tauri-apps/cli` + a system webview (WebView2 on Windows) for the packaged build' : null,
       stages, tail: chk.code === 0 ? null : (chk.stderr || '').slice(-800) };
-    await writeEvidence(r, 'desktop-evidence.json', ev);
+    ev.support = ev.support || 'SUPPORTED'; await writeEvidence(r, 'desktop-evidence.json', ev);
     return { status, capability: 'native-desktop', reason: ev.reason, need: ev.need, stages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
   }
 
@@ -1055,7 +1069,7 @@ async function desktopRun(opts) {
     if (!electronBin) {
       const ev = { capability: 'native-desktop', framework: 'electron', generatedAt: Date.now(), status: 'BLOCKED', reason: 'ELECTRON_INSTALL_REQUIRED',
         need: 'network access for `npm install` to fetch the Electron binary once', stages };
-      await writeEvidence(r, 'desktop-evidence.json', ev);
+      ev.support = ev.support || 'SUPPORTED'; await writeEvidence(r, 'desktop-evidence.json', ev);
       return { status: 'BLOCKED', capability: 'native-desktop', reason: 'ELECTRON_INSTALL_REQUIRED', need: ev.need, evidence: ev, evidenceFile: 'desktop-evidence.json' };
     }
   } else stages.install = 'PASS';
@@ -1064,7 +1078,7 @@ async function desktopRun(opts) {
   const status = stages.smoke === 'PASS' ? 'PASS' : 'FAIL';
   const ev = { capability: 'native-desktop', framework: 'electron', generatedAt: Date.now(), status,
     reason: status === 'PASS' ? null : 'HEADLESS_SMOKE_FAILED', stages, tail: status === 'PASS' ? null : ((sm.stdout || '') + (sm.stderr || '')).slice(-800) };
-  await writeEvidence(r, 'desktop-evidence.json', ev);
+  ev.support = ev.support || 'SUPPORTED'; await writeEvidence(r, 'desktop-evidence.json', ev);
   return { status, capability: 'native-desktop', reason: ev.reason, stages, evidence: ev, evidenceFile: 'desktop-evidence.json' };
 }
 
