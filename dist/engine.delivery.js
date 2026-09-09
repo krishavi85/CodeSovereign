@@ -105,7 +105,8 @@
     '/README.md', '/docs/API.md', '/docs/DATABASE.md',
     '/docs/DEPLOYMENT.md', '/docs/TROUBLESHOOTING.md', '/docs/DATA_MODEL.md',
     '/docs/TS_MIGRATION.md', '/docs/DECISIONS.md', '/docs/DEVELOPMENT.md',
-    '/CHANGELOG.md', '/RELEASE_NOTES.md'
+    '/CHANGELOG.md', '/RELEASE_NOTES.md', '/SBOM.spdx.json', '/provenance.json',
+    '/checksums.sha256'
   ];
 
   function collect() {
