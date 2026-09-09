@@ -203,7 +203,7 @@ falsely `VERIFIED`.
 ## Verification
 
 ```bash
-node test/run.js               # 781 checks incl. ultramode.test.js (101) + stacks.test.js (§1-20) + adapters.test.js
+node test/run.js               # 841 checks incl. ultramode.test.js (108) + stacks.test.js (§1-20) + adapters.test.js + offline-capabilities + adapters-offline
 npm run smoke                   # renderer boots clean
 npm run smoke:observer          # observer classifies REAL / MOCK / BROKEN / SKIPPED
 npm run acceptance              # 38/38 — the 8 engines together on a fixture
