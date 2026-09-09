@@ -162,7 +162,7 @@ These suites cover the generation + factory engines without a renderer:
   `Engine.Autonomy` (5 levels, `gate()` blocks disallowed actions), `Engine.Agents`
   (roster, autonomy-gated `deploy` agent, arbitration by the product > architecture
   > security > performance > UI order).
-- **`test/ultramode.test.js`** (83 checks) — the Ultra Mode state machine with the real
+- **`test/ultramode.test.js`** (108 checks) — the Ultra Mode state machine with the real
   Contract / Universal / Scaffold / TestGen / Deploy engines and stubbed
   verification engines: happy path → `VERIFIED`; defect → bounded repair →
   `VERIFIED`; repair budget exhausted → `FAILED`; rollback of a worsening repair;

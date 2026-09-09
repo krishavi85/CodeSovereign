@@ -502,6 +502,10 @@ async function run() {
     clearTimeout(watchdog);
     try { observer.stop(); } catch (_) {}
     try { proc.killAll(); } catch (_) {}
+    // killAll()'s taskkill is fire-and-forget; a generated dev server on :4319
+    // can outlive it as a detached grandchild. Reap it synchronously here so the
+    // next run never crawls a stale server (acceptance-stale-server-hazard).
+    try { const fp = await freePort(4319); if (fp.killed && fp.killed.length) console.log('[acceptance] reaped :4319 orphan ' + JSON.stringify(fp.killed)); } catch (_) {}
     if (tmp) { try { await fsp.rm(tmp, { recursive: true, force: true }); } catch (_) {} }
     app.exit(exitCode);
   }

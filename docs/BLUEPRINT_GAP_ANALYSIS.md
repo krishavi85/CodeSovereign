@@ -15,7 +15,7 @@ The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
 repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 781, `acceptance` 38, `acceptance:build` 26,
+(`node test/run.js` 841, `acceptance` 38, `acceptance:build` 26,
 `acceptance:ultramode` 57) prove it end to end in the real Electron renderer.
 
 The last several sessions closed the breadth items from the blueprint's own

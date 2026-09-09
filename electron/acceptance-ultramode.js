@@ -383,6 +383,7 @@ async function run() {
     clearTimeout(watchdog);
     try { observer.stop(); } catch (_) {}
     try { proc.killAll(); } catch (_) {}
+    try { const fp = await freePort(4319); if (fp.killed && fp.killed.length) console.log('[acceptance-ultramode] reaped :4319 orphan ' + JSON.stringify(fp.killed)); } catch (_) {}
     if (tmp) { try { await fsp.rm(tmp, { recursive: true, force: true }); } catch (_) {} }
     app.exit(exitCode);
   }
