@@ -25,6 +25,15 @@
 
   var KINDS = ['react', 'preact', 'vue'];
 
+  // Shared i18n bridge. Engine.Localize always ships public/i18n.js + the
+  // per-locale catalogues; the component frontends load that runtime and route
+  // every user-facing string through t(key, englishDefault). Before it resolves
+  // (or with JS-disabled fallbacks) the English default renders — never a raw key.
+  var I18N_BRIDGE =
+    "var __w = (typeof window !== 'undefined') ? window : {};\n" +
+    "function t(key, en) { try { return (__w.i18n && __w.t) ? (__w.t(key) || en) : en; } catch (_) { return en; } }\n" +
+    "var i18nReady = (__w.i18n && __w.i18n.load) ? __w.i18n.load() : Promise.resolve();";
+
   /* ---------------------------------------------------------------- *
    *  Vendored React-compatible VDOM + hooks runtime (~220 lines).     *
    *  MIT — authored for CodeSovereign. Drop-in shape: `h`, Fragment,  *
@@ -206,15 +215,16 @@
     var auth = !!s.auth;
     var html =
       '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n' +
-      '<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
-      '<a href="#root" class="skip-link">Skip to content</a>\n' +
+      '<link rel="stylesheet" href="design-tokens.css">\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
+      '<a href="#root" class="skip-link" data-i18n="app.skipToContent">Skip to content</a>\n' +
       '<header><img src="logo.svg" alt="' + s.name + ' logo" width="40" height="40"></header>\n' +
       '<main id="root"></main>\n' +
-      '<script src="vendor/vdom.js"></script>\n<script src="app.js"></script>\n</body>\n</html>\n';
+      '<script src="i18n.js"></script>\n<script src="vendor/vdom.js"></script>\n<script src="app.js"></script>\n</body>\n</html>\n';
     var js = [
       "'use strict';",
       "/* " + s.name + " — a " + (s.frontend || 'react') + " component app on the vendored React-compatible runtime. */",
       "var h = CSDom.h, Fragment = CSDom.Fragment, render = CSDom.render, useState = CSDom.useState, useEffect = CSDom.useEffect;",
+      I18N_BRIDGE,
       "",
       "function api(path, opts) {",
       "  opts = opts || {};",
@@ -222,7 +232,7 @@
       "  var tok = localStorage.getItem('token');",
       "  if (tok) headers.authorization = 'Bearer ' + tok;",
       "  return fetch(path, Object.assign({}, opts, { headers: headers })).then(function (r) {",
-      "    return r.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (_) {} return { ok: r.ok, status: r.status, body: j }; });",
+      "    return r.text().then(function (bt) { var j = null; try { j = JSON.parse(bt); } catch (_) {} return { ok: r.ok, status: r.status, body: j }; });",
       "  });",
       "}",
       "",
@@ -234,16 +244,17 @@
         ? "  var s = useState(!!localStorage.getItem('token')); var authed = s[0], setAuthed = s[1];\n" +
           "  if (!authed) return h(Auth, { onAuthed: function () { setAuthed(true); } });\n" +
           "  return h(Fragment, null,\n" +
-          "    h('header', { className: 'bar' }, h('h1', null, '" + s.name + "'), h('button', { onClick: function () { localStorage.removeItem('token'); setAuthed(false); } }, 'Log out')),\n" +
+          "    h('header', { className: 'bar' }, h('h1', null, t('app.title', '" + s.name + "')), h('button', { onClick: function () { localStorage.removeItem('token'); setAuthed(false); } }, t('auth.signOut', 'Sign out'))),\n" +
           "    " + ents.map(function (e) { return "h(" + cap(e.name) + "Panel, null)"; }).join(',\n    ') + "\n  );"
-        : "  return h(Fragment, null,\n    h('h1', null, '" + s.name + "'),\n    " + ents.map(function (e) { return "h(" + cap(e.name) + "Panel, null)"; }).join(',\n    ') + "\n  );",
+        : "  return h(Fragment, null,\n    h('h1', null, t('app.title', '" + s.name + "')),\n    " + ents.map(function (e) { return "h(" + cap(e.name) + "Panel, null)"; }).join(',\n    ') + "\n  );",
       "}",
       "",
-      "render(h(App, null), document.getElementById('root'));",
+      "function __mount() { render(h(App, null), document.getElementById('root')); }",
+      "__w.i18n ? i18nReady.then(__mount) : __mount();",
       ""
     ].filter(Boolean).join('\n');
     var css = frameworkCss();
-    return { 'public/index.html': html, 'public/app.js': js, 'public/app.css': css, 'public/vendor/vdom.js': vdomRuntime(), 'public/logo.svg': logoSvg(s.name) };
+    return { 'public/index.html': html, 'public/app.js': js, 'public/app.css': css, 'public/design-tokens.css': designTokens(), 'public/vendor/vdom.js': vdomRuntime(), 'public/logo.svg': logoSvg(s.name) };
   }
 
   function authComponent() {
@@ -261,13 +272,13 @@
       "    });",
       "  }",
       "  return h('section', { className: 'card auth', 'aria-label': 'sign in' },",
-      "    h('h2', null, 'Sign in'),",
+      "    h('h2', null, t('auth.heading', 'Sign in')),",
       "    h('form', { onSubmit: submit },",
-      "      h('label', { htmlFor: 'fEmail' }, 'Email'),",
-      "      h('input', { id: 'fEmail', type: 'email', autocomplete: 'email', 'aria-label': 'email', placeholder: 'you@example.com', value: email, required: true, onInput: function (ev) { setEmail(ev.target.value); } }),",
-      "      h('label', { htmlFor: 'fPass' }, 'Password'),",
-      "      h('input', { id: 'fPass', type: 'password', autocomplete: 'current-password', 'aria-label': 'password', placeholder: 'password (8+)', value: pass, required: true, onInput: function (ev) { setPass(ev.target.value); } }),",
-      "      h('button', { type: 'submit' }, mode === 'login' ? 'Sign in' : 'Create account'),",
+      "      h('label', { htmlFor: 'fEmail' }, t('auth.email', 'Email')),",
+      "      h('input', { id: 'fEmail', type: 'email', autocomplete: 'email', 'aria-label': t('auth.email', 'email'), placeholder: 'you@example.com', value: email, required: true, onInput: function (ev) { setEmail(ev.target.value); } }),",
+      "      h('label', { htmlFor: 'fPass' }, t('auth.password', 'Password')),",
+      "      h('input', { id: 'fPass', type: 'password', autocomplete: 'current-password', 'aria-label': t('auth.password', 'password'), placeholder: 'password (8+)', value: pass, required: true, onInput: function (ev) { setPass(ev.target.value); } }),",
+      "      h('button', { type: 'submit' }, mode === 'login' ? t('auth.signIn', 'Sign in') : t('auth.register', 'Create account')),",
       "      h('button', { type: 'button', id: 'authToggle', onClick: function () { setMode(mode === 'login' ? 'register' : 'login'); } }, mode === 'login' ? 'Need an account?' : 'Have an account?')",
       "    ),",
       "    err ? h('div', { className: 'err' }, err) : null",
@@ -296,19 +307,20 @@
       "  }",
       "  function del(id) { api('/api/" + e.table + "/' + id, { method: 'DELETE' }).then(load); }",
       "  return h('section', { className: 'card', 'data-entity': '" + e.name + "' },",
-      "    h('h2', null, '" + e.name + "'),",
+      "    h('h2', null, t('entity." + e.name + "', '" + e.name + "')),",
       "    h('form', { className: 'create', onSubmit: add },",
       fields.map(function (fl) {
-        var t = (fl.type === 'int' || fl.type === 'float') ? 'number' : (fl.type === 'bool' ? 'checkbox' : 'text');
-        if (t === 'checkbox') return "      h('label', null, h('input', { type: 'checkbox', checked: !!form." + fl.name + ", onChange: function (ev) { setForm(Object.assign({}, form, { " + fl.name + ": ev.target.checked })); } }), ' " + fl.name + "'),";
-        return "      h('input', { type: '" + t + "', 'aria-label': '" + fl.name + "', placeholder: '" + fl.name + "', value: form." + fl.name + " || '', " + (fl.required ? "required: true, " : "") + "onInput: function (ev) { setForm(Object.assign({}, form, { " + fl.name + ": ev.target.value })); } }),";
+        var ftype = (fl.type === 'int' || fl.type === 'float') ? 'number' : (fl.type === 'bool' ? 'checkbox' : 'text');
+        var lblKey = "field." + e.name + "." + fl.name;
+        if (ftype === 'checkbox') return "      h('label', null, h('input', { type: 'checkbox', checked: !!form." + fl.name + ", onChange: function (ev) { setForm(Object.assign({}, form, { " + fl.name + ": ev.target.checked })); } }), ' ' + t('" + lblKey + "', '" + fl.name + "')),";
+        return "      h('input', { type: '" + ftype + "', 'aria-label': t('" + lblKey + "', '" + fl.name + "'), placeholder: t('" + lblKey + "', '" + fl.name + "'), value: form." + fl.name + " || '', " + (fl.required ? "required: true, " : "") + "onInput: function (ev) { setForm(Object.assign({}, form, { " + fl.name + ": ev.target.value })); } }),";
       }).join('\n'),
-      "      h('button', { type: 'submit' }, 'Add " + e.name + "')",
+      "      h('button', { type: 'submit' }, t('action.add', 'Add') + ' " + e.name + "')",
       "    ),",
       "    err ? h('div', { className: 'err' }, err) : null,",
       "    h('ul', { className: 'list' }, rows.length",
-      "      ? rows.map(function (r) { return h('li', { key: r.id }, String(" + (fields[0] ? "r." + fields[0].name + " || ('#' + r.id)" : "'#' + r.id") + "), h('button', { onClick: function () { del(r.id); } }, 'delete')); })",
-      "      : h('li', { className: 'empty' }, 'Nothing yet'))",
+      "      ? rows.map(function (r) { return h('li', { key: r.id }, String(" + (fields[0] ? "r." + fields[0].name + " || ('#' + r.id)" : "'#' + r.id") + "), h('button', { onClick: function () { del(r.id); } }, t('action.delete', 'Delete'))); })",
+      "      : h('li', { className: 'empty' }, t('list.empty', 'Nothing yet')))",
       "  );",
       "}",
       ""
@@ -322,20 +334,21 @@
     var first = ents[0];
     var firstFields = first ? (first.fields || []).filter(function (f) { return ['id', 'timestamp'].indexOf(f.type) < 0 && !(f.type === 'ref' && f.ref === 'user'); }) : [];
     var html =
-      '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
-      '<a href="#app" class="skip-link">Skip to content</a>\n' +
+      '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width, initial-scale=1">\n<title>' + s.name + '</title>\n<link rel="stylesheet" href="design-tokens.css">\n<link rel="stylesheet" href="app.css">\n</head>\n<body>\n' +
+      '<a href="#app" class="skip-link" data-i18n="app.skipToContent">Skip to content</a>\n' +
       '<header><img src="logo.svg" alt="' + s.name + ' logo" width="40" height="40"></header>\n<main id="app"></main>\n' +
-      '<script src="vendor/vue-lite.js"></script>\n<script src="app.js"></script>\n</body>\n</html>\n';
+      '<script src="i18n.js"></script>\n<script src="vendor/vue-lite.js"></script>\n<script src="app.js"></script>\n</body>\n</html>\n';
     var js = [
       "'use strict';",
       "/* " + s.name + " — a Vue-shaped component app on the vendored reactive runtime. */",
       "var createApp = CSVue.createApp, reactive = CSVue.reactive, h = CSVue.h;",
+      I18N_BRIDGE,
       "function api(path, opts) {",
       "  opts = opts || {}; var headers = Object.assign({ 'content-type': 'application/json' }, opts.headers || {});",
       "  var tok = localStorage.getItem('token'); if (tok) headers.authorization = 'Bearer ' + tok;",
-      "  return fetch(path, Object.assign({}, opts, { headers: headers })).then(function (r) { return r.text().then(function (t) { var j = null; try { j = JSON.parse(t); } catch (_) {} return { ok: r.ok, status: r.status, body: j }; }); });",
+      "  return fetch(path, Object.assign({}, opts, { headers: headers })).then(function (r) { return r.text().then(function (bt) { var j = null; try { j = JSON.parse(bt); } catch (_) {} return { ok: r.ok, status: r.status, body: j }; }); });",
       "}",
-      "createApp({",
+      "var __app = createApp({",
       "  setup: function () {",
       "    var st = reactive({ authed: " + (auth ? "!!localStorage.getItem('token')" : "true") + ", mode: 'login', email: '', pass: '', err: null, rows: [], form: {} });",
       "    function load() { " + (first ? "api('/api/" + first.table + "?limit=100').then(function (r) { st.rows = (r.body && r.body.rows) || []; });" : "") + " }",
@@ -350,53 +363,66 @@
       "    var st = ctx.st;",
       auth
         ? "    if (!st.authed) return h('div', {}, [ h('section', { class: 'card auth', 'aria-label': 'sign in' }, [\n" +
-          "      h('h2', {}, ['Sign in']),\n" +
+          "      h('h2', {}, [t('auth.heading', 'Sign in')]),\n" +
           "      h('form', { onSubmit: function (e) { e.preventDefault(); ctx.auth_(); } }, [\n" +
-          "        h('label', { for: 'vEmail' }, ['Email']),\n" +
-          "        h('input', { id: 'vEmail', type: 'email', autocomplete: 'email', 'aria-label': 'email', placeholder: 'you@example.com', value: st.email, onInput: function (e) { st.email = e.target.value; } }),\n" +
-          "        h('label', { for: 'vPass' }, ['Password']),\n" +
-          "        h('input', { id: 'vPass', type: 'password', autocomplete: 'current-password', 'aria-label': 'password', placeholder: 'password (8+)', value: st.pass, onInput: function (e) { st.pass = e.target.value; } }),\n" +
-          "        h('button', { type: 'submit' }, [st.mode === 'login' ? 'Sign in' : 'Create account']),\n" +
+          "        h('label', { for: 'vEmail' }, [t('auth.email', 'Email')]),\n" +
+          "        h('input', { id: 'vEmail', type: 'email', autocomplete: 'email', 'aria-label': t('auth.email', 'email'), placeholder: 'you@example.com', value: st.email, onInput: function (e) { st.email = e.target.value; } }),\n" +
+          "        h('label', { for: 'vPass' }, [t('auth.password', 'Password')]),\n" +
+          "        h('input', { id: 'vPass', type: 'password', autocomplete: 'current-password', 'aria-label': t('auth.password', 'password'), placeholder: 'password (8+)', value: st.pass, onInput: function (e) { st.pass = e.target.value; } }),\n" +
+          "        h('button', { type: 'submit' }, [st.mode === 'login' ? t('auth.signIn', 'Sign in') : t('auth.register', 'Create account')]),\n" +
           "        h('button', { type: 'button', id: 'authToggle', onClick: function () { st.mode = st.mode === 'login' ? 'register' : 'login'; } }, [st.mode === 'login' ? 'Need an account?' : 'Have an account?'])\n" +
           "      ]),\n" +
           "      st.err ? h('div', { class: 'err' }, [st.err]) : null\n" +
           "    ]) ]);\n"
         : "",
       "    return h('div', {}, [",
-      auth ? "      h('header', { class: 'bar' }, [h('h1', {}, ['" + s.name + "']), h('button', { onClick: ctx.logout }, ['Log out'])])," : "      h('h1', {}, ['" + s.name + "']),",
+      auth ? "      h('header', { class: 'bar' }, [h('h1', {}, [t('app.title', '" + s.name + "')]), h('button', { onClick: ctx.logout }, [t('auth.signOut', 'Sign out')])])," : "      h('h1', {}, [t('app.title', '" + s.name + "')]),",
       first
         ? "      h('section', { class: 'card', 'data-entity': '" + first.name + "' }, [\n" +
-          "        h('h2', {}, ['" + first.name + "']),\n" +
+          "        h('h2', {}, [t('entity." + first.name + "', '" + first.name + "')]),\n" +
           "        h('form', { class: 'create', onSubmit: function (e) { e.preventDefault(); ctx.add(); } }, [\n" +
           firstFields.map(function (f) {
-            var t = (f.type === 'int' || f.type === 'float') ? 'number' : 'text';
-            return "          h('input', { type: '" + t + "', 'aria-label': '" + f.name + "', placeholder: '" + f.name + "', value: st.form." + f.name + " || '', onInput: function (e) { st.form." + f.name + " = e.target.value; } }),";
+            var ftype = (f.type === 'int' || f.type === 'float') ? 'number' : 'text';
+            var lblKey = "field." + first.name + "." + f.name;
+            return "          h('input', { type: '" + ftype + "', 'aria-label': t('" + lblKey + "', '" + f.name + "'), placeholder: t('" + lblKey + "', '" + f.name + "'), value: st.form." + f.name + " || '', onInput: function (e) { st.form." + f.name + " = e.target.value; } }),";
           }).join('\n') + "\n" +
-          "          h('button', { type: 'submit' }, ['Add " + first.name + "'])\n" +
+          "          h('button', { type: 'submit' }, [t('action.add', 'Add') + ' " + first.name + "'])\n" +
           "        ]),\n" +
           "        st.err ? h('div', { class: 'err' }, [st.err]) : null,\n" +
-          "        h('ul', { class: 'list' }, (st.rows.length ? st.rows.map(function (r) { return h('li', {}, [String(" + (firstFields[0] ? "r." + firstFields[0].name + " || ('#' + r.id)" : "'#' + r.id") + "), h('button', { onClick: function () { ctx.del(r.id); } }, ['delete'])]); }) : [h('li', { class: 'empty' }, ['Nothing yet'])]))\n" +
+          "        h('ul', { class: 'list' }, (st.rows.length ? st.rows.map(function (r) { return h('li', {}, [String(" + (firstFields[0] ? "r." + firstFields[0].name + " || ('#' + r.id)" : "'#' + r.id") + "), h('button', { onClick: function () { ctx.del(r.id); } }, [t('action.delete', 'Delete')])]); }) : [h('li', { class: 'empty' }, [t('list.empty', 'Nothing yet')])]))\n" +
           "      ])"
         : "      h('p', {}, ['No entities'])",
       "    ]);",
       "  }",
-      "}).mount('#app');",
+      "});",
+      "function __mount() { __app.mount('#app'); }",
+      "__w.i18n ? i18nReady.then(__mount) : __mount();",
       ""
     ].filter(Boolean).join('\n');
-    return { 'public/index.html': html, 'public/app.js': js, 'public/app.css': frameworkCss(), 'public/vendor/vue-lite.js': vueRuntime(), 'public/logo.svg': logoSvg(s.name) };
+    return { 'public/index.html': html, 'public/app.js': js, 'public/app.css': frameworkCss(), 'public/design-tokens.css': designTokens(), 'public/vendor/vue-lite.js': vueRuntime(), 'public/logo.svg': logoSvg(s.name) };
+  }
+
+  // design tokens — the same contract as the vanilla scaffold's
+  // public/design-tokens.css, so Engine.Design.applyTokens() (a Figma / HTML
+  // reference) drives every framework frontend identically.
+  function designTokens() {
+    return ':root {\n  /* design tokens — overwrite via Engine.Design.applyTokens() from a Figma/HTML reference */\n' +
+      '  --color-bg: #ffffff;\n  --color-surface: #ffffff;\n  --color-accent: #1d4ed8;\n  --color-text: #111111;\n' +
+      '  --color-border: #dddddd;\n  --color-danger: #b91c1c;\n  --color-muted: #6b6b6b;\n' +
+      '  --font-sans: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;\n  --text-base: 15px;\n  --radius: 7px;\n  --space: 8px;\n}\n';
   }
 
   function frameworkCss() {
-    return "*{box-sizing:border-box}body{font:15px/1.5 system-ui,sans-serif;max-width:780px;margin:24px auto;padding:0 16px;color:#111}" +
+    return "*{box-sizing:border-box}body{font:var(--text-base,15px)/1.5 var(--font-sans,system-ui,sans-serif);max-width:780px;margin:24px auto;padding:0 16px;color:var(--color-text,#111);background:var(--color-bg,#fff)}" +
       "h1{margin:0 0 16px}h2{margin:0 0 10px;font-size:16px;text-transform:capitalize}" +
-      "label{font-size:12px;color:#444;width:100%;margin-bottom:-4px}" +
-      ".card{border:1px solid #ddd;border-radius:10px;padding:16px;margin-bottom:16px}.bar{display:flex;justify-content:space-between;align-items:center}" +
-      "form{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}input:not([type=checkbox]){flex:1;min-width:120px;padding:8px 10px;border:1px solid #767676;border-radius:7px;min-height:24px}" +
-      "button{padding:9px 14px;border:1px solid #1d4ed8;background:#1d4ed8;color:#fff;border-radius:7px;cursor:pointer;min-height:24px}" +
+      "label{font-size:12px;color:var(--color-muted,#444);width:100%;margin-bottom:-4px}" +
+      ".card{border:1px solid var(--color-border,#ddd);border-radius:calc(var(--radius,7px) + 3px);padding:16px;margin-bottom:16px;background:var(--color-surface,#fff)}.bar{display:flex;justify-content:space-between;align-items:center}" +
+      "form{display:flex;gap:var(--space,8px);flex-wrap:wrap;margin-bottom:10px}input:not([type=checkbox]){flex:1;min-width:120px;padding:8px 10px;border:1px solid #767676;border-radius:var(--radius,7px);min-height:24px}" +
+      "button{padding:9px 14px;border:1px solid var(--color-accent,#1d4ed8);background:var(--color-accent,#1d4ed8);color:#fff;border-radius:var(--radius,7px);cursor:pointer;min-height:24px}" +
       "ul{list-style:none;padding:0;margin:0}li{padding:6px 0;border-bottom:1px solid #eee;display:flex;justify-content:space-between;align-items:center}" +
-      ".err{color:#b91c1c}.empty{color:#6b6b6b}li button{background:transparent;color:#b91c1c;border-color:#b91c1c;font-size:12px;padding:6px 10px}" +
+      ".err{color:var(--color-danger,#b91c1c)}.empty{color:var(--color-muted,#6b6b6b)}li button{background:transparent;color:var(--color-danger,#b91c1c);border-color:var(--color-danger,#b91c1c);font-size:12px;padding:6px 10px}" +
       ".skip-link{position:absolute;left:-9999px;top:0;background:#000;color:#fff;padding:8px 12px;z-index:10}.skip-link:focus{left:8px}" +
-      "a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid #1d4ed8;outline-offset:2px}\n";
+      "a:focus-visible,button:focus-visible,input:focus-visible{outline:3px solid var(--color-accent,#1d4ed8);outline-offset:2px}\n";
   }
   function logoSvg(name) {
     return '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 40 40"><rect width="40" height="40" rx="9" fill="#2563eb"/><text x="20" y="27" font-size="20" fill="#fff" text-anchor="middle" font-family="system-ui">' + (name[0] || 'A').toUpperCase() + '</text></svg>\n';
@@ -453,6 +479,19 @@
       "  assert.match(idx, /app\\.js/);",
       "  assert.match(idx, /<html[^>]*\\blang=/);",
       "  assert.doesNotMatch(idx, /<img(?![^>]*\\balt=)[^>]*>/);",
+      "});",
+      "",
+      "test('the frontend is themed by design tokens and localised via i18n.js', () => {",
+      "  const dir = path.join(__dirname, '..', 'public');",
+      "  const idx = fs.readFileSync(path.join(dir, 'index.html'), 'utf8');",
+      "  assert.match(idx, /design-tokens\\.css/, 'links the design-token stylesheet');",
+      "  assert.match(idx, /i18n\\.js/, 'loads the i18n runtime');",
+      "  const tokens = fs.readFileSync(path.join(dir, 'design-tokens.css'), 'utf8');",
+      "  assert.match(tokens, /:root\\s*\\{[^}]*--color-accent/, 'declares design tokens on :root');",
+      "  const css = fs.readFileSync(path.join(dir, 'app.css'), 'utf8');",
+      "  assert.match(css, /var\\(--color-accent/, 'app.css consumes the accent token');",
+      "  const app = fs.readFileSync(path.join(dir, 'app.js'), 'utf8');",
+      "  assert.match(app, /\\bt\\(\\s*['\\\"][a-z]+\\.[a-zA-Z.]+['\\\"]/, 'strings routed through t(key, default)');",
       "});",
       ""
     ].join('\n');
