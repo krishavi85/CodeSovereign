@@ -2342,6 +2342,10 @@ function renderRecovery(){
       </div>
 
       ${renderRecoveryAcceptanceGoal()}
+      ${renderRequirementsVerification()}
+      ${renderWiringTrace()}
+      ${renderBuildMatrix()}
+      ${renderFeasibility()}
       ${renderCompletionAudit()}
 
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:18px">
@@ -4044,6 +4048,92 @@ function renderRecoveryWeightedHealth(){
   } catch (e) {
     return '<div style="color:var(--err);font-size:13px">weighted-health error: ' + esc(String(e && e.message || e)) + '</div>';
   }
+}
+
+function renderWiringTrace(){
+  try {
+    var w = null;
+    try { w = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('wiring-trace.json'); } catch (_) {}
+    if (!w || !w.present || !w.entities) return '';
+    var tt = w.totals || {};
+    var sc = tt.brokenChains === 0 ? 'var(--good)' : 'var(--err)';
+    var rows = w.entities.map(function (e){
+      var chain = (e.chain || []).map(function (c){
+        var col = c.ok ? 'var(--good)' : 'var(--err)';
+        return '<span style="color:' + col + '" title="' + esc(c.detail || (c.ok ? '' : 'missing')) + '">' + (c.ok ? '●' : '○') + ' ' + esc(c.link) + '</span>';
+      }).join(' <span style="color:var(--muted)">→</span> ');
+      return '<div style="font-size:11.5px;padding:4px 0;border-top:1px solid var(--line)">' +
+        '<b>' + esc(e.entity) + '</b>' + (e.complete ? '' : ' <span style="color:var(--err)">— ' + esc((e.breaks || [])[0] || 'broken') + '</span>') +
+        '<div style="margin-top:3px">' + chain + '</div></div>';
+    }).join('');
+    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+      '<h3 class="cs-h3" style="margin:0">Wiring Trace <span class="cs-muted" style="font-weight:400;font-size:12px">control → fetch → route → service → data layer → table</span></h3>' +
+      '<span style="font:800 15px Inter;color:' + sc + '">' + (tt.fullyWired || 0) + '/' + (tt.entities || 0) + '</span></div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">' + esc(w.summary || '') + '</div>' + rows + '</div>';
+  } catch (e) { return ''; }
+}
+
+function renderRequirementsVerification(){
+  try {
+    var rec = null;
+    try { rec = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('requirements-verification.json'); } catch (_) {}
+    if (!rec || !rec.requirements) return '';
+    var tt = rec.totals || {};
+    var sc = tt.coverage >= 85 ? 'var(--good)' : tt.coverage >= 55 ? 'var(--warn)' : 'var(--err)';
+    var dot = function (s){ return s === 'verified' ? 'var(--good)' : s === 'partial' ? 'var(--warn)' : (s === 'failing' || s === 'unmet') ? 'var(--err)' : 'var(--muted)'; };
+    var rows = rec.requirements.slice(0, 24).map(function (r){
+      return '<div style="display:grid;grid-template-columns:60px 70px 1fr;gap:8px;align-items:baseline;font-size:11.5px;padding:3px 0">' +
+        '<span style="font:600 10.5px ui-monospace,monospace">' + esc(r.id) + '</span>' +
+        '<span style="color:' + dot(r.status) + ';font-weight:600">' + esc(r.status) + '</span>' +
+        '<span style="color:var(--muted)">' + esc(String(r.statement).slice(0, 90)) + (r.origin === 'implied' ? ' <i>(implied)</i>' : '') + '</span></div>';
+    }).join('');
+    var missing = (rec.missing || []).length
+      ? '<div style="margin-top:8px;font-size:11.5px;color:var(--warn)">Missing (domain-implied): ' + rec.missing.map(function (m){ return esc(m.requirement); }).join(', ') + '</div>' : '';
+    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+      '<h3 class="cs-h3" style="margin:0">Requirements — verification record <span class="cs-muted" style="font-weight:400;font-size:12px">requested · implied · missing · verified</span></h3>' +
+      '<span style="font:800 15px Inter;color:' + sc + '">' + (tt.verified || 0) + '/' + (tt.total || 0) + '</span></div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">' + esc(rec.summary || '') + '</div>' +
+      rows + missing + '</div>';
+  } catch (e) { return ''; }
+}
+
+function renderBuildMatrix(){
+  try {
+    var BM = window.Engine && window.Engine.BuildMatrix;
+    var m = null;
+    try { m = (Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('build-matrix.json')) || (BM && BM.compute && BM.compute()); } catch (_) { m = BM && BM.compute && BM.compute(); }
+    if (!m || !m.rows) return '';
+    var col = function (s){ return /PASS|VERIFIED/.test(s) ? 'var(--good)' : /PARTIAL|GENERATED/.test(s) ? 'var(--warn)' : /BLOCKED/.test(s) ? 'var(--warn)' : /FAIL/.test(s) ? 'var(--err)' : 'var(--muted)'; };
+    var rows = m.rows.filter(function (r){ return r.status !== 'NOT_REQUESTED'; }).map(function (r){
+      var b = (r.blockers || []).slice(0, 1).join('; ');
+      return '<div style="display:grid;grid-template-columns:150px 90px 1fr;gap:10px;align-items:baseline;font-size:11.5px;padding:4px 0;border-top:1px solid var(--line)">' +
+        '<span style="font-weight:600">' + esc(r.label) + (r.target === m.requestedTarget ? ' <span style="color:var(--accent)">◀ requested</span>' : '') + '</span>' +
+        '<span style="color:' + col(r.status) + ';font-weight:700">' + esc(r.status) + '</span>' +
+        '<span style="color:var(--muted)">' + esc(b || (r.stages && Object.keys(r.stages).map(function (k){ return k + ':' + r.stages[k]; }).join(' · ')) || '') + '</span></div>';
+    }).join('');
+    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+      '<h3 class="cs-h3" style="margin:0">Build Matrix <span class="cs-muted" style="font-weight:400;font-size:12px">truthful per-target status</span></h3></div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">' + esc(m.summary || '') + '</div>' + rows + '</div>';
+  } catch (e) { return ''; }
+}
+
+function renderFeasibility(){
+  try {
+    var f = null;
+    try { f = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('feasibility.json'); } catch (_) {}
+    if (!f || !f.effort) return '';
+    var hc = f.host && f.host.ready === 'ready' ? 'var(--good)' : f.host && f.host.ready === 'missing-tools' ? 'var(--err)' : 'var(--muted)';
+    var missing = (f.host && f.host.checks || []).filter(function (c){ return c.present === false; });
+    return '<div class="card" style="padding:16px 20px;margin-top:18px">' +
+      '<h3 class="cs-h3" style="margin:0 0 6px">Feasibility <span class="cs-muted" style="font-weight:400;font-size:12px">host toolchain · effort · cost</span></h3>' +
+      '<div style="font-size:12px;color:var(--fg)">' + esc(f.summary || '') + '</div>' +
+      (missing.length ? '<div style="margin-top:6px;font-size:11.5px;color:' + hc + '">Install on this machine: ' + missing.map(function (c){ return '<code>' + esc(c.tool) + '</code> (' + esc(c.install) + ')'; }).join(' · ') + '</div>' : '') +
+      ((f.contradictions || []).length ? '<ul style="margin:8px 0 0;padding-left:18px;font-size:11.5px;color:var(--warn)">' + f.contradictions.map(function (c){ return '<li>' + esc(c.conflict) + ' — ' + esc(c.resolution) + '</li>'; }).join('') + '</ul>' : '') +
+      '</div>';
+  } catch (e) { return ''; }
 }
 
 function renderCompletionAudit(){

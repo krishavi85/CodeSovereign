@@ -37,6 +37,9 @@
     'assumptions.md':            'Inferred behavior — each with evidence and confidence',
     // requirements (spec 1)
     'requirements.json':         'Detected archetypes, domain-pack mandatory checklist, contradictions',
+    'requirements-verification.json': 'Per-requirement verification record — requested / implied / missing / verified, criteria + evidence refs + coverage history (spec §3)',
+    'feasibility.json':          'Feasibility — host toolchain check for the chosen stack + effort / hosting-cost estimate + constraint conflicts (spec §5 / §8)',
+    'build-matrix.json':         'Per-target build status board — web / desktop / extension / android / ios / evm / ml, truthful per-stage + blockers (spec §34)',
     'requirement-traceability.json': 'requirement -> components -> tests',
     'product-brief.md':          'Derived brief: archetypes, mandatory checklist, integrations, risks',
     'risk-register.json':        'Domain risks + detected contradictions',
@@ -45,6 +48,7 @@
     // architecture / connections (spec 3, 5)
     'connection-graph.json':     'Typed node/edge graph of the real wiring',
     'connection-health.json':    'Per-edge status: valid / broken / missing / circular / unused',
+    'wiring-trace.json':         'Deep per-entity wiring: UI control → fetch → route → service → data layer → table, link by link (spec §12)',
     'blast-radius.json':         'Change-impact report — files / tests / migrations / routes a change touches + rebuild/redeploy/risk (spec §59)',
     'recovery-loop.json':        'Last autonomous recovery loop — cycles, hypotheses tested, and whether the contract\'s acceptance criteria are satisfied (spec §21-24)',
     'recovery-prevention.json':  'How to stop the repaired defect classes recurring — lint/CI rules, not code review (spec §21-24)',
@@ -691,6 +695,11 @@
     if (window.Engine.Contract && window.Engine.Contract.load()) {
       safe(function () { window.Engine.Ledger && window.Engine.Ledger.build(); });
       safe(function () { window.Engine.DoD && window.Engine.DoD.evaluate(); });
+      // §3 — the per-requirement verification record (requested → implied →
+      // missing → verified), tied to the contract + the ledger.
+      safe(function () { window.Engine.Requirements && window.Engine.Requirements.verificationRecord && window.Engine.Requirements.verificationRecord(); });
+      // §5 + §8 — feasibility: host-capability check + effort / cost estimate
+      safe(function () { var f = window.Engine.Feasibility && window.Engine.Feasibility.analyze && window.Engine.Feasibility.analyze(); if (f && f.catch) f.catch(function () {}); });
     }
 
     // ---- documentation factory (spec §49) — after the gate so it folds in evidence ----
@@ -711,6 +720,12 @@
     safe(function () { window.Engine.Observability && window.Engine.Observability.analyze(); });
     safe(function () { window.Engine.Registry && window.Engine.Registry.analyze(); });
     safe(function () { if (window.Engine.Vision && window.Engine.Sovereign.read('design-reference.txt')) { var vp = window.Engine.Vision.analyze(); if (vp && vp.catch) vp.catch(function () {}); } });
+
+    // ---- deep wiring trace (spec §12): control → fetch → route → service → db → table ----
+    safe(function () { window.Engine.Wiring && window.Engine.Wiring.trace(); });
+
+    // ---- per-target build-matrix status board (spec §34) ----
+    safe(function () { window.Engine.BuildMatrix && window.Engine.BuildMatrix.compute(); });
 
     // ---- evidence-backed completion audit (spec §54) — rolls up every artefact above ----
     safe(function () { window.Engine.Audit && window.Engine.Audit.run(); });

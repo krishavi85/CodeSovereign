@@ -111,6 +111,15 @@ function probe() {
   out.host.ffmpeg = !!which('ffmpeg');
   out.host.cosign = !!which('cosign');
   out.host.verdaccio = !!which('verdaccio');
+  // general dev toolchain (feasibility check, spec §5 / §8)
+  out.host.node = true;                                  // we run on it
+  out.host.npm = !!which('npm');
+  out.host.git = !!which('git');
+  out.host.docker = !!which('docker');
+  out.host.python = !!(which('python') || which('python3'));
+  out.host.psql = !!which('psql');
+  out.host.go = !!which('go');
+  out.host.java = !!which('java');
   let playwright = false; try { require.resolve('playwright'); playwright = true; } catch (_) {}
   out.desktop = { available: true, canRun: !!(out.host.cargo || out.host.electron), cargo: out.host.cargo, electron: out.host.electron, tauriCli: !!which('tauri') };
   out.extension = { available: true, canRun: true, playwright, wxt: !!which('wxt'), plain: true };

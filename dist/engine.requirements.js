@@ -270,11 +270,113 @@
     }).catch(function () { return { archetypes: [], added: [] }; });
   }
 
+  /* ---------------- §3 per-requirement verification record ---------------- */
+  // requested → implied → missing → verified, as ONE durable record tied to the
+  // contract and the Evidence Ledger. Every requirement carries its origin, its
+  // machine-checkable criteria, the evidence refs behind each, a status, and a
+  // last-checked timestamp; the run's coverage is appended to a bounded history.
+  function S() { return Engine.Sovereign; }
+  function sovJSON(p) {
+    try { var v = S() && S().read(p); if (v == null) return null; return typeof v === 'string' ? JSON.parse(v) : v; }
+    catch (_) { return null; }
+  }
+  function verificationRecord(contract) {
+    contract = contract || (Engine.Contract && Engine.Contract.load && Engine.Contract.load());
+    if (!contract || !Array.isArray(contract.requirements)) {
+      return { ok: false, reason: 'no product contract' };
+    }
+    var ledger = sovJSON('evidence-ledger.json');
+    var claimByReq = {};
+    ((ledger && ledger.claims) || []).forEach(function (c) { claimByReq[c.requirementId] = c; });
+    var reqsModel = sovJSON('requirements.json');
+    var prev = sovJSON('requirements-verification.json') || {};
+    var now = Date.now();
+
+    var mandatoryIds = (contract.scope && Array.isArray(contract.scope.mandatory) && contract.scope.mandatory)
+      || contract.requirements.filter(function (r) { return r.priority === 'mandatory' || r.priority === 'must'; }).map(function (r) { return r.id; });
+
+    var STATUS_OF = function (conf, mandatory) {
+      if (conf === 'VERIFIED') return 'verified';
+      if (conf === 'PARTIAL') return 'partial';
+      if (conf === 'FAILING') return 'failing';
+      // no machine criteria fired — unproven; for a mandatory req that is "unmet"
+      return mandatory ? 'unmet' : 'unverified';
+    };
+
+    var records = contract.requirements.map(function (r) {
+      var c = claimByReq[r.id] || null;
+      var mandatory = mandatoryIds.indexOf(r.id) >= 0;
+      var conf = c ? c.confidence : (r.status ? String(r.status).toUpperCase() : 'UNVERIFIED');
+      var evidence = c ? (c.evidence || []) : (r.acceptanceCriteria || []).map(function (x) { return { kind: x.kind, check: x.check || null, ref: null, result: 'NA' }; });
+      return {
+        id: r.id,
+        statement: r.statement,
+        category: r.category || null,
+        priority: r.priority || (mandatory ? 'mandatory' : 'optional'),
+        origin: r.source === 'llm' ? 'implied' : 'requested',
+        dependsOn: r.dependsOn || [],
+        status: STATUS_OF(conf, mandatory),
+        confidence: conf,
+        assertions: c ? c.assertions : evidence.filter(function (e) { return e.result !== 'NA'; }).length,
+        failures: c ? c.failures : 0,
+        criteria: evidence.map(function (e) { return { kind: e.kind, check: e.check || null, ref: e.ref || null, result: e.result }; }),
+        evidenceRefs: evidence.filter(function (e) { return e.ref; }).map(function (e) { return e.ref; }),
+        lastCheckedAt: now
+      };
+    });
+
+    // "missing": domain-pack mandatory items with no matching contract requirement
+    // AND not visible in the codebase (from requirements.json's checklist).
+    var reqText = records.map(function (r) { return String(r.statement).toLowerCase(); }).join(' | ');
+    var missing = (((reqsModel && reqsModel.mandatoryChecklist) || [])
+      .filter(function (m) { return m.status === 'not-found'; })
+      .filter(function (m) {
+        var kw = String(m.requirement).toLowerCase().split(/[ /]+/).filter(function (w) { return w.length > 3; });
+        return !kw.some(function (w) { return reqText.indexOf(w) >= 0; });
+      })
+      .map(function (m) { return { requirement: m.requirement, source: m.source || 'domain-pack', why: 'implied by the detected domain but neither specified nor found in the build' }; }));
+
+    var by = function (s) { return records.filter(function (r) { return r.status === s; }).length; };
+    var totals = {
+      total: records.length,
+      requested: records.filter(function (r) { return r.origin === 'requested'; }).length,
+      implied: records.filter(function (r) { return r.origin === 'implied'; }).length,
+      missing: missing.length,
+      verified: by('verified'), partial: by('partial'), failing: by('failing'),
+      unverified: by('unverified'), unmet: by('unmet'),
+      mandatory: mandatoryIds.length,
+      mandatoryVerified: records.filter(function (r) { return mandatoryIds.indexOf(r.id) >= 0 && r.status === 'verified'; }).length
+    };
+    totals.coverage = totals.total ? Math.round((totals.verified + 0.5 * totals.partial) / totals.total * 100) : 0;
+    totals.mandatoryCoverage = totals.mandatory ? Math.round(totals.mandatoryVerified / totals.mandatory * 100) : 100;
+
+    var history = Array.isArray(prev.history) ? prev.history.slice(-19) : [];
+    history.push({ at: now, verified: totals.verified, total: totals.total, coverage: totals.coverage, mandatoryCoverage: totals.mandatoryCoverage });
+
+    var record = {
+      generatedAt: now,
+      product: contract.product && contract.product.name,
+      totals: totals,
+      requirements: records,
+      missing: missing,
+      history: history,
+      allMandatoryVerified: totals.mandatory > 0 && totals.mandatoryVerified === totals.mandatory && missing.length === 0,
+      summary: totals.verified + '/' + totals.total + ' requirements verified against real evidence (' + totals.coverage + '% coverage)' +
+        (missing.length ? ', ' + missing.length + ' domain-implied requirement(s) missing' : '') +
+        (by('unmet') ? ', ' + by('unmet') + ' mandatory requirement(s) unmet' : '') + '.'
+    };
+    if (S()) S().write('requirements-verification.json', record);
+    return record;
+  }
+
+  function loadVerification() { return sovJSON('requirements-verification.json'); }
+
   Engine.Requirements = {
     PACKS: PACKS, WEIGHTS: WEIGHTS, __aiAssist: true,
     detectArchetypes: detectArchetypes, activate: activate, aiAssist: aiAssist,
     contradictions: contradictions, classify: classify,
-    scoreStack: scoreStack, questions: questions
+    scoreStack: scoreStack, questions: questions,
+    verificationRecord: verificationRecord, loadVerification: loadVerification
   };
   window.Requirements = Engine.Requirements;
   console.info('[Requirements] domain packs + contradiction detection ready — Engine.Requirements');

@@ -63,6 +63,8 @@
   var EVIDENCE = [
     'intake.json',
     'product-contract.json',
+    'requirements-verification.json',
+    'feasibility.json',
     'evidence-ledger.json',
     'definition-of-done.json',
     'execution-evidence.json',
@@ -99,6 +101,8 @@
     'blockchain-evidence.json',
     'ml-evidence.json',
     'documentation-index.json',
+    'wiring-trace.json',
+    'build-matrix.json',
     'quality-findings.json',
     'completion-audit.json',
     'blast-radius.json',

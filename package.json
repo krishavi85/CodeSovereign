@@ -22,6 +22,7 @@
     "dist:linux": "electron-builder --linux --publish never",
     "dist:all": "electron-builder -mwl --publish never",
     "dist:dir": "electron-builder --dir --publish never",
+    "installer:verify": "node scripts/verify-installer.js",
     "postinstall": "electron-builder install-app-deps || exit 0"
   },
   "devDependencies": {
