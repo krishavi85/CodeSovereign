@@ -156,11 +156,15 @@
       if (S()) S().write('otel-evidence.json', { generatedAt: Date.now(), present: false, capability: 'observability', support: 'SUPPORTED', note: 'no Node backend' });
       return { present: false };
     }
-    var f = Object.assign({}, files(), sentryFiles());
+    // OTel wiring is universal; the self-hosted Sentry adapter is opt-in
+    // (Engine.Observability.sentryFiles()) — it needs `@sentry/node` + a DSN.
+    var wantsSentry = false;
+    try { var c = Engine.Contract && Engine.Contract.load && Engine.Contract.load(); wantsSentry = !!(c && /sentry|error monitoring|crash reporting service/i.test(JSON.stringify(c))); } catch (_) {}
+    var f = wantsSentry ? Object.assign({}, files(), sentryFiles()) : files();
     var wrote = [];
     Object.keys(f).forEach(function (p) { try { FS().write(p, f[p]); wrote.push(p); } catch (_) {} });
     var report = { generatedAt: Date.now(), present: true, capability: 'observability', support: 'SUPPORTED',
-      status: 'GENERATED', wrote: wrote,
+      status: 'GENERATED', wrote: wrote, sentry: wantsSentry ? 'wired (opt-in)' : 'available via Engine.Observability.sentryFiles()',
       note: 'OTLP exporter wired (src/otel.js); run the collector with `docker compose -f otel-compose.yml up` then Engine.Observability.verify()',
       localFallback: '/debug/traces + /metrics + logs/crashes/ are always on',
       external: { HOSTED_SENTRY_EXPORT: 'BLOCKED_CREDENTIAL_REQUIRED' } };
