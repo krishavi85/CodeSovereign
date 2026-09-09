@@ -210,8 +210,15 @@
       "}",
       "async function reset() { try { fs.rmSync(DIR, { recursive: true, force: true }); } catch (_) {} fs.mkdirSync(DIR, { recursive: true }); }",
       "async function migrate() { fs.mkdirSync(DIR, { recursive: true }); for (const e of schema.entities) if (!fs.existsSync(file(e.table))) save(e, { rows: [], seq: 0 }); return schema.entities.map((e) => e.table); }",
+      "// §44 — the schema state a running instance reports at /debug/version",
+      "function state() {",
+      "  const tables = schema.entities.map((e) => e.table);",
+      "  let applied = [];",
+      "  try { applied = tables.filter((t) => fs.existsSync(file(t))); } catch (_) {}",
+      "  return { engine: 'json', dir: DIR, tables, tablesApplied: applied.length + '/' + tables.length, entities: schema.entities.length, migrated: applied.length === tables.length };",
+      "}",
       "",
-      "module.exports = { create, list, get, update, remove, reset, migrate, schema };",
+      "module.exports = { create, list, get, update, remove, reset, migrate, schema, state };",
       ""
     ].join('\n');
   }
@@ -275,7 +282,14 @@
       "}",
       "async function remove(name, id) { const e = ent(name); const r = await q('DELETE FROM ' + e.table + ' WHERE id = $1', [id]); return r.rowCount > 0; }",
       "async function reset() { for (const e of schema.entities.slice().reverse()) await q('TRUNCATE ' + e.table + ' RESTART IDENTITY CASCADE').catch(() => {}); }",
-      "module.exports = { create, list, get, update, remove, reset, migrate, schema };",
+      "async function state() {",
+      "  const tables = schema.entities.map((e) => e.table);",
+      "  let present = [];",
+      "  try { const r = await q(\"SELECT tablename FROM pg_tables WHERE schemaname='public'\"); present = r.rows.map((x) => x.tablename); } catch (_) {}",
+      "  const applied = tables.filter((t) => present.indexOf(t) >= 0);",
+      "  return { engine: 'postgres', tables, tablesApplied: applied.length + '/' + tables.length, entities: schema.entities.length, migrated: applied.length === tables.length };",
+      "}",
+      "module.exports = { create, list, get, update, remove, reset, migrate, schema, state };",
       ""
     ].join('\n');
   }

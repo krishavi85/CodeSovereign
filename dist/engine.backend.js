@@ -119,6 +119,14 @@
     lines.push("");
     lines.push("// ---- ops: uptime, counters, access log, tracing, crash capture (blueprint §43-46) ----");
     lines.push("const STARTED = Date.now();");
+    lines.push("// §44 — the running instance knows its exact source + build (version.json is");
+    lines.push("//        written by `npm run version` in CI/build; falls back to package.json).");
+    lines.push("const VERSION = (() => {");
+    lines.push("  try { return JSON.parse(fs.readFileSync(path.join(__dirname, 'version.json'), 'utf8')); }");
+    lines.push("  catch (_) { try { return { version: require('./package.json').version, commit: 'dev', builtAt: null }; } catch (__) { return { version: '0.0.0', commit: 'unknown' }; } }");
+    lines.push("})();");
+    lines.push("const ACCESS_LOG = path.join(__dirname, 'logs', 'access.log');");
+    lines.push("function appendAccess(rec) { if (LOG_SILENT) return; try { fs.mkdirSync(path.dirname(ACCESS_LOG), { recursive: true }); fs.appendFileSync(ACCESS_LOG, JSON.stringify(rec) + '\\n'); } catch (_) {} }");
     lines.push("const metrics = { requests: 0, inflight: 0, byStatus: {}, byMethod: {}, errors: 0, crashes: 0, latencies: [] };");
     lines.push("const traces = []; // ring buffer of the last 100 request spans");
     lines.push("const LOG_SILENT = process.env.LOG === 'silent' || process.env.NODE_ENV === 'test';");
@@ -148,7 +156,8 @@
     lines.push("    if (res.statusCode >= 500) metrics.errors++;");
     lines.push("    tr.status = res.statusCode; tr.ms = ms;");
     lines.push("    traces.push(tr); if (traces.length > 100) traces.shift();");
-    lines.push("    if (!LOG_SILENT) { try { console.log(JSON.stringify({ t: new Date().toISOString(), level: res.statusCode >= 500 ? 'error' : 'info', msg: 'request', trace: tr.id, method: req.method, path: tr.path, status: res.statusCode, ms })); } catch (_) {} }");
+    lines.push("    const _logRec = { t: new Date(tr.start).toISOString(), level: res.statusCode >= 500 ? 'error' : 'info', msg: 'request', traceId: tr.id, method: req.method, path: tr.path, status: res.statusCode, ms, commit: VERSION.commitShort || VERSION.commit, version: VERSION.version };");
+    lines.push("    if (!LOG_SILENT) { try { console.log(JSON.stringify(_logRec)); } catch (_) {} appendAccess(_logRec); }");
     lines.push("  });");
     lines.push("}");
     lines.push("function pct(a, p) { if (!a.length) return 0; const s = a.slice().sort((x, y) => x - y); return s[Math.min(s.length - 1, Math.floor(p / 100 * s.length))]; }");
@@ -171,7 +180,7 @@
     lines.push("// crash capture: a structured record per uncaught error, and a counter");
     lines.push("function recordCrash(kind, err) {");
     lines.push("  metrics.crashes++;");
-    lines.push("  const rec = { t: new Date().toISOString(), kind, message: String(err && err.message || err), stack: String(err && err.stack || '').split('\\n').slice(0, 12) };");
+    lines.push("  const rec = { t: new Date().toISOString(), kind, message: String(err && err.message || err), stack: String(err && err.stack || '').split('\\n').slice(0, 12), commit: VERSION.commitShort || VERSION.commit, version: VERSION.version };");
     lines.push("  try { fs.mkdirSync(path.join(__dirname, 'logs', 'crashes'), { recursive: true }); fs.writeFileSync(path.join(__dirname, 'logs', 'crashes', Date.now() + '.json'), JSON.stringify(rec, null, 2)); } catch (_) {}");
     lines.push("  try { console.error(JSON.stringify(Object.assign({ level: 'fatal', msg: 'crash' }, rec))); } catch (_) {}");
     lines.push("}");
@@ -186,7 +195,12 @@
     lines.push("    if (u.pathname === '/healthz') return send(res, 200, { ok: true, uptime_s: Math.round((Date.now() - STARTED) / 1000) });");
     lines.push("    if (u.pathname === '/readyz') { try { " + (resources[0] || withAuth ? "await db.list('" + (resources[0] ? resources[0].name : 'user') + "', { limit: 1 }); " : "") + "return send(res, 200, { ready: true }); } catch (e) { return send(res, 503, { ready: false, error: String(e.message || e) }); } }");
     lines.push("    if (u.pathname === '/metrics') return send(res, 200, metricsText(), 'text/plain; version=0.0.4');");
-    lines.push("    if (u.pathname === '/debug/traces') { if (process.env.NODE_ENV === 'production' && !process.env.DEBUG_ENDPOINTS) return send(res, 404, { error: 'not found' }); return send(res, 200, { count: traces.length, traces: traces.slice(-25) }); }");
+    lines.push("    if (u.pathname === '/debug/traces') { if (process.env.NODE_ENV === 'production' && !process.env.DEBUG_ENDPOINTS) return send(res, 404, { error: 'not found' }); return send(res, 200, { count: traces.length, version: VERSION.version, commit: VERSION.commitShort || VERSION.commit, traces: traces.slice(-25) }); }");
+    lines.push("    // §44 — production diagnosis: the exact source + schema this instance is running");
+    lines.push("    if (u.pathname === '/debug/version') {");
+    lines.push("      let dbState = null; try { dbState = (db.state && db.state()) || null; } catch (_) {}");
+    lines.push("      return send(res, 200, { version: VERSION.version, commit: VERSION.commit, commitShort: VERSION.commitShort || null, branch: VERSION.branch || null, tag: VERSION.tag || null, builtAt: VERSION.builtAt || null, node: process.version, uptime_s: Math.round((Date.now() - STARTED) / 1000), pid: process.pid, db: dbState, crashes: metrics.crashes });");
+    lines.push("    }");
     lines.push("    if (u.pathname.startsWith('/api/') && !rateLimit(req)) return send(res, 429, { error: 'rate limit exceeded' });");
     if (withGraphQL) {
       lines.push("    if (u.pathname === '/graphql') return graphqlHandler(req, res, req.method === 'GET' ? '' : await new Promise((rs) => { let b = ''; req.on('data', (c) => b += c); req.on('end', () => rs(b)); }));");

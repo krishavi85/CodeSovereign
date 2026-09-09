@@ -360,7 +360,8 @@
     var scripts = {
       dev: 'node server.js --port=4319', start: 'node server.js --port=4319',
       migrate: 'node scripts/migrate.js', test: 'node --test --test-concurrency=1',
-      build: 'node scripts/build.js', lint: 'node scripts/lint.js'
+      build: 'node scripts/build.js', lint: 'node scripts/lint.js',
+      version: 'node scripts/version.js', diagnose: 'node scripts/diagnose.js'
     };
     if (s.jobs) scripts.worker = 'node src/worker.js';
     var pj = { name: s.name, version: '0.1.0', private: true,
@@ -383,8 +384,55 @@
         "  const src = fs.readFileSync(f, 'utf8');\n  try { new vm.Script(src, { filename: f }); } catch (e) { console.error('PARSE ' + f + ': ' + e.message); problems++; continue; }\n" +
         "  src.split('\\n').forEach((l, i) => { if (/^\\s*var\\s/.test(l)) { console.error('NO-VAR ' + f + ':' + (i + 1)); problems++; } });\n}\n" +
         "console.log(problems ? problems + ' lint problem(s)' : 'lint clean'); process.exit(problems ? 1 : 0);\n",
-      '.gitignore': 'node_modules/\ndist/\n.data/\n.sovereign/\nlogs/\ndelivery/\n',
+      '.gitignore': 'node_modules/\ndist/\n.data/\n.sovereign/\nlogs/\ndelivery/\nversion.json\n',
       '.env.example': '# ' + s.name + '\nPORT=4319\n# For production, point the data layer at Postgres:\n# DATABASE_URL=postgres://user:pass@host:5432/' + s.name + '\n',
+      // §44 — stamp a build with its version / commit so a running instance can be
+      // correlated back to the exact source + schema. Run before build / deploy.
+      'scripts/version.js':
+        "'use strict';\n" +
+        "// writes version.json — { version, commit, branch, tag, builtAt, node }.\n" +
+        "const fs = require('fs'); const path = require('path'); const cp = require('child_process');\n" +
+        "const root = path.join(__dirname, '..');\n" +
+        "function git(args) { try { return cp.execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim(); } catch (_) { return ''; } }\n" +
+        "const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));\n" +
+        "const info = {\n" +
+        "  version: pkg.version || '0.0.0',\n" +
+        "  commit: process.env.GITHUB_SHA || git(['rev-parse', 'HEAD']) || 'unknown',\n" +
+        "  commitShort: (process.env.GITHUB_SHA || git(['rev-parse', '--short', 'HEAD']) || 'unknown').slice(0, 12),\n" +
+        "  branch: process.env.GITHUB_REF_NAME || git(['rev-parse', '--abbrev-ref', 'HEAD']) || 'unknown',\n" +
+        "  tag: git(['describe', '--tags', '--exact-match']) || null,\n" +
+        "  dirty: !!git(['status', '--porcelain']),\n" +
+        "  builtAt: new Date().toISOString(),\n" +
+        "  node: process.version\n" +
+        "};\n" +
+        "fs.writeFileSync(path.join(root, 'version.json'), JSON.stringify(info, null, 2) + '\\n');\n" +
+        "console.log('version.json ->', info.version, info.commitShort, info.branch + (info.dirty ? ' (dirty)' : ''));\n",
+      // §44 — production diagnosis: correlate a request / time window across the
+      // access log, crash files, the running version, and the DB schema state.
+      'scripts/diagnose.js':
+        "'use strict';\n" +
+        "// usage: node scripts/diagnose.js <traceId> | --since 2024-01-01T00:00 | --last 20\n" +
+        "const fs = require('fs'); const path = require('path');\n" +
+        "const root = path.join(__dirname, '..');\n" +
+        "const arg = process.argv[2] || '--last'; const val = process.argv[3];\n" +
+        "function readJson(p, d) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch (_) { return d; } }\n" +
+        "const version = readJson(path.join(root, 'version.json'), { version: 'dev', commit: 'unknown' });\n" +
+        "// access log — one JSON object per line (server.js writes logs/access.log)\n" +
+        "let lines = [];\n" +
+        "try { lines = fs.readFileSync(path.join(root, 'logs', 'access.log'), 'utf8').split(/\\n/).filter(Boolean).map((l) => { try { return JSON.parse(l); } catch (_) { return { raw: l }; } }); } catch (_) {}\n" +
+        "let match = [];\n" +
+        "if (arg === '--since' && val) match = lines.filter((l) => (l.t || '') >= val);\n" +
+        "else if (arg === '--last') match = lines.slice(-(Number(val) || 20));\n" +
+        "else match = lines.filter((l) => l.traceId === arg || l.trace === arg);\n" +
+        "// crash files in the same window\n" +
+        "let crashes = [];\n" +
+        "try { crashes = fs.readdirSync(path.join(root, 'logs', 'crashes')).map((n) => readJson(path.join(root, 'logs', 'crashes', n), null)).filter(Boolean); } catch (_) {}\n" +
+        "if (match.length && match[0].t) { const lo = match[0].t, hi = match[match.length - 1].t; crashes = crashes.filter((c) => c.t >= lo && c.t <= hi); }\n" +
+        "// DB schema state\n" +
+        "let db = { engine: 'unknown', migrations: [] };\n" +
+        "try { const d = require('../src/db'); if (d.state) db = d.state(); } catch (_) {}\n" +
+        "const report = { generatedAt: new Date().toISOString(), version, query: { arg, val }, requests: match, crashes, db };\n" +
+        "console.log(JSON.stringify(report, null, 2));\n",
       'Dockerfile':
         'FROM node:20-alpine\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci --omit=dev || true\nCOPY . .\nRUN node scripts/migrate.js\nEXPOSE 4319\n' +
         'HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://localhost:4319/ || exit 1\nCMD ["node", "server.js", "--port=4319"]\n',
@@ -393,8 +441,39 @@
         '  quality:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with: { node-version: 20 }\n' +
         '      - run: npm ci || npm install\n      - run: npm run lint\n      - run: npm run migrate\n      - run: npm test\n' +
         '  build:\n    needs: [quality]\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n      - uses: actions/setup-node@v4\n        with: { node-version: 20 }\n' +
-        '      - run: npm ci || npm install\n      - run: npm run build\n      - uses: actions/upload-artifact@v4\n        with: { name: dist, path: dist/ }\n' +
+        '      - run: npm ci || npm install\n      - run: node scripts/version.js\n      - run: npm run build\n      - uses: actions/upload-artifact@v4\n        with: { name: dist, path: dist/ }\n' +
         '  deploy:\n    needs: [build]\n    runs-on: ubuntu-latest\n    environment: production\n    steps:\n      - run: echo "deploy here"\n',
+      // §39 — the delivery workflow: a version tag → full verification → a GitHub
+      // Release with the delivery archive + SBOM + provenance + checksums +
+      // the Sovereign Release Certificate attached. Only the final `gh release`
+      // step is credential-gated (GITHUB_TOKEN is provided by Actions itself).
+      '.github/workflows/release.yml':
+        'name: Release\non:\n  push:\n    tags: ["v*"]\npermissions:\n  contents: write\njobs:\n' +
+        '  verify:\n    runs-on: ubuntu-latest\n    steps:\n' +
+        '      - uses: actions/checkout@v4\n        with: { fetch-depth: 0 }\n' +
+        '      - uses: actions/setup-node@v4\n        with: { node-version: 20 }\n' +
+        '      - run: npm ci || npm install\n' +
+        '      - run: node scripts/version.js\n' +
+        '      - run: npm run lint\n' +
+        '      - run: npm run migrate\n' +
+        '      - run: npm test\n' +
+        '      - run: npm run build\n' +
+        '  deliver:\n    needs: [verify]\n    runs-on: ubuntu-latest\n    steps:\n' +
+        '      - uses: actions/checkout@v4\n        with: { fetch-depth: 0 }\n' +
+        '      - uses: actions/setup-node@v4\n        with: { node-version: 20 }\n' +
+        '      - run: npm ci || npm install\n' +
+        '      - run: node scripts/version.js\n' +
+        '      - run: npm run build\n' +
+        '      - name: SBOM + provenance + checksums\n        run: node scripts/sign.js || true\n' +
+        '      - name: Assemble the delivery archive\n' +
+        '        run: mkdir -p delivery && zip -r "delivery/' + s.name + '-${{ github.ref_name }}.zip" server.js src public db package.json README.md CHANGELOG.md docs scripts version.json SBOM.spdx.json provenance.json checksums.sha256 .sovereign 2>/dev/null || true\n' +
+        '      - name: GitHub Release\n' +
+        '        uses: softprops/action-gh-release@v2\n' +
+        '        with:\n' +
+        '          body_path: RELEASE_NOTES.md\n' +
+        '          fail_on_unmatched_files: "false"\n' +
+        '          files: "delivery/' + s.name + '-*.zip\\nSBOM.spdx.json\\nprovenance.json\\nchecksums.sha256\\n.sovereign/release-certificate.md"\n' +
+        '        env:\n          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n',
       'README.md':
         '# ' + s.name + '\n\nGenerated by **CodeSovereign** — a complete, dependency-free full-stack app.\n\n' +
         '- **Backend** `server.js` — REST API, ' + (s.auth ? 'session auth + RBAC, ' : '') + 'CRUD per entity\n' +
