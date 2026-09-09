@@ -674,7 +674,9 @@
           if (ar.status === 'PARTIAL') {
             run.partial = true;
             var stg = (ar.stages || {});
-            run.resultReason = (ar.note || (run.target + ': partial verification')) +
+            run.resultReason = (ar.note || (run.target + ' — SUPPORTED WITH TARGET-SPECIFIC EXECUTION: every stage this host can run passed')) +
+              (ar.reason && !ar.note ? ' (' + ar.reason + ')' : '') +
+              (ar.need ? '. Provide the runtime to finish: ' + ar.need : '') +
               (e.dodPass ? '' : ' The achievable-stage Definition-of-Done gate did not fully clear: ' + ((e.dodFailing || []).join(', ') || '') + '.');
             transition(run, e.dodPass ? 'PARTIAL' : 'FAILED',
               e.dodPass ? 'source + static verified; runtime stages need host tooling' : 'partial run but DoD gate incomplete');

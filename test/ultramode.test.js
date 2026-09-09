@@ -81,7 +81,16 @@ function makeEnv(world) {
       evidence: { target: 'ios', status: 'PARTIAL', sourceGeneration: 'PASS', staticValidation: 'PASS', build: 'BLOCKED', signing: 'NOT_RUN', deviceExecution: 'BLOCKED', simulatorExecution: 'BLOCKED', blockers: [{ stage: 'build', reason: 'MACOS_XCODE_REQUIRED' }] },
       note: 'Native iOS — SUPPORTED WITH TARGET-SPECIFIC EXECUTION. source generation: PASS · static validation: PASS · build: BLOCKED · simulator: BLOCKED'
     }),
-    ml: () => Promise.resolve(world.adapterResult || { status: 'BLOCKED', reason: 'NO_WORLD_RESULT' })
+    ml: () => Promise.resolve(world.adapterResult || { status: 'BLOCKED', reason: 'NO_WORLD_RESULT' }),
+    run: (kind) => Promise.resolve(world.adapterResult || (kind === 'extension'
+      ? { status: 'PARTIAL', capability: 'browser-extension', reason: 'PLAYWRIGHT_REQUIRED_FOR_LOAD_UNPACKED', need: 'npm i -D playwright && npx playwright install chromium',
+          evidenceFile: 'extension-evidence.json', stages: { sourceGeneration: 'PASS', staticValidation: 'PASS', build: 'PASS', package: 'SKIPPED', loadUnpacked: 'SKIPPED' },
+          evidence: { capability: 'browser-extension', status: 'PARTIAL', reason: 'PLAYWRIGHT_REQUIRED_FOR_LOAD_UNPACKED', stages: { sourceGeneration: 'PASS', staticValidation: 'PASS', build: 'PASS', package: 'SKIPPED', loadUnpacked: 'SKIPPED' } } }
+      : kind === 'desktop'
+      ? { status: 'PARTIAL', capability: 'native-desktop', framework: 'tauri', reason: 'RUST_CORE_COMPILES_FULL_PACKAGE_NEEDS_TAURI_CLI', need: 'npm i -D @tauri-apps/cli + a system webview',
+          evidenceFile: 'desktop-evidence.json', stages: { sourceGeneration: 'PASS', compileCheck: 'PASS', test: 'PASS', build: 'BLOCKED_TAURI_CLI_REQUIRED', launch: 'SKIPPED' },
+          evidence: { capability: 'native-desktop', framework: 'tauri', status: 'PARTIAL', stages: { sourceGeneration: 'PASS', compileCheck: 'PASS', test: 'PASS', build: 'BLOCKED_TAURI_CLI_REQUIRED', launch: 'SKIPPED' } } }
+      : { status: 'BLOCKED', reason: 'NO_WORLD_RESULT' }))
   } : undefined;
 
   win.Engine = { FS, Sovereign };
@@ -89,7 +98,7 @@ function makeEnv(world) {
   for (const f of ['engine-universal.js', 'engine.schema.js', 'engine.auth.js', 'engine.jobs.js',
                    'engine.backend.js', 'engine.scaffold.js', 'engine.testgen.js', 'engine.deploy.js', 'engine.docs.js', 'engine.delivery.js',
                    'engine.intent.js', 'engine.contract.js', 'engine.journeys.js', 'engine.runtime-router.js', 'engine.blockchain.js',
-                   'engine.mobile.ios.js', 'engine.mobile.js', 'engine.ml.js']) {
+                   'engine.mobile.ios.js', 'engine.mobile.js', 'engine.ml.js', 'engine.desktop.js', 'engine.extension.js']) {
     vm.runInContext(load(f), win, { filename: f });
   }
 
@@ -117,6 +126,19 @@ function makeEnv(world) {
         const dod = { PASS, mode: 'target', target: 'ios', partial: PASS && !full,
           criteria: { artifactGenerated: !!iev.sourceGeneration, sourceGeneration: iev.sourceGeneration === 'PASS', staticValidation: iev.staticValidation === 'PASS', noStageFailed: !anyFail, securityGatesPass: true, architectureSound: true, privacyRespected: true },
           detail: { stages: iev, fullyVerified: full } };
+        Sovereign.write('definition-of-done.json', dod);
+        return dod;
+      }
+      if (contract && (contract.target === 'desktop' || contract.target === 'extension')) {
+        const sev = Sovereign.read(contract.target === 'desktop' ? 'desktop-evidence.json' : 'extension-evidence.json') || {};
+        const st = sev.stages || {};
+        const anyFail = Object.keys(st).some((k) => st[k] === 'FAIL');
+        const genPass = st.sourceGeneration === 'PASS' || st.staticValidation === 'PASS' || st.compileCheck === 'PASS';
+        const full = sev.status === 'PASS';
+        const PASS = ['PASS', 'PARTIAL', 'VALID', 'GENERATED'].includes(sev.status) && !anyFail && genPass;
+        const dod = { PASS, mode: 'target', target: contract.target, partial: PASS && !full,
+          criteria: { artifactGenerated: !!sev.status, sourceGeneration: genPass, noStageFailed: !anyFail, securityGatesPass: true, architectureSound: true, privacyRespected: true },
+          detail: { stages: st, adapterStatus: sev.status }, generatedAt: Date.now() };
         Sovereign.write('definition-of-done.json', dod);
         return dod;
       }
@@ -420,6 +442,25 @@ module.exports = async function (t) {
     t.equal('ML target detected', run.target, 'ml-training');
     t.equal('adapter FAIL -> FAILED', run.state, 'FAILED');
     t.ok('the FAILED reason carries the adapter reason', /LOSS_DID_NOT_DECREASE|verification failed/i.test(run.resultReason));
+  }
+
+  /* ---------- 8d. RUNTIME TARGET: browser extension -> PARTIAL (generation + MV3 validation; load-unpacked host-limited) ---------- */
+  {
+    const { win, FS } = makeEnv(baseWorld());
+    const run = await win.Engine.UltraMode.start({ prompt: 'Build a Chrome browser extension that saves a note per open tab', useLLM: false });
+    t.equal('extension target detected', run.target, 'extension');
+    t.ok('a real MV3 extension was generated', (run.artifacts.generatedFiles || []).some((p) => /manifest\.json$/.test(p)) && (run.artifacts.generatedFiles || []).some((p) => /background\.js$/.test(p)));
+    t.equal('extension: generation + validation done, runtime host-limited -> PARTIAL (not BLOCKED, not FAILED)', run.state, 'PARTIAL');
+    t.ok('extension: the reason names the load-unpacked prerequisite', /playwright|load.?unpacked|host tooling/i.test(run.resultReason));
+  }
+
+  /* ---------- 8e. RUNTIME TARGET: native desktop (Tauri) -> PARTIAL (cargo check compiles; packaged build needs the CLI) ---------- */
+  {
+    const { win } = makeEnv(baseWorld());
+    const run = await win.Engine.UltraMode.start({ prompt: 'Build a cross-platform desktop application with a system tray', useLLM: false });
+    t.equal('desktop target detected', run.target, 'desktop');
+    t.ok('a real Tauri project was generated', (run.artifacts.generatedFiles || []).some((p) => /src-tauri\/Cargo\.toml$/.test(p)) && (run.artifacts.generatedFiles || []).some((p) => /src-tauri\/src\/lib\.rs$/.test(p)));
+    t.equal('desktop: Rust core compiles, packaged build needs the toolchain -> PARTIAL', run.state, 'PARTIAL');
   }
 
   /* ---------- 9. CLARIFICATION: blocking question -> NEEDS_INPUT -> answer -> continue ---------- */
