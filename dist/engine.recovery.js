@@ -364,6 +364,29 @@
       };
       try { if (Engine.Sovereign) Engine.Sovereign.write('blast-radius.json', report); } catch (_) {}
       return report;
+    },
+    // Order a set of files so a file's own dependencies come BEFORE it — repair
+    // the foundation first (db → services → routes → server), not the leaves.
+    // Files outside the given set keep their relative order; unknown files last.
+    repairOrder(files){
+      if (!this.files.length) this.build();
+      const set = Array.from(new Set(files || []));
+      const inSet = new Set(set);
+      // edge a→b means "a depends on b" (a imports b); we want b before a
+      const deps = {};
+      set.forEach(f => {
+        deps[f] = set.filter(g => g !== f && this._importsTarget(f, g));
+      });
+      const order = [], visiting = new Set(), done = new Set();
+      const visit = (f) => {
+        if (done.has(f) || !inSet.has(f)) return;
+        if (visiting.has(f)) return;            // cycle — break it, keep going
+        visiting.add(f);
+        (deps[f] || []).forEach(visit);
+        visiting.delete(f); done.add(f); order.push(f);
+      };
+      set.forEach(visit);
+      return order;
     }
   };
 
@@ -611,6 +634,118 @@
     }
   };
 
+  // ---------------- Acceptance goal (the loop's REAL objective) ----------------
+  // The recovery loop used to stop at "validator-clean + build parses + graph
+  // healthy". That is necessary but not sufficient: it can declare VERIFIED
+  // while the product contract's acceptance criteria are still unmet. This
+  // module makes the loop target "the contract's acceptance criteria are
+  // satisfied against real evidence" — Levels + the Evidence Ledger (per
+  // requirement) + the Definition-of-Done gate. With no contract it degrades to
+  // the old Levels-only goal.
+  const AcceptanceGoal = {
+    evaluate(opts){
+      opts = opts || {};
+      const levels = Levels.run();
+      const levelsMet = levels.passed === 5;
+      const contract = (Engine.Contract && Engine.Contract.load && Engine.Contract.load()) || null;
+      const base = { levelsMet, levels, criteria: [], total: 0, satisfied: 0, unsatisfied: 0,
+        dodPass: null, ledgerFailing: null, gaps: [] };
+      if (!contract || !Array.isArray(contract.requirements) || !contract.requirements.length) {
+        base.hasContract = false;
+        base.met = levelsMet;
+        if (!levelsMet) ['L1','L2','L3','L4','L5'].forEach(k => { if (!levels[k].ok) base.gaps.push('level ' + levels[k].label + ' failing'); });
+        return base;
+      }
+      let ledger = null;
+      try {
+        if (Engine.Ledger) ledger = opts.rebuild ? Engine.Ledger.build(contract) : (Engine.Ledger.load() || Engine.Ledger.build(contract));
+      } catch (_) {}
+      let dod = null;
+      try {
+        if (Engine.DoD) dod = opts.rebuild ? Engine.DoD.evaluate() : (Engine.DoD.load() || (Engine.DoD.evaluate && Engine.DoD.evaluate()));
+      } catch (_) {}
+      const mandatoryIds = (contract.scope && Array.isArray(contract.scope.mandatory) && contract.scope.mandatory)
+        || contract.requirements.filter(r => r.priority === 'mandatory' || r.priority === 'must').map(r => r.id);
+      const byReq = {};
+      ((ledger && ledger.claims) || []).forEach(c => { byReq[c.requirementId] = c; });
+      const criteria = contract.requirements.map(r => {
+        const c = byReq[r.id] || null;
+        const conf = c ? c.confidence : 'UNVERIFIED';
+        const mandatory = mandatoryIds.indexOf(r.id) >= 0;
+        // mandatory must be VERIFIED; optional may be PARTIAL; UNVERIFIED (no
+        // machine criteria at all) does not block — there is nothing to satisfy.
+        const satisfied = conf === 'VERIFIED' || conf === 'UNVERIFIED' || (!mandatory && conf === 'PARTIAL');
+        return { id: r.id, statement: r.statement, category: r.category || null, mandatory,
+          confidence: conf, failures: c ? c.failures : 0,
+          evidence: c ? (c.evidence || []).filter(e => e.result !== 'NA').map(e => e.ref) : [] };
+      });
+      const unsatisfied = criteria.filter(c => c.mandatory && !(c.confidence === 'VERIFIED' || c.confidence === 'UNVERIFIED'));
+      const ledgerFailing = (ledger && ledger.totals) ? (ledger.totals.failures || 0) : null;
+      const dodPass = dod ? !!dod.PASS : null;
+      const met = levelsMet
+        && unsatisfied.length === 0
+        && (ledgerFailing == null || ledgerFailing === 0)
+        && (dodPass == null || dodPass === true);
+      const gaps = [];
+      if (!levelsMet) ['L1','L2','L3','L4','L5'].forEach(k => { if (!levels[k].ok) gaps.push('level ' + levels[k].label + ' failing'); });
+      unsatisfied.forEach(c => gaps.push('requirement ' + c.id + ' (' + c.confidence + '): ' + String(c.statement || '').slice(0, 90)));
+      if (dodPass === false) gaps.push('Definition-of-Done gate not clear');
+      if (ledgerFailing) gaps.push(ledgerFailing + ' acceptance-criterion assertion(s) failing in the evidence ledger');
+      return {
+        hasContract: true, met, levelsMet, dodPass, ledgerFailing,
+        criteria, total: criteria.length,
+        satisfied: criteria.filter(c => c.confidence === 'VERIFIED').length,
+        unsatisfied: unsatisfied.length,
+        gaps
+      };
+    }
+  };
+
+  // ---------------- Hypothesis (explicit, testable) ----------------
+  // Every repair states a hypothesis before it acts: what it believes the cause
+  // is, what it will change, and how it will know it worked. After the cycle the
+  // loop checks whether the hypothesis held (did that exact finding disappear?).
+  const Prevention_MAP = {
+    'a11y-img-alt':        { class: 'accessibility', guidance: 'add jsx-a11y/alt-text (or html-validate img-req-alt) to the lint config so a missing alt fails CI, not review' },
+    'a11y-label':          { class: 'accessibility', guidance: 'enforce a form-control-has-label lint rule; template snippets should ship the <label for> pair' },
+    'a11y-lang':           { class: 'accessibility', guidance: 'the HTML scaffold template must always emit <html lang="…">; add an html-has-lang check' },
+    'console-statement':   { class: 'code-quality',  guidance: 'turn on no-console in the production lint profile; use the structured logger instead' },
+    'todo-comment':        { class: 'code-quality',  guidance: 'block TODO/FIXME without a ticket ref in a pre-commit hook, or convert them to real issues' },
+    'empty-function':      { class: 'code-quality',  guidance: 'no-empty-function lint rule; a stub must throw NotImplemented, never return silently' },
+    'broken-reference':    { class: 'integrity',     guidance: 'add a build-time asset/import resolution check (the connection-graph validator) to CI' },
+    'missing-import':      { class: 'integrity',     guidance: 'run the graph validator in CI; the generator should never emit an import it did not also write' },
+    'syntax-error':        { class: 'build',         guidance: 'gate every generated file through a parse check before it is written to disk' },
+    'unused-export':       { class: 'code-quality',  guidance: 'periodic dead-code sweep; the feature that needed the export was likely dropped' }
+  };
+  const Hypothesis = {
+    form(issue){
+      const code = issue.code || 'unknown';
+      const pv = Prevention_MAP[code] || null;
+      return {
+        issueId: issue.id,
+        code, file: issue.file || null,
+        cause: issue.why || ('a "' + code + '" defect in ' + (issue.file || 'the workspace')),
+        change: (issue.repairKind || 'patch') + ' ' + (issue.file || '') + ' to resolve ' + code,
+        verifyBy: 'the "' + code + '" finding for ' + (issue.file || 'this file') + ' is gone on the next validator pass and no previously-passing level regresses',
+        class: pv ? pv.class : 'correctness'
+      };
+    }
+  };
+  const Prevention = {
+    // roll repaired issue codes up into "how to stop this class recurring"
+    forCodes(codes){
+      const seen = {};
+      const out = [];
+      (codes || []).forEach(code => {
+        if (seen[code]) return; seen[code] = 1;
+        const pv = Prevention_MAP[code];
+        out.push({ code, class: pv ? pv.class : 'correctness',
+          guidance: pv ? pv.guidance : 'add a validator/lint rule + a CI gate so this "' + code + '" class fails automatically before review' });
+      });
+      return out;
+    }
+  };
+
   // ---------------- Weighted health score (V2 #11) ----------------
   const SUBSYSTEM_WEIGHTS = {
     'Build':       0.20,
@@ -791,18 +926,34 @@
           steps.push({
             idx: idx, issueId: issue.id, kind: 'patch', action: action, text: text,
             file: issue.file, code: issue.code,
-            confidence: issue.confidence, risk: issue.risk, why: issue.why
+            confidence: issue.confidence, risk: issue.risk, why: issue.why,
+            hypothesis: Hypothesis.form(Object.assign({}, issue, { repairKind: action }))
           });
         } else {
           steps.push({ idx: idx, issueId: issue.id, kind: 'skip', reason: 'no-op', code: issue.code, file: issue.file, confidence: 0, risk: 'none', why: 'patch generator returned no-op' });
         }
       });
+      // §21-24: repair in dependency order — foundation before leaves. A patch to
+      // src/db.js lands before a patch to src/services/*.js that imports it, so a
+      // fix isn't re-broken (or masked) by a later one on a dependant.
+      const patchFiles = steps.filter(s => s.kind === 'patch' && s.file).map(s => s.file);
+      let order = [];
+      try { order = Graph.repairOrder(Array.from(new Set(patchFiles))); } catch (_) {}
+      const rank = {}; order.forEach((f, i) => { rank[f] = i; });
+      steps.sort((x, y) => {
+        if (x.kind !== y.kind) return x.kind === 'patch' ? -1 : 1;
+        const rx = x.file in rank ? rank[x.file] : 1e6 + x.idx;
+        const ry = y.file in rank ? rank[y.file] : 1e6 + y.idx;
+        if (rx !== ry) return rx - ry;
+        return x.idx - y.idx;
+      });
       return {
-        goal: 'Restore workspace to passing state',
+        goal: 'Satisfy the product contract\'s acceptance criteria (real evidence), not just a clean validator',
         generatedAt: now(),
         analysis: a,
         issues: a.issues,
         steps: steps,
+        repairOrder: order,
         skipped: steps.filter(s => s.kind === 'skip').length,
         repairable: steps.filter(s => s.kind === 'patch').length
       };
@@ -912,6 +1063,10 @@
       let consecutiveNoProgress = 0;
       let lastHealth = computeHealth();
       let lastIssues = (Engine.Validator.runAll() || []).length;
+      const goalBefore = AcceptanceGoal.evaluate({ rebuild: false });
+      let goal = goalBefore;
+      let goalStale = false;   // a repair changed files → the ledger/DoD need a rebuild
+      const repairedCodes = [];
 
       for (let cycle = 0; cycle < o.maxCycles; cycle++) {
         const plan = this.plan(analysis);
@@ -929,9 +1084,11 @@
         }
         // If there are no repairable steps left, stop
         if (plan.repairable === 0) {
-          cycleRecords.push({ cycle: cycle, status: 'NO_REPAIRABLE', steps: 0, issues: analysis.issues.length });
+          cycleRecords.push({ cycle: cycle, status: 'NO_REPAIRABLE', steps: 0, issues: analysis.issues.length, acceptanceGaps: goal.gaps });
           break;
         }
+        // the finding fingerprints present BEFORE this cycle (for hypothesis checks)
+        const beforeFindings = new Set((analysis.issues || []).map(i => (i.code || '') + '@' + (i.file || '')));
         const run = this.repair(plan, { confidenceFloor: o.confidenceFloor });
         run.cycle = cycle;
         // V3: record which strategies were used
@@ -944,6 +1101,22 @@
             }
           });
         }
+        // hypothesis check: for every patch step, did its exact finding disappear?
+        const afterAnalysis = this.analyze();
+        const afterFindings = new Set((afterAnalysis.issues || []).map(i => (i.code || '') + '@' + (i.file || '')));
+        const hypotheses = (plan.steps || []).filter(s => s.kind === 'patch').map(s => {
+          const fp = (s.code || '') + '@' + (s.file || '');
+          const applied = !!(run.results || []).find(r => r.issueId === s.issueId && r.ok);
+          const held = applied && !run.rolledBack && beforeFindings.has(fp) && !afterFindings.has(fp);
+          if (held && s.code) repairedCodes.push(s.code);
+          return { issueId: s.issueId, code: s.code, file: s.file, applied,
+            held: applied ? held : null, hypothesis: s.hypothesis || null };
+        });
+        // re-evaluate the REAL objective after this cycle's changes (a full
+        // ledger/DoD rebuild only when a repair actually landed)
+        const changed = run.repairedCount > 0 && !run.rolledBack;
+        goalStale = goalStale || changed;
+        goal = AcceptanceGoal.evaluate({ rebuild: changed });
         cycleRecords.push({
           cycle: cycle,
           status: run.status,
@@ -952,12 +1125,21 @@
           healthAfter:  run.after.health,
           issuesBefore: run.before.issues,
           issuesAfter:  run.after.issues,
-          rolledBack:   run.rolledBack
+          rolledBack:   run.rolledBack,
+          hypotheses:   hypotheses,
+          hypothesesHeld: hypotheses.filter(h => h.held === true).length,
+          hypothesesFailed: hypotheses.filter(h => h.held === false).length,
+          acceptanceMet: goal.met,
+          acceptanceGaps: goal.gaps,
+          criteriaSatisfied: goal.hasContract ? (goal.satisfied + '/' + goal.total) : null
         });
         lastRun = run;
+        analysis = afterAnalysis;
         const progress = run.after.health - lastHealth;
         const fewerIssues = lastIssues - run.after.issues;
-        if (run.status === 'VERIFIED') break;
+        // stop only when the ACCEPTANCE GOAL is met — not merely when the
+        // validator is clean. (With no contract, goal.met == levels all-pass.)
+        if (run.status === 'VERIFIED' && goal.met) break;
         if (progress === 0 && fewerIssues === 0) {
           consecutiveNoProgress++;
           if (consecutiveNoProgress >= 2) break;
@@ -975,22 +1157,42 @@
         }
         lastHealth = run.after.health;
         lastIssues = run.after.issues;
-        // Re-analyze for the next cycle
-        analysis = this.analyze();
+        // `analysis` is already the post-cycle re-analysis (afterAnalysis)
       }
 
       const finalRun = lastRun || { status: 'NOOP', repairedCount: 0, before: { health: lastHealth }, after: { health: lastHealth } };
+      const goalAfter = goalStale ? AcceptanceGoal.evaluate({ rebuild: true }) : goal;
+      // the loop's status now reflects the REAL objective, not just the levels:
+      //  - VERIFIED       : acceptance goal met
+      //  - CRITERIA_UNMET : validator/levels clean but the contract's acceptance
+      //                     criteria (ledger / DoD) are still not satisfied
+      //  - else           : whatever the last repair returned
+      let loopStatus = finalRun.status;
+      if (goalAfter.met) loopStatus = 'VERIFIED';
+      else if (goalAfter.hasContract && goalAfter.levelsMet) loopStatus = 'CRITERIA_UNMET';
+      else if (finalRun.status === 'VERIFIED' && !goalAfter.met) loopStatus = 'CRITERIA_UNMET';
+      const prevention = Prevention.forCodes(repairedCodes);
       const loopRecord = {
         runId: runId,
         agent: 'Sovereign-1.5',
-        objective: 'Autonomous recovery loop',
+        objective: 'Autonomous recovery loop — satisfy the contract\'s acceptance criteria',
         startedAt: initialSnap.capturedAt,
         finishedAt: now(),
         cycles: cycleRecords.length,
         cycleRecords: cycleRecords,
         before: { health: cycleRecords.length ? cycleRecords[0].healthBefore : lastHealth, issues: lastIssues },
         after:  { health: finalRun.after ? finalRun.after.health : lastHealth, issues: finalRun.after ? finalRun.after.issues : lastIssues },
-        status: finalRun.status,
+        status: loopStatus,
+        acceptance: {
+          met: goalAfter.met, hasContract: goalAfter.hasContract, levelsMet: goalAfter.levelsMet,
+          dodPass: goalAfter.dodPass, ledgerFailing: goalAfter.ledgerFailing,
+          criteriaSatisfied: goalAfter.hasContract ? goalAfter.satisfied : null,
+          criteriaTotal: goalAfter.hasContract ? goalAfter.total : null,
+          gaps: goalAfter.gaps,
+          improvedFrom: goalBefore.hasContract ? (goalBefore.satisfied + '/' + goalBefore.total) : null
+        },
+        hypotheses: cycleRecords.reduce((a, c) => a.concat(c.hypotheses || []), []),
+        prevention: prevention,
         repairedCount: cycleRecords.reduce((a, c) => a + (c.repaired || 0), 0),
         rolledBack: !!finalRun.rolledBack,
         snapshotId: initialSnap.snapshotId,
@@ -1001,6 +1203,20 @@
       };
       this._runs.push(loopRecord);
       this._saveRuns();
+      try {
+        if (Engine.Sovereign) {
+          Engine.Sovereign.write('recovery-loop.json', {
+            runId: runId, generatedAt: now(), status: loopStatus, cycles: cycleRecords.length,
+            acceptance: loopRecord.acceptance, repairedCount: loopRecord.repairedCount,
+            hypotheses: loopRecord.hypotheses.map(h => ({ code: h.code, file: h.file, held: h.held }))
+          });
+          if (prevention.length) Engine.Sovereign.write('recovery-prevention.json', {
+            generatedAt: now(), runId: runId,
+            note: 'How to stop the repaired defect classes from recurring — add these to lint/CI, not code review.',
+            items: prevention
+          });
+        }
+      } catch (_) {}
       return loopRecord;
     },
 
@@ -1986,6 +2202,7 @@
   window.ProjectType  = ProjectType;
   window.Verify       = Verify;
   window.Levels       = Levels;
+  window.AcceptanceGoal = AcceptanceGoal;
   window.Snapshots    = Snapshots;
   window.Terminal     = Terminal;
   window.Generator    = Generator;
@@ -2028,6 +2245,9 @@
       window.Engine.ProjectType   = ProjectType;
       window.Engine.Verify        = Verify;
       window.Engine.Levels        = Levels;
+      window.Engine.AcceptanceGoal = AcceptanceGoal;
+      window.Engine.Hypothesis    = Hypothesis;
+      window.Engine.Prevention    = Prevention;
       window.Engine.Snapshots     = Snapshots;
       window.Engine.Terminal      = Terminal;
       window.Engine.Generator     = Generator;

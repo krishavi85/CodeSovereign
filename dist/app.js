@@ -2341,6 +2341,8 @@ function renderRecovery(){
         </div>
       </div>
 
+      ${renderRecoveryAcceptanceGoal()}
+
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:18px">
         <div class="card" style="padding:20px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -3971,6 +3973,45 @@ function renderRecoveryWeightedHealth(){
   } catch (e) {
     return '<div style="color:var(--err);font-size:13px">weighted-health error: ' + esc(String(e && e.message || e)) + '</div>';
   }
+}
+
+function renderRecoveryAcceptanceGoal(){
+  try {
+    var AG = window.Engine && window.Engine.AcceptanceGoal;
+    if (!AG || !AG.evaluate) return '';
+    var g = AG.evaluate({ rebuild: false });
+    var lastLoop = null;
+    try { lastLoop = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('recovery-loop.json'); } catch (_) {}
+    var col = g.met ? 'var(--good)' : (g.hasContract ? 'var(--warn)' : 'var(--muted)');
+    var label = g.met ? 'ACCEPTANCE CRITERIA MET' : (g.hasContract ? (g.satisfied + '/' + g.total + ' REQUIREMENTS VERIFIED') : 'NO CONTRACT — TARGETING VALIDATOR HEALTH');
+    var html = '<div class="card" style="padding:16px 20px;margin-top:18px;border-left:3px solid ' + col + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center">' +
+      '<h3 class="cs-h3" style="margin:0">Recovery target — the contract’s acceptance criteria</h3>' +
+      '<span style="font:700 11px Inter;color:' + col + '">' + esc(label) + '</span></div>' +
+      '<div style="font-size:12px;color:var(--muted);margin-top:6px">The autonomous loop stops when these are satisfied against real evidence (Evidence Ledger + Definition-of-Done) — not merely when the validator is clean.</div>';
+    if ((g.gaps || []).length) {
+      html += '<ul style="margin:10px 0 0;padding-left:18px;font-size:12px;color:var(--fg)">' +
+        g.gaps.slice(0, 8).map(function (x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>';
+    }
+    if (lastLoop && lastLoop.acceptance) {
+      var a = lastLoop.acceptance;
+      html += '<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Last loop: ' + esc(lastLoop.status) +
+        ' · ' + (lastLoop.cycles || 0) + ' cycle(s) · ' + (lastLoop.repairedCount || 0) + ' repaired' +
+        (a.improvedFrom ? ' · criteria ' + esc(a.improvedFrom) + ' → ' + (a.criteriaSatisfied != null ? a.criteriaSatisfied + '/' + a.criteriaTotal : '?') : '') + '</div>';
+      if ((lastLoop.hypotheses || []).length) {
+        var held = lastLoop.hypotheses.filter(function (h){ return h.held === true; }).length;
+        html += '<div style="font-size:11.5px;color:var(--muted)">Hypotheses tested: ' + lastLoop.hypotheses.length + ' · held: ' + held + '</div>';
+      }
+    }
+    var prev = null;
+    try { prev = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('recovery-prevention.json'); } catch (_) {}
+    if (prev && (prev.items || []).length) {
+      html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;font-weight:600">Prevention — stop these classes recurring (' + prev.items.length + ')</summary>' +
+        '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--fg)">' +
+        prev.items.map(function (p){ return '<li><b>' + esc(p.code) + '</b> (' + esc(p.class) + '): ' + esc(p.guidance) + '</li>'; }).join('') + '</ul></details>';
+    }
+    return html + '</div>';
+  } catch (e) { return ''; }
 }
 
 function renderRecoveryBlastRadius(){

@@ -46,6 +46,8 @@
     'connection-graph.json':     'Typed node/edge graph of the real wiring',
     'connection-health.json':    'Per-edge status: valid / broken / missing / circular / unused',
     'blast-radius.json':         'Change-impact report — files / tests / migrations / routes a change touches + rebuild/redeploy/risk (spec §59)',
+    'recovery-loop.json':        'Last autonomous recovery loop — cycles, hypotheses tested, and whether the contract\'s acceptance criteria are satisfied (spec §21-24)',
+    'recovery-prevention.json':  'How to stop the repaired defect classes recurring — lint/CI rules, not code review (spec §21-24)',
     'architecture.md':           'Architecture summary + system-context / component / data-flow mermaid',
     'diagrams/system-context.mmd': 'The app and the external systems it talks to',
     'diagrams/component.mmd':    'Components grouped by layer, edges = imports',
