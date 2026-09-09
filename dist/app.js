@@ -2399,6 +2399,8 @@ function renderRecovery(){
         ${renderSovereignMemory()}
       </div>
 
+      ${renderRuntimeAdapters()}
+
       <div class="card" style="padding:20px;margin-top:18px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <h3 class="cs-h3">Validator Suites</h3>
@@ -2971,6 +2973,7 @@ function bindRecovery(){
   });
   var bf = document.getElementById('blastFileSel');
   if (bf) bf.onchange = function(){ S.blastFile = bf.value; renderAll(); };
+  document.querySelectorAll('[data-adapter]').forEach(function(b){ b.onclick = function(){ runAdapterVerify(b.dataset.adapter); }; });
   if (window.desktop && window.desktop.trust && !window.__csTrustChecked) {
     window.__csTrustChecked = true;
     csRefreshTrust().then(function(){ if (S.screen === 'recovery') renderAll(); });
@@ -3792,6 +3795,66 @@ function runSovereignAnalysis(){
     renderAll();
   }, 60);
 }
+
+var CS_ADAPTERS = [
+  ['signing',       'Signing',        'Signing',        'SBOM + provenance + checksums; cosign sign-blob/verify-blob if present'],
+  ['observability', 'Observability',  'Observability',  'Ship a probe span to a local OpenTelemetry Collector'],
+  ['registry',      'Registry',       'Registry',       'npm pack → clean-consumer install → require() smoke (Verdaccio optional)'],
+  ['audio',         'Audio',          'Audio',          'ffmpeg normalize → whisper.cpp / faster-whisper transcription'],
+  ['vision',        'Vision',         'Vision',         'offline screenshot → component tree (runs in the browser)'],
+  ['desktop',       'Desktop',        'Desktop',        'Tauri: cargo check + cargo test; Electron: headless boot smoke'],
+  ['extension',     'Extension',      'Extension',      'MV3 static validation → pack → Playwright load-unpacked']
+];
+
+function renderRuntimeAdapters(){
+  try {
+    if (!window.Engine) return '';
+    var haveBridge = !!(window.desktop && window.desktop.isDesktop && window.CSAdapters && window.CSAdapters.run);
+    var rows = CS_ADAPTERS.filter(function (a){ return window.Engine[a[1]]; }).map(function (a){
+      var eng = window.Engine[a[1]];
+      var ev = null; try { ev = eng.load && eng.load(); } catch (_) {}
+      var st = ev && (ev.status || (ev.support ? (ev.present === false ? 'not present' : (ev.status || 'ready')) : null));
+      var col = /PASS|VERIFIED|SUPPORTED|GENERATED|VALID/i.test(st || '') ? 'var(--good)'
+        : /PARTIAL|BLOCKED|CREDENTIAL/i.test(st || '') ? 'var(--warn)'
+        : /FAIL|ERROR/i.test(st || '') ? 'var(--err)' : 'var(--muted)';
+      return '<div style="display:grid;grid-template-columns:110px 1fr auto;gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--line)">' +
+        '<span style="font:600 12px Inter">' + esc(a[2]) + '</span>' +
+        '<span style="font-size:11.5px;color:var(--muted)" title="' + esc(a[3]) + '">' + esc(a[3]) + (st ? ' · <b style="color:' + col + '">' + esc(String(st)) + '</b>' : '') + '</span>' +
+        '<button class="btn" data-adapter="' + a[0] + '" style="padding:4px 10px;font-size:11px">Verify</button>' +
+        '</div>';
+    }).join('');
+    if (!rows) return '';
+    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+      '<h3 class="cs-h3" style="margin:0">Runtime Adapters</h3>' +
+      '<span class="cs-muted" style="font-size:11.5px">' + (haveBridge ? 'local toolchain bridge available' : 'desktop app + an open folder needed to run these') + '</span></div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">Each capability routes to a local / self-hosted runtime — a missing tool → BLOCKED with the exact install command, never "unsupported".</div>' +
+      rows + '</div>';
+  } catch (e) { return ''; }
+}
+
+function runAdapterVerify(name){
+  var map = { signing: 'Signing', observability: 'Observability', registry: 'Registry', audio: 'Audio', vision: 'Vision', desktop: 'Desktop', extension: 'Extension' };
+  var eng = window.Engine && window.Engine[map[name]];
+  if (!eng || !eng.verify) { toast(name + ' engine not loaded', '#ef4444'); return; }
+  if (name === 'vision') {
+    toast('Vision analysis runs from a design reference — add one via Universal, then Analyze', '#22d3ee');
+    return;
+  }
+  toast('Verifying ' + map[name] + ' adapter…', '#a78bfa');
+  var btn = document.querySelector('[data-adapter="' + name + '"]');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  Promise.resolve(eng.verify({})).then(function (r){
+    r = r || {};
+    var s = r.status || 'DONE';
+    var col = /PASS|VERIFIED/i.test(s) ? '#34d399' : /PARTIAL|BLOCKED/i.test(s) ? '#f59e0b' : '#ef4444';
+    var msg = map[name] + ': ' + s + (r.reason ? ' (' + r.reason + ')' : '') + (r.need ? ' — provide: ' + r.need : '');
+    toast(msg, col);
+    if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
+    renderAll();
+  }).catch(function (e){ toast(map[name] + ' verify error: ' + (e && e.message || e), '#ef4444'); if (btn) { btn.disabled = false; btn.textContent = 'Verify'; } });
+}
+window.runAdapterVerify = runAdapterVerify;
 
 function runSovereignEvidence(){
   if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
