@@ -48,6 +48,10 @@
     'blast-radius.json':         'Change-impact report — files / tests / migrations / routes a change touches + rebuild/redeploy/risk (spec §59)',
     'recovery-loop.json':        'Last autonomous recovery loop — cycles, hypotheses tested, and whether the contract\'s acceptance criteria are satisfied (spec §21-24)',
     'recovery-prevention.json':  'How to stop the repaired defect classes recurring — lint/CI rules, not code review (spec §21-24)',
+    'quality-policy.json':       'Code-quality policy — max fn length / complexity / params, console/TODO, circular/dead-code, gate on|off (spec §51)',
+    'quality-findings.json':     'Code-quality scan against the policy — per-file findings + pass/fail (spec §51)',
+    'completion-audit.json':     'Evidence-backed per-dimension completion % — rolled up from the real .sovereign/ artifacts, not the plan (spec §54)',
+    'completion-audit.md':       'Readable completion audit table',
     'architecture.md':           'Architecture summary + system-context / component / data-flow mermaid',
     'diagrams/system-context.mmd': 'The app and the external systems it talks to',
     'diagrams/component.mmd':    'Components grouped by layer, edges = imports',
@@ -680,6 +684,9 @@
     // ---- feature completion graph (spec §63-64) ----
     safe(function () { window.Engine.Features && window.Engine.Features.analyze(); });
 
+    // ---- code-quality governance (spec §51) — before the gate so DoD can read it ----
+    safe(function () { window.Engine.Quality && window.Engine.Quality.scan(); });
+
     // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
     if (window.Engine.Contract && window.Engine.Contract.load()) {
       safe(function () { window.Engine.Ledger && window.Engine.Ledger.build(); });
@@ -704,6 +711,9 @@
     safe(function () { window.Engine.Observability && window.Engine.Observability.analyze(); });
     safe(function () { window.Engine.Registry && window.Engine.Registry.analyze(); });
     safe(function () { if (window.Engine.Vision && window.Engine.Sovereign.read('design-reference.txt')) { var vp = window.Engine.Vision.analyze(); if (vp && vp.catch) vp.catch(function () {}); } });
+
+    // ---- evidence-backed completion audit (spec §54) — rolls up every artefact above ----
+    safe(function () { window.Engine.Audit && window.Engine.Audit.run(); });
 
     // ---- decision ledger / ADRs (spec §57-58) — after the gate for the release decision ----
     safe(function () { window.Engine.Decisions && window.Engine.Decisions.analyze(); });

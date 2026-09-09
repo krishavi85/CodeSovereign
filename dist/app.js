@@ -2342,6 +2342,7 @@ function renderRecovery(){
       </div>
 
       ${renderRecoveryAcceptanceGoal()}
+      ${renderCompletionAudit()}
 
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:18px">
         <div class="card" style="padding:20px">
@@ -3973,6 +3974,31 @@ function renderRecoveryWeightedHealth(){
   } catch (e) {
     return '<div style="color:var(--err);font-size:13px">weighted-health error: ' + esc(String(e && e.message || e)) + '</div>';
   }
+}
+
+function renderCompletionAudit(){
+  try {
+    var A = window.Engine && window.Engine.Audit;
+    if (!A || !A.run) return '';
+    var a = null;
+    try { a = (Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('completion-audit.json')) || A.run(); } catch (_) { a = A.run(); }
+    if (!a || !a.dimensions) return '';
+    var oc = a.overall >= 85 ? 'var(--good)' : a.overall >= 60 ? 'var(--warn)' : 'var(--err)';
+    var bar = function (d){
+      var c = !d.measured ? 'var(--line)' : d.pct >= 85 ? 'var(--good)' : d.pct >= 55 ? 'var(--warn)' : 'var(--err)';
+      var w = d.measured ? Math.max(2, d.pct) : 100;
+      return '<div style="display:grid;grid-template-columns:130px 1fr 44px;gap:10px;align-items:center;font-size:12px;margin:5px 0">' +
+        '<span title="' + esc(d.basis) + '">' + esc(d.name) + '</span>' +
+        '<span style="height:8px;border-radius:5px;background:var(--bg-2);overflow:hidden"><span style="display:block;height:100%;width:' + w + '%;background:' + c + (d.measured ? '' : ';opacity:.3') + '"></span></span>' +
+        '<span style="text-align:right;color:var(--muted)">' + (d.measured ? d.pct + '%' : '—') + '</span></div>';
+    };
+    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+      '<h3 class="cs-h3" style="margin:0">Completion Audit <span class="cs-muted" style="font-weight:400;font-size:12px">— evidence-backed, per dimension</span></h3>' +
+      '<span style="font:800 18px Inter;color:' + oc + '">' + a.overall + '%</span></div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">' + esc(a.summary) + '</div>' +
+      a.dimensions.map(bar).join('') + '</div>';
+  } catch (e) { return ''; }
 }
 
 function renderRecoveryAcceptanceGoal(){

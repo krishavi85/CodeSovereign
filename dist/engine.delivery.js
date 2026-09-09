@@ -98,7 +98,11 @@
     'mobile-ios-evidence.json',
     'blockchain-evidence.json',
     'ml-evidence.json',
-    'documentation-index.json'
+    'documentation-index.json',
+    'quality-findings.json',
+    'completion-audit.json',
+    'blast-radius.json',
+    'recovery-loop.json'
   ];
 
   var DOC_FILES = [

@@ -281,6 +281,11 @@
     var depCritical = depReport ? ((depReport.byImpact && depReport.byImpact.critical) || 0) : 0;
     var perfReport = j('perf-findings.json');
     var perfHealthy = !perfReport || perfReport.present === false ? true : (perfReport.healthy !== false && (perfReport.byImpact ? !perfReport.byImpact.critical : true));
+    // §51 — code-quality governance (blocks only when the policy turned the gate on)
+    var qualityReport = j('quality-findings.json');
+    var qualityGated = false;
+    try { qualityGated = !!(Engine.Quality && Engine.Quality.gateActive && Engine.Quality.gateActive()); } catch (_) {}
+    if (!qualityGated && qualityReport && qualityReport.gate === true) qualityGated = true;
     // user journeys (§65): when the contract defines journeys and the test gate
     // has run, every journey must be covered (green) for acceptance to pass.
     var journeyReport = j('journey-evidence.json');
@@ -345,6 +350,12 @@
       performanceHealthy: gate(perfHealthy),
       acceptanceCriteriaPass: gate(ledgerFailing === 0 && !!ledger && journeysOk && l10nOk)
     };
+    // §51 — code-quality governance is an OPT-IN gate: it only becomes a DoD
+    // criterion when a policy turned it on (quality-policy.json "gate": true, or
+    // the contract asked for it). Off by default → the criteria count is unchanged.
+    if (qualityGated) {
+      criteria.codeQualityPass = gate(qualityReport ? qualityReport.pass === true : true);
+    }
     var PASS = Object.keys(criteria).every(function (k) { return criteria[k] === true; });
 
     var dod = {
