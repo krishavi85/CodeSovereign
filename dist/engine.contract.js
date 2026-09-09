@@ -281,6 +281,59 @@
   }
 
   // singular noun -> entity heuristic
+  // words that read like nouns but are never domain entities
+  var ENTITY_STOP = {
+    app: 1, application: 1, system: 1, tool: 1, platform: 1, service: 1, website: 1, site: 1, page: 1,
+    dashboard: 1, feature: 1, data: 1, database: 1, table: 1, api: 1, backend: 1, frontend: 1, ui: 1,
+    account: 1, login: 1, signup: 1, auth: 1, authentication: 1, password: 1, email: 1, role: 1, permission: 1,
+    user: 1, users: 1, admin: 1, customer: 1, member: 1, person: 1, people: 1, team: 1, client: 1, thing: 1,
+    information: 1, detail: 1, list: 1, view: 1, screen: 1, form: 1, button: 1, report: 1, chart: 1, graph: 1,
+    version: 1, way: 1, time: 1, day: 1, week: 1, month: 1, year: 1, number: 1, name: 1, title: 1, status: 1,
+    web: 1, mobile: 1, desktop: 1, android: 1, ios: 1, extension: 1, browser: 1, server: 1, cloud: 1,
+    test: 1, tests: 1, docker: 1, deployment: 1, environment: 1, access: 1, control: 1, management: 1,
+    example: 1, everything: 1, anything: 1, someone: 1, something: 1
+  };
+  // very small, deterministic singulariser — good enough for domain nouns
+  function singular(w) {
+    w = String(w || '').toLowerCase();
+    if (/(ss|us|is)$/.test(w)) return w;
+    if (/ies$/.test(w)) return w.slice(0, -3) + 'y';
+    if (/(ches|shes|xes|zes|ses)$/.test(w)) return w.slice(0, -2);
+    if (/oes$/.test(w)) return w.slice(0, -2);
+    if (/s$/.test(w) && !/(s|e)s$/.test(w)) return w.slice(0, -1);
+    if (/s$/.test(w)) return w.slice(0, -1);
+    return w;
+  }
+  // pull domain nouns out of ordinary prose when the fixed candidate list misses
+  function genericEntities(text, actors) {
+    var raw = String(text || '');
+    var actorSet = {}; (actors || []).forEach(function (a) { actorSet[singular(String(a).toLowerCase())] = 1; });
+    var hits = {};
+    var W = "([a-z][a-z-]{2,20})";
+    var PATTERNS = [
+      new RegExp("\\b(?:manage|managing|track|tracking|create|creating|add|adding|store|storing|storage of|list|listing|organi[sz]e|organi[sz]ing|catalog(?:ue)?|record|recording|log|logging|browse|schedule|scheduling|book|booking|assign|publish|share|upload|register)\\s+(?:their |your |my |our |the |a |an |all |multiple |new )*" + W + "(?:s|es|ies)?\\b", "gi"),
+      new RegExp("\\bcrud (?:for|on|over) (?:the )?" + W + "(?:s|es|ies)?\\b", "gi"),
+      new RegExp("\\blist(?:s)? of (?:their |your |all )*" + W + "(?:s|es|ies)?\\b", "gi"),
+      new RegExp("\\beach " + W + "\\b(?: has| have| contains| includes| belongs| is | can )", "gi"),
+      new RegExp("\\ba " + W + " (?:has|contains|includes|belongs to|can have)\\b", "gi"),
+      new RegExp("\\b" + W + "(?:s|es|ies)? (?:table|entity|model|records?|collection)\\b", "gi"),
+      new RegExp("\\bwhere (?:a |an |the |each )?(?:user|admin|manager|owner|customer|member|[a-z][a-z-]{2,20}) (?:can |could )?(?:create|add|manage|edit|delete|view|track)s? (?:their |your |a |an |the |all |new )*" + W + "(?:s|es|ies)?\\b", "gi")
+    ];
+    PATTERNS.forEach(function (re) {
+      var m;
+      while ((m = re.exec(raw)) !== null) {
+        for (var g = 1; g < m.length; g++) {
+          if (!m[g]) continue;
+          var s = singular(m[g]);
+          if (s.length < 3 || ENTITY_STOP[s] || actorSet[s]) continue;
+          if (/^(and|the|for|with|that|this|from|into|about|their|your|all|new|some|any)$/.test(s)) continue;
+          hits[s] = (hits[s] || 0) + 1;
+        }
+      }
+    });
+    return Object.keys(hits).sort(function (a, b) { return hits[b] - hits[a]; });
+  }
+
   function entitiesFromPrompt(text, actors) {
     var lc = ' ' + String(text || '').toLowerCase() + ' ';
     var CANDIDATES = [
@@ -293,6 +346,9 @@
       ['review', /\breviews?\b/], ['file', /\bfiles?\b|\buploads?\b/]
     ];
     var found = CANDIDATES.filter(function (c) { return c[1].test(lc); }).map(function (c) { return c[0]; });
+    // augment with domain nouns lifted straight from the prose (§3-4: the model
+    // isn't the only path to a real entity model — the rules read structure too)
+    genericEntities(text, actors).forEach(function (g) { if (found.indexOf(g) < 0) found.push(g); });
     if (!found.length) found = ['item'];
     found = found.slice(0, 4);
 

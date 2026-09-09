@@ -112,6 +112,28 @@ module.exports = async function (t) {
     t.equal('DSL: absent MODE defaults to balanced', c2.dsl.verifyMode, 'balanced');
   }
 
+  /* ---------- 1c. entity extraction reads prose, not just a keyword list (§3-4) ---------- */
+  {
+    const win = loadEngines(['engine-universal.js', 'engine.contract.js']);
+    const names = async (p) => (await win.Engine.Contract.deriveFromPrompt(p, { useLLM: false })).entities.map((e) => e.name);
+
+    const recipe = await names('Build an app to manage recipes and their ingredients for home cooks');
+    t.ok('entities: "manage recipes" -> a recipe entity (not the generic "item")', recipe.indexOf('recipe') >= 0);
+
+    const fleet = await names('CRUD for vehicles and maintenance logs in a small fleet');
+    t.ok('entities: "CRUD for vehicles" -> a vehicle entity', fleet.indexOf('vehicle') >= 0);
+
+    const gym = await names('Let users log workouts with exercises, sets and reps');
+    t.ok('entities: "log workouts" -> a workout entity', gym.indexOf('workout') >= 0);
+
+    const prop = await names('A system where landlords list properties and tenants submit requests');
+    t.ok('entities: domain noun "properties" is picked up', prop.indexOf('property') >= 0);
+    t.ok('entities: the role word "landlord" is NOT taken as an entity', prop.indexOf('landlord') < 0);
+
+    const generic = await names('Build a simple app with some stuff in it');
+    t.ok('entities: a vague prompt still yields a safe generic entity', generic.length >= 1);
+  }
+
   /* ---------- 2. React + Vue frontends generate + render ---------- */
   {
     const win = loadEngines(['engine.frontends.js']);
