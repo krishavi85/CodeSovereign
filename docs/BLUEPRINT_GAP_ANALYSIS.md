@@ -15,7 +15,7 @@ The core thesis (**verified outcomes, not files**) is **done and proven**: one
 prompt → contract → plan → generate → run in the right runtime → observe →
 repair → 14-criterion Definition-of-Done → `SOVEREIGN VERIFIED` / `PARTIAL` /
 `BLOCKED` / `FAILED`, all offline, all evidence-backed. Four acceptance harnesses
-(`node test/run.js` 866, `acceptance` 38, `acceptance:build` 26,
+(`node test/run.js` 878, `acceptance` 38, `acceptance:build` 26,
 `acceptance:ultramode` 68) prove it end to end in the real Electron renderer.
 
 The last several sessions closed the breadth items from the blueprint's own
@@ -215,7 +215,7 @@ chase the 68 framework / platform features.
 
 | § | Capability | State |
 |---|---|---|
-| 59 | Change impact analysis / blast radius | 🟨 `Graph.impactOf()` exists; no user-facing "N files, M tests, migrations, installer" report |
+| 59 | Change impact analysis / blast radius | ✅ `Engine.Graph.blastRadius(changedFiles)` — BFS over the reverse-import graph, then classifies the affected set into source / tests / migrations / config / docs / infra, lists the routes + DB tables + components touched, and decides `needsMigration` / `needsRebuild` / `needsRedeploy` + a `risk` level, with a plain-English `summary` ("Changing 1 file touches 11 files (9 tests, 1 route). A redeploy is required. Risk: medium."). Writes `.sovereign/blast-radius.json`; a **Change Impact / Blast Radius** panel on the Recovery screen lets you pick any file and see the ripple. `test/blastradius.test.js` (12 checks). |
 | 60 | Safe refactoring / staged migration (JS→TS, Electron→Tauri, …) | ✅ | `dist/engine.refactor.js` (`Engine.Refactor`). **AST-driven, conservative, self-checked.** `renameSymbol({file, from, to})` uses acorn to rename a module-scoped binding + every reference (object-shorthand `{x}` → `{x: y}`, `export {x}` → `export {y as x}`), and **refuses** with a machine-readable reason (`SHADOWED_OR_MULTIPLE_DECLARATIONS`, `PARSE_FAILED`, `RESULT_DID_NOT_PARSE`, …) rather than guess. `renameExport({from, to})` finds the defining file and rewrites every importer (plain `import {x}` → `import {y as x}`, aliased in place). `tsReadiness()` classifies CJS/ESM/mixed, flags `eval`/`with` blockers, and emits a 4-stage plan; `scaffoldTs()` writes the mechanical, reversible stage-1 (`tsconfig.json` with `allowJs` + `docs/TS_MIGRATION.md` checklist). `analyze()` → `.sovereign/refactor-plan.json` (long-function candidates + TS readiness). `test/refactor.test.js`. |
 | 61 | Failure rollback (checkpoint → modify → verify → rollback) | ✅ `Snapshots` + git stash checkpoint in Recovery |
 | 62 | Autonomous upgrade engine (framework/runtime/SDK w/ migration) | ✅ | `dist/engine.upgrade.js` (`Engine.Upgrade`). Offline, rules-driven: a bundled table of well-known upgrades (`express` 4→5, `react`/`react-dom` 17→18, `chalk` 4→5, `node-fetch` 2→3, `uuid` 8→9, `dotenv`, `jsonwebtoken` 8→9) each with a risk rating, release notes, and — where mechanical — a **codemod** (`app.del`→`app.delete`, `ReactDOM.render`→`createRoot`, drop `node-fetch` import, …). `plan()` reads `package.json` + folds in `dependency-intel.json` advisories, ordering security + low-risk first; `apply(name, {dryRun})` bumps the version and runs the codemod, returning the diff for the proof loop to verify (it never runs a package manager). `analyze()` → `.sovereign/upgrade-plan.json`. `test/refactor.test.js`. |

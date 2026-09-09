@@ -45,6 +45,7 @@
     // architecture / connections (spec 3, 5)
     'connection-graph.json':     'Typed node/edge graph of the real wiring',
     'connection-health.json':    'Per-edge status: valid / broken / missing / circular / unused',
+    'blast-radius.json':         'Change-impact report — files / tests / migrations / routes a change touches + rebuild/redeploy/risk (spec §59)',
     'architecture.md':           'Architecture summary + system-context / component / data-flow mermaid',
     'diagrams/system-context.mmd': 'The app and the external systems it talks to',
     'diagrams/component.mmd':    'Components grouped by layer, edges = imports',

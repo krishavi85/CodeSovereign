@@ -288,6 +288,82 @@
       Object.keys(this.imports).forEach(p => { if ((this.imports[p] || []).indexOf(path) >= 0) direct.add(p); });
       Object.keys(this.references).forEach(p => { if ((this.references[p] || []).indexOf(path) >= 0) direct.add(p); });
       return Array.from(direct);
+    },
+    // does `importer` import `target`? (matches a bare basename, a relative path, or the exact key)
+    _importsTarget(importer, target){
+      const list = this.imports[importer] || [];
+      const tb = target.split('/').pop().replace(/\.(js|mjs|ts|jsx|tsx)$/, '');
+      return list.some(spec => {
+        if (spec === target) return true;
+        const sb = spec.split('/').pop().replace(/\.(js|mjs|ts|jsx|tsx)$/, '');
+        if (sb !== tb) return false;
+        // relative specifier → resolve against the importer's dir
+        if (spec.startsWith('.')) {
+          try { return new URL(spec, 'file:///' + importer.replace(/^\//, '')).pathname.replace(/^\//, '/') .replace(/\.(js|mjs)$/, '') === target.replace(/\.(js|mjs)$/, ''); }
+          catch (_) { return true; }
+        }
+        return true;   // bare specifier with a matching basename — treat as a hit
+      });
+    },
+    // §59 — change-impact / blast-radius report for one or more changed files.
+    // Transitively closes over importers, then classifies the affected set and
+    // returns a structured report + a plain-English summary.
+    blastRadius(changed){
+      if (!this.files.length) this.build();
+      const seeds = (Array.isArray(changed) ? changed : [changed]).filter(Boolean).map(p => p[0] === '/' ? p : '/' + p);
+      const affected = new Set();
+      let frontier = seeds.filter(s => this.files.indexOf(s) >= 0 || this.imports[s] != null);
+      frontier.forEach(s => affected.add(s));
+      // BFS over the reverse-import graph (bounded)
+      for (let hop = 0; hop < 12 && frontier.length; hop++) {
+        const next = [];
+        this.files.forEach(p => {
+          if (affected.has(p)) return;
+          if (frontier.some(f => this._importsTarget(p, f) || (this.references[p] || []).some(r => r.split('/').pop() === f.split('/').pop()))) {
+            affected.add(p); next.push(p);
+          }
+        });
+        frontier = next;
+      }
+      const list = Array.from(affected).sort();
+      const isTest = p => /(^|\/)(test|tests|__tests__|spec)\//.test(p) || /\.(test|spec)\.(js|mjs|ts|jsx|tsx)$/.test(p);
+      const isMigration = p => /\.sql$/.test(p) || /(^|\/)migrations?\//.test(p) || /migrate/i.test(p);
+      const isConfig = p => /(^|\/)(package\.json|package-lock\.json|Dockerfile|docker-compose[^/]*\.ya?ml|forge\.config\.js|tauri\.conf\.json|Cargo\.toml|\.github\/workflows\/[^/]+\.ya?ml|vite\.config|tsconfig\.json|manifest\.json)$/i.test(p);
+      const isDoc = p => /\.md$/i.test(p) || /(^|\/)docs?\//.test(p);
+      const isInfra = p => /(^|\/)(deploy|infra|k8s|helm|terraform)\//.test(p) || /\.(tf|ya?ml)$/i.test(p);
+      const buckets = {
+        changed: seeds,
+        sourceFiles: list.filter(p => !isTest(p) && !isMigration(p) && !isConfig(p) && !isDoc(p)),
+        tests: list.filter(isTest),
+        migrations: list.filter(isMigration),
+        config: list.filter(isConfig),
+        docs: list.filter(isDoc),
+        infra: list.filter(isInfra)
+      };
+      const routesTouched = (this.routes || []).filter(r => affected.has(r.file)).map(r => r.method + ' ' + r.path);
+      const tablesTouched = (this.database || []).filter(d => affected.has(d.file)).map(d => d.table);
+      const componentsTouched = (this.components || []).filter(c => affected.has(c.file)).map(c => c.tag).filter((v, i, a) => a.indexOf(v) === i);
+      const needsMigration = buckets.migrations.length > 0 || tablesTouched.length > 0;
+      const needsRebuild = buckets.config.some(p => /package\.json|Cargo\.toml|Dockerfile|forge\.config|tauri\.conf|manifest\.json/i.test(p));
+      const needsRedeploy = needsRebuild || buckets.infra.length > 0 || routesTouched.length > 0;
+      const risk = (list.length > 25 || needsMigration) ? 'high' : (list.length > 8 || needsRedeploy) ? 'medium' : 'low';
+      const summary =
+        'Changing ' + seeds.length + ' file' + (seeds.length === 1 ? '' : 's') + ' touches ' + list.length + ' file' + (list.length === 1 ? '' : 's') +
+        ' (' + buckets.tests.length + ' test' + (buckets.tests.length === 1 ? '' : 's') +
+        (buckets.migrations.length ? ', ' + buckets.migrations.length + ' migration' + (buckets.migrations.length === 1 ? '' : 's') : '') +
+        (routesTouched.length ? ', ' + routesTouched.length + ' route' + (routesTouched.length === 1 ? '' : 's') : '') +
+        ').' +
+        (needsMigration ? ' A database migration must run.' : '') +
+        (needsRebuild ? ' A rebuild is required.' : '') +
+        (needsRedeploy && !needsRebuild ? ' A redeploy is required.' : '') +
+        ' Risk: ' + risk + '.';
+      const report = {
+        generatedAt: Date.now(), changed: seeds, affectedCount: list.length, affected: list,
+        buckets, routesTouched, tablesTouched, componentsTouched,
+        needsMigration, needsRebuild, needsRedeploy, risk, summary
+      };
+      try { if (Engine.Sovereign) Engine.Sovereign.write('blast-radius.json', report); } catch (_) {}
+      return report;
     }
   };
 

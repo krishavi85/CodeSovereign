@@ -2431,6 +2431,15 @@ function renderRecovery(){
         ${renderRecoveryRootCause()}
       </div>
 
+      <!-- §59: Blast radius / change-impact -->
+      <div class="card" style="padding:20px;margin-top:18px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <h3 class="cs-h3">Change Impact / Blast Radius</h3>
+          <span style="font-size:12px;color:var(--muted)">pick a file — see every file, test, migration and route a change touches</span>
+        </div>
+        ${renderRecoveryBlastRadius()}
+      </div>
+
       <!-- Recovery Engine v2: Mock / Placeholder Detector -->
       <div class="card" style="padding:20px;margin-top:18px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -2957,6 +2966,8 @@ function bindRecovery(){
   document.querySelectorAll('[data-sovfile]').forEach(function(el){
     el.onclick = function(){ openSovereignFile(el.dataset.sovfile); };
   });
+  var bf = document.getElementById('blastFileSel');
+  if (bf) bf.onchange = function(){ S.blastFile = bf.value; renderAll(); };
   if (window.desktop && window.desktop.trust && !window.__csTrustChecked) {
     window.__csTrustChecked = true;
     csRefreshTrust().then(function(){ if (S.screen === 'recovery') renderAll(); });
@@ -3960,6 +3971,42 @@ function renderRecoveryWeightedHealth(){
   } catch (e) {
     return '<div style="color:var(--err);font-size:13px">weighted-health error: ' + esc(String(e && e.message || e)) + '</div>';
   }
+}
+
+function renderRecoveryBlastRadius(){
+  try {
+    var G = window.Engine && window.Engine.Graph;
+    if (!G || !G.blastRadius) return '<div style="color:var(--muted);font-size:13px">Engine.Graph not loaded</div>';
+    G.build();
+    var files = (G.files || []).filter(function(p){ return /\.(js|mjs|ts|jsx|tsx|sql|json|ya?ml)$/.test(p) && !/\/(node_modules|\.sovereign)\//.test(p); }).sort();
+    if (!files.length) return '<div style="color:var(--muted);font-size:13px">No project files yet — generate or open a project.</div>';
+    var sel = (S.blastFile && files.indexOf(S.blastFile) >= 0) ? S.blastFile : files[0];
+    var r = G.blastRadius(sel);
+    var riskColor = r.risk === 'high' ? 'var(--err)' : r.risk === 'medium' ? 'var(--warn)' : 'var(--good)';
+    var chip = function(label, arr, col){
+      if (!arr || !arr.length) return '';
+      return '<div style="margin-top:8px"><div style="font:600 10.5px Inter;color:' + col + ';text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">' + label + ' (' + arr.length + ')</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px">' + arr.map(function(x){ return '<span style="font:11px ui-monospace,monospace;padding:2px 7px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px">' + esc(x) + '</span>'; }).join('') + '</div></div>';
+    };
+    var html = '<label style="font-size:12px;color:var(--muted)">File changed</label>' +
+      '<select id="blastFileSel" style="display:block;width:100%;max-width:520px;margin:6px 0 12px;padding:7px 9px;background:var(--bg);border:1px solid var(--line);border-radius:7px;color:var(--fg);font:12px ui-monospace,monospace">' +
+      files.map(function(f){ return '<option value="' + esc(f) + '"' + (f === sel ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('') + '</select>';
+    html += '<div style="padding:12px;border-left:3px solid ' + riskColor + ';background:rgba(124,92,255,.04);border-radius:4px">' +
+      '<div style="font-size:13px;line-height:1.6">' + esc(r.summary) + '</div>' +
+      '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+      '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;background:' + riskColor + ';color:#0a0e1a">RISK: ' + esc(r.risk.toUpperCase()) + '</span>' +
+      (r.needsMigration ? '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;border:1px solid var(--warn);color:var(--warn)">MIGRATION</span>' : '') +
+      (r.needsRebuild ? '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;border:1px solid var(--accent);color:var(--accent)">REBUILD</span>' : '') +
+      (r.needsRedeploy ? '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;border:1px solid var(--info);color:var(--info)">REDEPLOY</span>' : '') +
+      '</div></div>';
+    html += chip('Source files', r.buckets.sourceFiles, 'var(--fg)');
+    html += chip('Tests to re-run', r.buckets.tests, 'var(--good)');
+    html += chip('Migrations', r.buckets.migrations, 'var(--warn)');
+    html += chip('Routes affected', r.routesTouched, 'var(--accent)');
+    html += chip('DB tables', r.tablesTouched, 'var(--info)');
+    html += chip('Config / build', r.buckets.config, 'var(--muted)');
+    return html;
+  } catch (e) { return '<div style="color:var(--err);font-size:13px">Blast radius failed: ' + esc(e && e.message || e) + '</div>'; }
 }
 
 function renderRecoveryRootCause(){
