@@ -102,7 +102,19 @@ function root() {
    PROBE — what can this host actually run?
    ===================================================================== */
 function probe() {
-  const out = { host: { platform: process.platform, arch: process.arch }, evm: {}, android: {}, ios: {}, ml: {} };
+  const out = { host: { platform: process.platform, arch: process.arch }, evm: {}, android: {}, ios: {}, ml: {}, desktop: {}, extension: {}, audio: {} };
+
+  // desktop / extension / audio toolchains (offline-plan §2, §9, §10)
+  out.host.cargo = !!which('cargo');
+  out.host.rustc = !!which('rustc');
+  try { require.resolve('electron'); out.host.electron = true; } catch (_) { out.host.electron = !!which('electron'); }
+  out.host.ffmpeg = !!which('ffmpeg');
+  out.host.cosign = !!which('cosign');
+  out.host.verdaccio = !!which('verdaccio');
+  let playwright = false; try { require.resolve('playwright'); playwright = true; } catch (_) {}
+  out.desktop = { available: true, canRun: !!(out.host.cargo || out.host.electron), cargo: out.host.cargo, electron: out.host.electron, tauriCli: !!which('tauri') };
+  out.extension = { available: true, canRun: true, playwright, wxt: !!which('wxt'), plain: true };
+  out.audio = { available: !!(out.host.ffmpeg && (which('whisper-cli') || which('whisper'))), ffmpeg: out.host.ffmpeg, whisper: !!(which('whisper-cli') || which('whisper')) };
 
   // EVM: the vendored solc + @ethereumjs/vm path is always available; forge is a bonus.
   let solcOk = false;

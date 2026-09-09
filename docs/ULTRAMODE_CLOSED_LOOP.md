@@ -49,7 +49,7 @@ call `Engine.UltraMode.resume()`.
 | `REPAIRING` | snapshot `pre-repair-N` → `Recovery.run` → re-analyze; roll back if worse |
 | `REVERIFYING` | re-run execution + observation + analyze; evaluate the DoD gate |
 | `VERIFIED` | every DoD gate passed **with a real certificate** |
-| `PARTIAL` | a runtime-adapter target (currently iOS off-macOS) where every stage this host **can** run passed — `sourceGeneration` + `staticValidation` — and the rest are stage-`BLOCKED` on host tooling. `SOVEREIGN VERIFIED — PARTIAL`. Not a FAIL, not a blanket BLOCKED |
+| `PARTIAL` | a staged runtime-adapter target (iOS off-macOS · **native desktop** — Tauri `cargo check` passes, packaged bundle needs `@tauri-apps/cli` · **browser extension** — MV3 validated + built, load-unpacked needs Playwright) where every stage this host **can** run passed and the rest are stage-`BLOCKED` on host tooling. `SOVEREIGN VERIFIED — PARTIAL`. Not a FAIL, not a blanket BLOCKED |
 | `BLOCKED` | safety refusal, unanswered blocking question, a required runtime prerequisite is entirely missing, or the environment cannot verify (browser mode) |
 | `FAILED` | the DoD gate did not pass after the repair budget, a static-validation / build failure, or an internal error |
 | `CANCELLED` | `Engine.UltraMode.cancel()` |

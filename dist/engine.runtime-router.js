@@ -120,8 +120,8 @@
       out.web = { available: true, canRun: !!(window.desktop && window.desktop.isDesktop) };
       // desktop + extension: generation + static validation run everywhere; the
       // build/launch stages need a toolchain (cargo / electron / playwright).
-      out.desktop = { available: true, canRun: !!(h.host && (h.host.cargo || h.host.electron)) };
-      out.extension = { available: true, canRun: !!(window.desktop && window.desktop.isDesktop) };
+      out.desktop = h.desktop ? shape('desktop', h.desktop, 'canRun') : { available: true, canRun: !!(h.host && (h.host.cargo || h.host.electron)) };
+      out.extension = h.extension ? shape('extension', h.extension, 'canRun') : { available: true, canRun: !!(window.desktop && window.desktop.isDesktop) };
       out.evm = shape('evm', h.evm);
       out.android = shape('android', h.android, 'canRun');
       out.ios = shape('ios', h.ios, 'canRun');
@@ -144,6 +144,13 @@
       }
       if (target === 'ml-training') {
         if (!r.detail.python) missing.push('Python'); if (!r.detail.torch) missing.push('PyTorch');
+      }
+      if (target === 'desktop') {
+        if (!r.detail.cargo && !r.detail.electron) missing.push('Rust/Cargo (Tauri) or Electron');
+        if (r.detail.cargo && !r.detail.tauriCli) missing.push('@tauri-apps/cli + a system webview (for the packaged build)');
+      }
+      if (target === 'extension') {
+        if (!r.detail.playwright) missing.push('Playwright + Chromium (for load-unpacked inspection)');
       }
       return {
         target: target, host: out.host,
