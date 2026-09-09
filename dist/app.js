@@ -3143,7 +3143,7 @@ function renderSettings(){
       <div class="card" style="padding:20px">
         <h3 class="cs-h3" style="margin-bottom:14px">${I.sparkle} About</h3>
         <div style="font-size:13px;color:var(--muted);line-height:1.7">
-          <b>CodeSovereign</b> is a sovereign, agentic build environment. Everything runs in your browser
+          <b>CodeSovereign</b> <span id="aboutVersion" style="font:600 12px ui-monospace,monospace;color:var(--fg)">v…</span> — a sovereign, agentic build environment. Everything runs in your browser
           via a virtual file system (<code>cs.fs.v1</code>) and project store (<code>cs.proj.v1</code>).<br>
           The agent fleet &mdash; ${(window.Engine && window.Engine.AGENTS ? window.Engine.AGENTS.map(a => a.id).join(', ') : 'Sovereign-1.5')} &mdash; plan, scaffold, implement,
           validate, and package real working code with no mock data.
@@ -3232,6 +3232,13 @@ function bindSettings(){
   document.querySelectorAll('[data-art]').forEach(el => el.onclick = () => { S.artTab = el.dataset.art; renderAll(); });
   // Tool toggles
   document.querySelectorAll('[data-tool]').forEach(el => el.onclick = () => { S.tools[el.dataset.tool] = !S.tools[el.dataset.tool]; renderAll(); });
+  // About — show the running desktop build version
+  var av = document.getElementById('aboutVersion');
+  if (av) {
+    if (window.desktop && window.desktop.info) {
+      window.desktop.info().then(function(i){ av.textContent = 'v' + ((i && i.app) || '?') + (i && i.electron ? ' · Electron ' + i.electron : ''); }).catch(function(){ av.textContent = ''; });
+    } else { av.textContent = '(web preview)'; }
+  }
 }
 
 /* ============================================================
