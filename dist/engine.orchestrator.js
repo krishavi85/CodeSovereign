@@ -230,8 +230,38 @@
     }
   };
 
+  // universal-DAG agent name -> Engine.Agents roster id. The universal
+  // TaskGraph names agents like "database-agent"; the real specialist
+  // implementations in Engine.Agents are the generators for them.
+  var AGENT_ALIAS = {
+    'product-agent': 'product', 'architecture-agent': 'architect', 'uiux-agent': 'design',
+    'database-agent': 'scaffold', 'authentication-agent': 'scaffold', 'backend-agent': 'scaffold',
+    'frontend-agent': 'scaffold', 'integration-agent': 'integration', 'security-agent': 'security',
+    'test-agent': 'test', 'debug-repair-agent': 'repair', 'deployment-agent': 'deploy',
+    'documentation-agent': 'docs', 'verify-agent': 'verify', 'release-agent': 'release'
+  };
+  function rosterIdFor(task) {
+    if (!task.agent || !Engine.Agents || !Engine.Agents.get) return null;
+    var id = AGENT_ALIAS[task.agent] || task.agent.replace(/-agent$/, '');
+    return Engine.Agents.get(id) ? id : null;
+  }
+
   function resolveGenerator(task) {
     if (typeof task.generate === 'function') return task.generate;
+    // universal-DAG fallback tasks: route task.agent to a real specialist agent
+    var rid = rosterIdFor(task);
+    if (rid) {
+      return function (ctx) {
+        return Promise.resolve(Engine.Agents.run(rid, (ctx && ctx.ctx) || {})).then(function (r) {
+          task._agentResult = r || {};
+          // agents that produce file paths as objects hand them back; most write
+          // their own files (already flushed) and return path strings + a report.
+          var files = (r && r.files) || [];
+          if (files.length && typeof files[0] === 'object') return files;
+          return [];
+        });
+      };
+    }
     // repo-scale scaffold: task.scaffold is a spec, or 'context' / 'objective:<text>'
     if (task.scaffold && Engine.Scaffold) {
       return function () {
@@ -250,7 +280,8 @@
       return function () {
         return Engine.LLM.complete(task.prompt, { classification: { primaryType: 'web_application' } }).then(function (r) {
           var txt = (r && (r.content || r.text || r)) || '';
-          var jj = null; try { jj = JSON.parse(String(txt).replace(/^[\s\S]*?\{/, '{').replace(/\}[\s\S]*$/, '}')); } catch (_) {}
+          var jj = (Engine.Contract && Engine.Contract._extractJson) ? Engine.Contract._extractJson(txt) : null;
+          if (!jj) { try { jj = JSON.parse(String(txt).replace(/^[\s\S]*?\{/, '{').replace(/\}[\s\S]*$/, '}')); } catch (_) {} }
           return (jj && jj.files) || [];
         });
       };
@@ -258,8 +289,32 @@
     return null;
   }
 
+  // does the workspace now hold the artefact this agent is responsible for?
+  // used for the universal-DAG fallback tasks, which have no `satisfies`.
+  function agentArtifactPresent(rid, res) {
+    if (res && (res.error || res.blocked)) return false;
+    var has = function (p) { try { return !!FS.read(p); } catch (_) { return false; } };
+    switch (rid) {
+      case 'product': return !!(Engine.Contract && Engine.Contract.load && Engine.Contract.load());
+      case 'architect': case 'design': return !!(res && (res.report || res.note));
+      case 'scaffold': return has('/package.json') && (has('/server.js') || has('/src/server.js') || has('/app/main.py'));
+      case 'test': return Object.keys(FS._data || {}).some(function (p) { return /\/test\/.+\.(test|spec)\.js$/.test(p) || /\/tests\/test_.+\.py$/.test(p); });
+      case 'security': return !!sj('security-findings.json');
+      case 'integration': { var w = sj('wiring-trace.json'); return !!(w && w.totals); }
+      case 'verify': return !!sj('execution-evidence.json') || !!sj('runtime-trace.json');
+      case 'repair': return !!(res && res.report);   // a repair pass ran (status recorded)
+      case 'deploy': return !!sj('deployment.json');
+      case 'docs': return has('/README.md') || has('/docs/API.md') || !!sj('documentation-index.json');
+      case 'release': { var d = Engine.DoD && Engine.DoD.load(); return !!d; }
+      default: return !!(res && !res.error);
+    }
+  }
+
   /* ---------- verify a task's target against fresh evidence ---------- */
   function targetMet(task) {
+    if (typeof task.check === 'function') { try { return !!task.check(); } catch (_) { return false; } }
+    var rid = rosterIdFor(task);
+    if (rid && !task.satisfies) return agentArtifactPresent(rid, task._agentResult);
     var ledger = Engine.Ledger && Engine.Ledger.load();
     if (task.satisfies && typeof task.satisfies === 'string' && ledger) {
       var cl = (ledger.claims || []).find(function (c) { return c.requirementId === task.satisfies; });
@@ -314,13 +369,22 @@
     var deferProof = opts.deferProof != null ? opts.deferProof
       : !((opts.tasks || []).some(function (t) { return t.prompt || typeof t.generate === 'function'; }));
     var tasks = (opts.tasks || []).slice();
+    var fromDAG = false;
     if (!tasks.length && Engine.Universal && Engine.Universal.TaskGraph) {
-      // fall back to the universal DAG (planning only — these have no generators yet)
+      // fall back to the universal DAG. Each task's `agent` now routes to a real
+      // Engine.Agents specialist (see AGENT_ALIAS / resolveGenerator), so the
+      // fallback actually builds + verifies instead of only planning.
       try {
-        var g = Engine.Universal.TaskGraph.build({});
-        tasks = (g.tasks || []).map(function (t) { return { id: t.id, name: t.name, agent: t.agent }; });
+        var TG = Engine.Universal.TaskGraph;
+        var g = TG.create();
+        var cls = null;
+        try { cls = (Engine.Universal.Classifier && Engine.Universal.Classifier.classify(Engine.Universal.Normalizer.normalize({ prompt: (opts.ctx && opts.ctx.objective) || '' }))) || null; } catch (_) {}
+        TG.buildDefault(g, cls || {});
+        tasks = (g.tasks || []).map(function (t) { return { id: t.id, name: t.name, agent: t.agent, dependsOn: t.dependsOn }; });
+        fromDAG = tasks.length > 0;
       } catch (_) {}
     }
+    var runCtx = opts.ctx || {};
 
     var record = { startedAt: Date.now(), desktop: desktop, tasks: [], dodBefore: null, dodAfter: null };
     // make sure a contract + ledger + gate exist to compare against
@@ -350,7 +414,7 @@
 
         var loop = function () {
           tr.cycles++;
-          return Promise.resolve(gen({ task: task }))
+          return Promise.resolve(gen({ task: task, ctx: runCtx }))
             .then(function (files) {
               (files || []).forEach(function (f) {
                 if (f && typeof f.path === 'string' && typeof f.content === 'string') {

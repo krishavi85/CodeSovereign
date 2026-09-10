@@ -29,6 +29,27 @@
 
   var ACCEPT_KINDS = ['execution', 'control', 'no-mock', 'file', 'ci'];
 
+  // Pull the first balanced JSON object out of a model reply (it may be wrapped
+  // in prose or a ```json fence). Brace-matched, string-aware — handles nested
+  // objects, unlike a naive first-{ .. last-} slice.
+  function extractJson(txt) {
+    var s = String(txt == null ? '' : txt);
+    var start = s.indexOf('{');
+    if (start < 0) return null;
+    var depth = 0, inStr = false, esc = false;
+    for (var i = start; i < s.length; i++) {
+      var ch = s[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === '\\') esc = true;
+        else if (ch === '"') inStr = false;
+      } else if (ch === '"') inStr = true;
+      else if (ch === '{') depth++;
+      else if (ch === '}') { depth--; if (depth === 0) { try { return JSON.parse(s.slice(start, i + 1)); } catch (_) { return null; } } }
+    }
+    return null;
+  }
+
   // Sovereign.read() returns a PARSED object for *.json — never double-parse.
   function sj(p) {
     try {
@@ -136,8 +157,8 @@
       '"acceptanceCriteria":["short testable sentence", ...]}]}. 6-14 requirements, concrete and verifiable.';
     return LLM.complete(ask, { classification: { primaryType: identity.type } })
       .then(function (r) {
-        var txt = (r && (r.content || r)) || '';
-        var j = null; try { j = JSON.parse(String(txt).replace(/^[\s\S]*?\{/, '{').replace(/\}[\s\S]*$/, '}')); } catch (_) {}
+        var txt = (r && (r.content || r.text || r)) || '';
+        var j = extractJson(txt);
         if (!j || !Array.isArray(j.requirements)) return null;
         return j.requirements.slice(0, 14).map(function (x) {
           return req(String(x.statement || '').slice(0, 200), x.category || 'functional',
@@ -803,6 +824,6 @@
       .then(finish);
   }
 
-  Engine.Contract = { derive: derive, deriveFromPrompt: deriveFromPrompt, write: write, load: load, ACCEPT_KINDS: ACCEPT_KINDS, SUPPORTED: SUPPORTED };
+  Engine.Contract = { derive: derive, deriveFromPrompt: deriveFromPrompt, write: write, load: load, ACCEPT_KINDS: ACCEPT_KINDS, SUPPORTED: SUPPORTED, _extractJson: extractJson };
   console.info('[Contract] product-contract engine ready — Engine.Contract');
 })();

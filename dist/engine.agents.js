@@ -100,6 +100,30 @@
         return flush().then(function () { return { files: r.wrote, report: { target: target, preflightOk: r.preflight.ok }, note: 'deploy artefacts for ' + target }; });
       } },
 
+    { id: 'design', label: 'UI / design system', needs: ['product'],
+      run: function () {
+        if (!Engine.Design || !Engine.Design.analyze) return Promise.resolve({ note: 'Engine.Design not loaded' });
+        var r = null; try { r = Engine.Design.analyze(); } catch (_) {}
+        return flush().then(function () { return { report: r ? { status: r.status || r.support, components: (r.components || []).length } : null, note: 'design input analysed' }; });
+      } },
+
+    { id: 'docs', label: 'Documentation factory', needs: ['scaffold'],
+      run: function () {
+        if (!allowed('generate')) return Promise.resolve({ blocked: 'generate' });
+        if (!Engine.Docs || !Engine.Docs.analyze) return Promise.resolve({ note: 'Engine.Docs not loaded' });
+        var r = null; try { r = Engine.Docs.analyze(); } catch (_) {}
+        return flush().then(function () { return { report: r ? { docs: (r.generated || r.docs || []).length || r.count } : null, note: 'operator docs generated' }; });
+      } },
+
+    { id: 'integration', label: 'Integrations (jobs / realtime / external)', needs: ['scaffold'],
+      run: function (ctx) {
+        // wiring for background jobs + realtime is emitted by the scaffold from the
+        // contract; this agent verifies the wiring rather than re-generating it.
+        if (!Engine.Wiring || !Engine.Wiring.trace) return Promise.resolve({ note: 'Engine.Wiring not loaded' });
+        var r = null; try { r = Engine.Wiring.trace(); } catch (_) {}
+        return Promise.resolve({ report: r ? { entities: (r.totals && r.totals.entities) || 0, fullyWired: (r.totals && r.totals.fullyWired) || 0, broken: (r.totals && r.totals.brokenChains) || 0 } : null, note: 'integration wiring traced' });
+      } },
+
     { id: 'release', label: 'Release (Definition-of-Done + certificate)', needs: ['verify'],
       run: function () {
         if (!Engine.DoD) return Promise.resolve({ note: 'Engine.DoD not loaded' });

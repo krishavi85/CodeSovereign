@@ -122,6 +122,16 @@
         [], ['upgrade-plan.json']);
     });
 
+    // 7b) coding conventions — the house style the factory captured + will follow
+    var conv = sread('conventions.json');
+    if (conv && conv.rules && conv.rules.length) {
+      add('Conventions', 'Follow the project\'s existing coding conventions', 'accepted',
+        'Inferred from ' + ((conv.conventions && conv.conventions.sampledFiles) || 0) + ' source file(s) by Engine.Conventions.',
+        conv.rules.join(' · ') + '.',
+        ['Later generation + repair passes match this style rather than imposing a different one.'],
+        ['conventions.json', 'conventions.md']);
+    }
+
     // 8) the release decision
     if (dod) {
       var verdict = (run && (run.result || run.state)) ||

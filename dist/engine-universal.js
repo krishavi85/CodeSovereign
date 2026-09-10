@@ -65,8 +65,8 @@ const Normalizer = {
     "embedded_system": ["embedded", "microcontroller", "arduino", "raspberry pi"],
     "cross_platform_application": ["cross-platform", "react native", "flutter", "expo"]
   },
-  ACTOR_HINTS: ["customer", "user", "admin", "administrator", "driver", "dj", "seller", "buyer", "guest", "operator", "moderator", "manager"],
-  CAPABILITY_HINTS: ["register", "login", "upload", "download", "search", "pay", "checkout", "book", "review", "rate", "subscribe", "notify", "export", "share", "comment", "like", "follow", "track", "monitor"],
+  ACTOR_HINTS: ["customer", "user", "admin", "administrator", "driver", "dj", "seller", "buyer", "vendor", "guest", "operator", "moderator", "manager", "owner", "member", "student", "teacher", "instructor", "patient", "doctor", "client", "staff", "employee", "organizer", "attendee", "host", "reviewer", "editor", "author", "subscriber"],
+  CAPABILITY_HINTS: ["register", "sign up", "login", "log in", "sign in", "upload", "download", "import", "export", "search", "filter", "sort", "pay", "checkout", "refund", "book", "reserve", "schedule", "review", "rate", "subscribe", "notify", "remind", "share", "invite", "comment", "like", "follow", "track", "monitor", "assign", "approve", "archive", "tag", "message", "chat", "print", "sync", "backup"],
   PLATFORM_HINTS: {
     "web": ["web", "browser", "site"],
     "android": ["android", "play store", "google play"],
@@ -78,29 +78,52 @@ const Normalizer = {
     "cli": ["cli", "command line", "terminal"],
     "extension": ["extension", "add-on", "plugin for browser"]
 },
-  // Spell correction / normalization (lightweight)
+  // Spell correction / normalization (lightweight, deterministic)
   SPELLFIX: [
-    [/\brecieve\b/gi, "receive"],
-    [/\boccured\b/gi, "occurred"],
-    [/\bseperate\b/gi, "separate"],
-    [/\bteh\b/gi, "the"],
-    [/\bandoid\b/gi, "android"],
-    [/\bios app\b/gi, "iOS app"]
+    [/\brecieve\b/gi, "receive"], [/\boccured\b/gi, "occurred"], [/\bseperate\b/gi, "separate"],
+    [/\bteh\b/gi, "the"], [/\bandoid\b/gi, "android"], [/\bios app\b/gi, "iOS app"],
+    [/\bwebsit\b/gi, "website"], [/\bwebiste\b/gi, "website"], [/\bweb app\b/gi, "webapp"],
+    [/\bdashbaord\b/gi, "dashboard"], [/\bdatabse\b/gi, "database"], [/\bdatabas\b/gi, "database"],
+    [/\bauthetication\b/gi, "authentication"], [/\bauthencation\b/gi, "authentication"],
+    [/\baccout\b/gi, "account"], [/\baccounts\b/gi, "accounts"], [/\bregisteration\b/gi, "registration"],
+    [/\bmangement\b/gi, "management"], [/\bmanagment\b/gi, "management"], [/\bmanagable\b/gi, "manageable"],
+    [/\bnotifcation\b/gi, "notification"], [/\bnotifcations\b/gi, "notifications"],
+    [/\bappliction\b/gi, "application"], [/\bapplicaiton\b/gi, "application"],
+    [/\bfuntion\b/gi, "function"], [/\bfucntion\b/gi, "function"], [/\brequirments\b/gi, "requirements"],
+    [/\bcalender\b/gi, "calendar"], [/\bsubcription\b/gi, "subscription"], [/\becomerce\b/gi, "ecommerce"],
+    [/\bpermisions\b/gi, "permissions"], [/\brole based\b/gi, "role-based"], [/\bmulti tenant\b/gi, "multi-tenant"],
+    [/\breal time\b/gi, "real-time"], [/\bback end\b/gi, "backend"], [/\bfront end\b/gi, "frontend"],
+    [/\bpostgress?\b/gi, "postgres"], [/\bmongo db\b/gi, "mongodb"], [/\bp2p\b/gi, "peer-to-peer"]
+  ],
+  // filler phrases that carry no requirement — stripped before classification
+  FILLERS: [
+    /\b(please|kindly|could you|can you|i(?:'| a)?m looking to|i want to|i(?:'| wou)ld like (?:you )?to|i need|we need|help me|build me|create me|make me|for me|asap|thanks?(?: you)?)\b/gi
   ],
   normalize(input){
     const prompt = (input.prompt || "").toString();
-    let fixed = prompt;
+    let fixed = prompt
+      .replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
+      .replace(/\bwon't\b/gi, "will not").replace(/\bcan't\b/gi, "cannot")
+      .replace(/\b(\w+)'ll\b/gi, "$1 will").replace(/\b(\w+)'re\b/gi, "$1 are")
+      .replace(/\b(do|does|did|is|are|was|were|have|has|had|would|should|could)n't\b/gi, "$1 not");
     this.SPELLFIX.forEach(([re, rep]) => { fixed = fixed.replace(re, rep); });
+    let stripped = fixed;
+    this.FILLERS.forEach((re) => { stripped = stripped.replace(re, " "); });
+    stripped = stripped.replace(/\s{2,}/g, " ").trim();
     const lc = fixed.toLowerCase();
-    // applicationCategory
+    // applicationCategory — weighted: a multi-word phrase counts double, and we
+    // fall back to web_application when the prose clearly describes an app.
     let applicationCategory = "unknown";
     let bestScore = 0;
     Object.keys(this.KEYWORDS_TO_TYPE).forEach(k => {
       const kws = this.KEYWORDS_TO_TYPE[k];
       let score = 0;
-      kws.forEach(w => { if (lc.indexOf(w) >= 0) score += 1; });
+      kws.forEach(w => { if (lc.indexOf(w) >= 0) score += (w.indexOf(" ") >= 0 ? 2 : 1); });
       if (score > bestScore){ bestScore = score; applicationCategory = k; }
     });
+    if (applicationCategory === "unknown" && /\b(app|application|platform|tool|system|portal|tracker|manager|build|website|service)\b/i.test(fixed)) {
+      applicationCategory = /\b(api|endpoint|microservice)\b/i.test(fixed) ? "api_service" : "web_application";
+    }
     // targetPlatforms
     const targetPlatforms = Object.keys(this.PLATFORM_HINTS).filter(p =>
       this.PLATFORM_HINTS[p].some(w => lc.indexOf(w) >= 0)
@@ -111,8 +134,8 @@ const Normalizer = {
     if (primaryActors.length === 0) primaryActors.push("user");
     // coreCapabilities
     const coreCapabilities = this.CAPABILITY_HINTS.filter(c => new RegExp("\\b" + c + "\\b", "i").test(fixed));
-    // projectGoal
-    const projectGoal = fixed.split(/[.!?]/)[0].trim().slice(0, 240) || "Build a software application";
+    // projectGoal — from the filler-stripped text so it reads as a spec line
+    const projectGoal = (stripped.split(/[.!?]/)[0].trim() || fixed.split(/[.!?]/)[0].trim()).slice(0, 240) || "Build a software application";
     // unknownRequirements
     const unknownRequirements = [];
     if (/(pay|checkout|subscription)/i.test(fixed) && !/stripe|paypal|razorpay|squarespace/i.test(fixed)) unknownRequirements.push("payment provider");
@@ -125,6 +148,7 @@ const Normalizer = {
     const referenceImages = (input.referenceImages || []).slice();
     return {
       projectGoal,
+      normalizedPrompt: stripped,
       applicationCategory,
       targetPlatforms,
       primaryActors,
@@ -146,7 +170,8 @@ const Normalizer = {
    ============================================================ */
 const Classifier = {
   classify(normalized){
-    const primary = normalized.applicationCategory;
+    const primary = (!normalized.applicationCategory || normalized.applicationCategory === "unknown")
+      ? "web_application" : normalized.applicationCategory;
     // secondary types (heuristic from keywords)
     const secondary = [];
     if (normalized.coreCapabilities.some(c => ["pay", "checkout", "subscribe"].includes(c))) secondary.push("ecommerce");

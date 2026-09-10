@@ -31,7 +31,8 @@
   // (or with JS-disabled fallbacks) the English default renders — never a raw key.
   var I18N_BRIDGE =
     "var __w = (typeof window !== 'undefined') ? window : {};\n" +
-    "function t(key, en) { try { return (__w.i18n && __w.t) ? (__w.t(key) || en) : en; } catch (_) { return en; } }\n" +
+    "function __interp(s, v) { return v ? String(s).replace(/\\{(\\w+)\\}/g, function (m, k) { return (k in v) ? v[k] : m; }) : s; }\n" +
+    "function t(key, en, vars) { try { var s = (__w.i18n && __w.t) ? (__w.t(key, vars) || __interp(en, vars)) : __interp(en, vars); return s; } catch (_) { return __interp(en, vars); } }\n" +
     "var i18nReady = (__w.i18n && __w.i18n.load) ? __w.i18n.load() : Promise.resolve();";
 
   /* ---------------------------------------------------------------- *
@@ -271,15 +272,15 @@
       "      localStorage.setItem('token', r.body.token); props.onAuthed();",
       "    });",
       "  }",
-      "  return h('section', { className: 'card auth', 'aria-label': 'sign in' },",
+      "  return h('section', { className: 'card auth', 'aria-label': t('auth.formLabel', 'sign in') },",
       "    h('h2', null, t('auth.heading', 'Sign in')),",
       "    h('form', { onSubmit: submit },",
       "      h('label', { htmlFor: 'fEmail' }, t('auth.email', 'Email')),",
-      "      h('input', { id: 'fEmail', type: 'email', autocomplete: 'email', 'aria-label': t('auth.email', 'email'), placeholder: 'you@example.com', value: email, required: true, onInput: function (ev) { setEmail(ev.target.value); } }),",
+      "      h('input', { id: 'fEmail', type: 'email', autocomplete: 'email', 'aria-label': t('auth.email', 'email'), placeholder: t('auth.emailPlaceholder', 'you@example.com'), value: email, required: true, onInput: function (ev) { setEmail(ev.target.value); } }),",
       "      h('label', { htmlFor: 'fPass' }, t('auth.password', 'Password')),",
-      "      h('input', { id: 'fPass', type: 'password', autocomplete: 'current-password', 'aria-label': t('auth.password', 'password'), placeholder: 'password (8+)', value: pass, required: true, onInput: function (ev) { setPass(ev.target.value); } }),",
+      "      h('input', { id: 'fPass', type: 'password', autocomplete: 'current-password', 'aria-label': t('auth.password', 'password'), placeholder: t('auth.passwordPlaceholder', 'password (8+)'), value: pass, required: true, onInput: function (ev) { setPass(ev.target.value); } }),",
       "      h('button', { type: 'submit' }, mode === 'login' ? t('auth.signIn', 'Sign in') : t('auth.register', 'Create account')),",
-      "      h('button', { type: 'button', id: 'authToggle', onClick: function () { setMode(mode === 'login' ? 'register' : 'login'); } }, mode === 'login' ? 'Need an account?' : 'Have an account?')",
+      "      h('button', { type: 'button', id: 'authToggle', onClick: function () { setMode(mode === 'login' ? 'register' : 'login'); } }, mode === 'login' ? t('auth.needAccount', 'Need an account?') : t('auth.haveAccount', 'Have an account?'))",
       "    ),",
       "    err ? h('div', { className: 'err' }, err) : null",
       "  );",
@@ -315,7 +316,7 @@
         if (ftype === 'checkbox') return "      h('label', null, h('input', { type: 'checkbox', checked: !!form." + fl.name + ", onChange: function (ev) { setForm(Object.assign({}, form, { " + fl.name + ": ev.target.checked })); } }), ' ' + t('" + lblKey + "', '" + fl.name + "')),";
         return "      h('input', { type: '" + ftype + "', 'aria-label': t('" + lblKey + "', '" + fl.name + "'), placeholder: t('" + lblKey + "', '" + fl.name + "'), value: form." + fl.name + " || '', " + (fl.required ? "required: true, " : "") + "onInput: function (ev) { setForm(Object.assign({}, form, { " + fl.name + ": ev.target.value })); } }),";
       }).join('\n'),
-      "      h('button', { type: 'submit' }, t('action.add', 'Add') + ' " + e.name + "')",
+      "      h('button', { type: 'submit' }, t('action.add', 'Add {entity}', { entity: t('entity." + e.name + "', '" + e.name + "') }))",
       "    ),",
       "    err ? h('div', { className: 'err' }, err) : null,",
       "    h('ul', { className: 'list' }, rows.length",
@@ -362,15 +363,15 @@
       "  render: function (ctx, h) {",
       "    var st = ctx.st;",
       auth
-        ? "    if (!st.authed) return h('div', {}, [ h('section', { class: 'card auth', 'aria-label': 'sign in' }, [\n" +
+        ? "    if (!st.authed) return h('div', {}, [ h('section', { class: 'card auth', 'aria-label': t('auth.formLabel', 'sign in') }, [\n" +
           "      h('h2', {}, [t('auth.heading', 'Sign in')]),\n" +
           "      h('form', { onSubmit: function (e) { e.preventDefault(); ctx.auth_(); } }, [\n" +
           "        h('label', { for: 'vEmail' }, [t('auth.email', 'Email')]),\n" +
-          "        h('input', { id: 'vEmail', type: 'email', autocomplete: 'email', 'aria-label': t('auth.email', 'email'), placeholder: 'you@example.com', value: st.email, onInput: function (e) { st.email = e.target.value; } }),\n" +
+          "        h('input', { id: 'vEmail', type: 'email', autocomplete: 'email', 'aria-label': t('auth.email', 'email'), placeholder: t('auth.emailPlaceholder', 'you@example.com'), value: st.email, onInput: function (e) { st.email = e.target.value; } }),\n" +
           "        h('label', { for: 'vPass' }, [t('auth.password', 'Password')]),\n" +
-          "        h('input', { id: 'vPass', type: 'password', autocomplete: 'current-password', 'aria-label': t('auth.password', 'password'), placeholder: 'password (8+)', value: st.pass, onInput: function (e) { st.pass = e.target.value; } }),\n" +
+          "        h('input', { id: 'vPass', type: 'password', autocomplete: 'current-password', 'aria-label': t('auth.password', 'password'), placeholder: t('auth.passwordPlaceholder', 'password (8+)'), value: st.pass, onInput: function (e) { st.pass = e.target.value; } }),\n" +
           "        h('button', { type: 'submit' }, [st.mode === 'login' ? t('auth.signIn', 'Sign in') : t('auth.register', 'Create account')]),\n" +
-          "        h('button', { type: 'button', id: 'authToggle', onClick: function () { st.mode = st.mode === 'login' ? 'register' : 'login'; } }, [st.mode === 'login' ? 'Need an account?' : 'Have an account?'])\n" +
+          "        h('button', { type: 'button', id: 'authToggle', onClick: function () { st.mode = st.mode === 'login' ? 'register' : 'login'; } }, [st.mode === 'login' ? t('auth.needAccount', 'Need an account?') : t('auth.haveAccount', 'Have an account?')])\n" +
           "      ]),\n" +
           "      st.err ? h('div', { class: 'err' }, [st.err]) : null\n" +
           "    ]) ]);\n"
@@ -386,12 +387,12 @@
             var lblKey = "field." + first.name + "." + f.name;
             return "          h('input', { type: '" + ftype + "', 'aria-label': t('" + lblKey + "', '" + f.name + "'), placeholder: t('" + lblKey + "', '" + f.name + "'), value: st.form." + f.name + " || '', onInput: function (e) { st.form." + f.name + " = e.target.value; } }),";
           }).join('\n') + "\n" +
-          "          h('button', { type: 'submit' }, [t('action.add', 'Add') + ' " + first.name + "'])\n" +
+          "          h('button', { type: 'submit' }, [t('action.add', 'Add {entity}', { entity: t('entity." + first.name + "', '" + first.name + "') })])\n" +
           "        ]),\n" +
           "        st.err ? h('div', { class: 'err' }, [st.err]) : null,\n" +
           "        h('ul', { class: 'list' }, (st.rows.length ? st.rows.map(function (r) { return h('li', {}, [String(" + (firstFields[0] ? "r." + firstFields[0].name + " || ('#' + r.id)" : "'#' + r.id") + "), h('button', { onClick: function () { ctx.del(r.id); } }, [t('action.delete', 'Delete')])]); }) : [h('li', { class: 'empty' }, [t('list.empty', 'Nothing yet')])]))\n" +
           "      ])"
-        : "      h('p', {}, ['No entities'])",
+        : "      h('p', {}, [t('list.noEntities', 'No entities')])",
       "    ]);",
       "  }",
       "});",
@@ -492,6 +493,11 @@
       "  assert.match(css, /var\\(--color-accent/, 'app.css consumes the accent token');",
       "  const app = fs.readFileSync(path.join(dir, 'app.js'), 'utf8');",
       "  assert.match(app, /\\bt\\(\\s*['\\\"][a-z]+\\.[a-zA-Z.]+['\\\"]/, 'strings routed through t(key, default)');",
+      "  // no bare string literal as an h() text child — it must be t(key, default) or a variable",
+      "  const bareChild = app.match(/h\\(\\s*['\\\"][a-z0-9]+['\\\"]\\s*,\\s*(?:\\{[^{}]*\\}|null)\\s*,\\s*\\[?\\s*(['\\\"])(?! *\\1)([^'\\\"]*[A-Za-z]{2}[^'\\\"]*)\\1/g) || [];",
+      "  assert.equal(bareChild.length, 0, 'un-i18n\\'d text children: ' + JSON.stringify(bareChild));",
+      "  assert.match(app, /placeholder:\\s*t\\(/, 'input placeholders localised');",
+      "  if (/action\\.add/.test(app)) assert.match(app, /t\\(\\s*'action\\.add',\\s*'Add \\{entity\\}'/, 'add button uses {entity} interpolation, not string concat');",
       "});",
       ""
     ].join('\n');

@@ -38,15 +38,21 @@
       'app.title': (spec && spec.name) ? spec.name : 'App',
       'app.skipToContent': 'Skip to content',
       'auth.heading': 'Sign in',
+      'auth.formLabel': 'sign in',
       'auth.email': 'Email',
       'auth.password': 'Password',
+      'auth.emailPlaceholder': 'you@example.com',
+      'auth.passwordPlaceholder': 'password (8+)',
       'auth.signIn': 'Sign in',
       'auth.register': 'Create account',
       'auth.signOut': 'Sign out',
+      'auth.needAccount': 'Need an account?',
+      'auth.haveAccount': 'Have an account?',
       'auth.signedInAs': 'Signed in as {email}',
       'auth.error': 'Sign in failed',
       'list.loading': 'Loading…',
       'list.empty': 'Nothing yet',
+      'list.noEntities': 'No entities',
       'list.error': 'Could not load',
       'list.count': '{n, plural, one {# item} other {# items}}',
       'action.add': 'Add {entity}',
@@ -188,6 +194,37 @@
     return Object.keys(out).sort();
   }
 
+  // user-facing string literals in a component frontend (app.js) that are NOT
+  // routed through t(). We strip every t(...) call first, then look for a
+  // string literal sitting where an h()/createElement text child or a
+  // placeholder / title / aria-label value goes.
+  function untaggedComponentStrings(src) {
+    var out = [];
+    var s = String(src)
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+      .replace(/\bt\(\s*(['"])[^'"]*\1[^)]*\)/g, 'T');   // remove t('k', 'default', ...) — linear, no nested groups
+    var pats = [
+      // h('tag', {props}|null, 'literal'  — a bare text child
+      /h\(\s*['"][a-z0-9]+['"]\s*,\s*(?:\{[^{}]*\}|null)\s*,\s*\[?\s*(['"])([^'"]{2,80})\1/g,
+      // placeholder / title / aria-label / alt : 'literal'
+      /\b(?:placeholder|title|alt|'aria-label'|"aria-label"|aria-label)\s*:\s*(['"])([^'"]{2,80})\1/g
+    ];
+    pats.forEach(function (re) {
+      var m;
+      while ((m = re.exec(s))) {
+        var text = m[2].trim();
+        if (!text || text.length < 2) continue;
+        if (/^[\s\d.,:;!?%$#@/\\|()[\]•·—–_-]+$/.test(text)) continue;       // punctuation / numbers
+        if (/^[a-z][\w-]*(\s[a-z][\w-]*){0,3}$/.test(text) && text.split(/\s+/).every(function (w) { return w.length < 7; }) && !/[?.!]/.test(text)) continue; // css class list e.g. "card auth"
+        if (!/[A-Za-z]{2}/.test(text)) continue;
+        if (/^https?:|^\/|^[A-Z_]+$|^#[0-9a-f]{3,8}$/i.test(text)) continue;  // urls / paths / consts / colours
+        out.push(text.slice(0, 60));
+      }
+    });
+    return Array.from(new Set(out));
+  }
+
   // visible text nodes in HTML that are NOT routed through i18n
   function untaggedStrings(html) {
     var out = [];
@@ -227,6 +264,18 @@
     var leaks = [];
     htmlFiles.forEach(function (p) { untaggedStrings(fread(p)).forEach(function (s) { leaks.push({ file: p, text: s }); }); });
     if (leaks.length) findings.push({ rule: 'hardcoded-string', impact: requested ? 'serious' : 'moderate', count: leaks.length, sample: leaks.slice(0, 8) });
+
+    // 1b) hard-coded visible strings in a component frontend (app.js) — this was
+    // advisory-only before; now it is scanned and scored like the HTML leaks so a
+    // regression in Engine.Frontends is caught, not just noted.
+    var componentLeaks = [];
+    listFiles(/\/public\/[^/]+\.js$/).forEach(function (p) {
+      if (/\/(i18n|vendor\/)/.test(p)) return;
+      var src = fread(p);
+      if (!/\b(CSDom|CSVue|createElement|\bh\()/.test(src)) return;   // only component frontends
+      untaggedComponentStrings(src).forEach(function (s) { componentLeaks.push({ file: p, text: s }); });
+    });
+    if (componentLeaks.length) findings.push({ rule: 'hardcoded-string-component', impact: requested ? 'serious' : 'moderate', count: componentLeaks.length, sample: componentLeaks.slice(0, 8) });
 
     // 2) window.t() / data-i18n keys missing from en.json
     var used = {};
@@ -276,6 +325,7 @@
       catalogueKeys: en ? Object.keys(en).length : 0,
       locales: localeCoverage,
       leaks: leaks.length,
+      componentLeaks: componentLeaks.length,
       findings: findings, byImpact: byImpact, score: score,
       healthy: requested ? !(byImpact.serious) : true
     };
@@ -299,6 +349,6 @@
     try { var v = S() && S().read('localization-findings.json'); return (v && typeof v === 'object') ? v : null; } catch (_) { return null; }
   }
 
-  Engine.Localize = { RTL: RTL, catalog: catalog, runtime: runtime, files: files, analyze: analyze, load: load, _pseudo: pseudo, _titleCase: titleCase };
+  Engine.Localize = { RTL: RTL, catalog: catalog, runtime: runtime, files: files, analyze: analyze, load: load, _pseudo: pseudo, _titleCase: titleCase, _untaggedComponentStrings: untaggedComponentStrings };
   console.info('[Localize] localization engine ready — Engine.Localize');
 })();

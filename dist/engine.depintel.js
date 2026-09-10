@@ -177,6 +177,101 @@
     return Promise.resolve(null); // deterministic offline default; hook a fetch here when a network policy allows it
   }
 
+  /* ---------------- asset-manifest licence scan (§52) ----------------
+     Fonts, images and ML model files are licensed independently of the
+     dependency tree. Scan the workspace for bundled assets and check each
+     against a declared licence / attribution — a declared font package,
+     an OFL/LICENSE file beside the asset, or an attribution manifest.
+     A bundled asset with none is reported (advisory for images/fonts,
+     moderate for a model with no licence). Generated assets the factory
+     itself emits (the scaffold logo, design tokens) are excluded. */
+  var FONT_RE = /\.(woff2?|ttf|otf|eot)$/i;
+  var IMG_RE = /\.(png|jpe?g|webp|gif|avif|bmp|ico)$/i;      // raster only — SVG is usually generated/inline
+  var MODEL_RE = /\.(gguf|safetensors|onnx|pt|pth|tflite|h5|pb|ckpt|bin|mlmodel|npz)$/i;
+  var ATTRIB_RE = /(^|\/)(licen[cs]e|licence|ofl(-[\d.]+)?|notice|credits?|attributions?|third[-_]?party(-notices)?|assets?)(\.(txt|md|json))?$/i;
+  // fonts whose licence isn't in package.json but is well known
+  var KNOWN_FONT_LICENSE = {
+    inter: 'OFL-1.1', roboto: 'Apache-2.0', 'open-sans': 'Apache-2.0 / OFL-1.1', lato: 'OFL-1.1',
+    montserrat: 'OFL-1.1', poppins: 'OFL-1.1', 'source-sans': 'OFL-1.1', 'noto-sans': 'OFL-1.1',
+    'jetbrains-mono': 'OFL-1.1', 'fira-code': 'OFL-1.1', 'ibm-plex': 'OFL-1.1', nunito: 'OFL-1.1',
+    'work-sans': 'OFL-1.1', raleway: 'OFL-1.1', 'dm-sans': 'OFL-1.1', manrope: 'OFL-1.1'
+  };
+  // assets the CodeSovereign generators emit themselves — not third-party
+  var GENERATED_ASSET_RE = /\/public\/(logo\.svg|favicon\.(ico|svg)|design-tokens\.css)$/i;
+
+  function listAll(re) {
+    try {
+      return Object.keys(Engine.FS._data || {}).filter(function (p) {
+        return Engine.FS.isFile(p) && re.test(p) && !/\/(node_modules|\.git|\.sovereign|dist|build|coverage)\//.test(p);
+      });
+    } catch (_) { return []; }
+  }
+  function nearestAttribution(assetPath) {
+    var segs = assetPath.split('/'); segs.pop();
+    var attribFiles = listAll(ATTRIB_RE);
+    while (segs.length) {
+      var dir = segs.join('/') + '/';
+      var hit = attribFiles.filter(function (f) { return f.indexOf(dir) === 0 && f.slice(dir.length).indexOf('/') < 0; })[0];
+      if (hit) return hit;
+      segs.pop();
+    }
+    // repo-root attribution manifests count for everything
+    var root = attribFiles.filter(function (f) { return f.split('/').length <= 2 && /(credits|attribution|third|notice|assets)/i.test(f); })[0];
+    return root || null;
+  }
+  function fontFamilyOf(path) {
+    var base = path.replace(/^.*\//, '').toLowerCase().replace(FONT_RE, '');
+    for (var k in KNOWN_FONT_LICENSE) if (base.indexOf(k.replace(/-/g, '')) >= 0 || base.indexOf(k) >= 0) return { key: k, license: KNOWN_FONT_LICENSE[k] };
+    return null;
+  }
+
+  function assetLicenses(deps) {
+    var findings = [];
+    var pkgNames = (deps || []).map(function (d) { return d.name; });
+    var fontPkgs = pkgNames.filter(function (n) { return /^@fontsource|(^|\/)(typeface-|font-)|webfont/i.test(n); });
+
+    var fonts = listAll(FONT_RE).map(function (p) {
+      var fam = fontFamilyOf(p);
+      var attrib = nearestAttribution(p);
+      var known = fam || (fontPkgs.length ? { key: 'pkg', license: 'declared via ' + fontPkgs[0] } : null);
+      var licence = known ? known.license : (attrib ? 'see ' + attrib : null);
+      if (!licence) findings.push({ kind: 'asset-license', impact: 'minor', dependency: p,
+        message: 'bundled font `' + p.replace(/^.*\//, '') + '` has no licence file beside it, no @fontsource package and an unrecognised family — add an OFL.txt / LICENSE or record it in an attribution manifest.' });
+      return { path: p, type: 'font', family: fam ? fam.key : null, license: licence || 'UNKNOWN', attribution: attrib || null };
+    });
+
+    var models = listAll(MODEL_RE).filter(function (p) { return !/\/(test|fixture|sample)s?\//i.test(p); }).map(function (p) {
+      var attrib = nearestAttribution(p);
+      var card = listAll(/(^|\/)(model[-_]?card|model[-_]?license|weights[-_]?license)(\.(md|txt|json))?$/i)
+        .filter(function (f) { return f.split('/').slice(0, -1).join('/') === p.split('/').slice(0, -1).join('/') || f.split('/').length <= 2; })[0];
+      var licence = card ? 'see ' + card : (attrib ? 'see ' + attrib : null);
+      if (!licence) findings.push({ kind: 'asset-license', impact: 'moderate', dependency: p,
+        message: 'ML model file `' + p.replace(/^.*\//, '') + '` ships with no MODEL_CARD / licence — model weights carry their own licence (many are non-commercial or gated). Declare it before distributing.' });
+      return { path: p, type: 'model', license: licence || 'UNKNOWN', attribution: attrib || card || null };
+    });
+
+    var images = listAll(IMG_RE).filter(function (p) {
+      return !GENERATED_ASSET_RE.test(p) && !/\/(test|fixture|sample|screenshot|\.sovereign)s?\//i.test(p) && !/\/node_modules\//.test(p);
+    }).map(function (p) {
+      var attrib = nearestAttribution(p);
+      if (!attrib) findings.push({ kind: 'asset-license', impact: 'minor', dependency: p,
+        message: 'bundled image `' + p.replace(/^.*\//, '') + '` has no attribution/licence record — if it is not original work, add it to a CREDITS / ATTRIBUTION file.' });
+      return { path: p, type: 'image', license: attrib ? 'see ' + attrib : 'UNKNOWN', attribution: attrib || null };
+    });
+
+    var all = fonts.concat(models, images);
+    var report = {
+      generatedAt: Date.now(),
+      counts: { fonts: fonts.length, models: models.length, images: images.length },
+      undeclared: all.filter(function (a) { return a.license === 'UNKNOWN'; }).length,
+      fontPackages: fontPkgs,
+      assets: all,
+      findings: findings
+    };
+    if (S()) S().write('asset-licenses.json', report);
+    return report;
+  }
+
   /* ---------------- analyze ---------------- */
   function analyze() {
     var c = collect();
@@ -240,6 +335,11 @@
         'strong/network-copyleft package(s): ' + licenseConflicts.join(', ') + '. Either relicense, remove the dependency, or use an alternative.');
     }
 
+    // ---- asset-manifest licence scan (§52) — fonts / images / model weights ----
+    var assets = { counts: { fonts: 0, models: 0, images: 0 }, assets: [], findings: [], undeclared: 0 };
+    try { assets = assetLicenses(deps); } catch (_) {}
+    (assets.findings || []).forEach(function (f) { findings.push(f); });
+
     // ---- score + gate ----
     var byImpact = findings.reduce(function (m, x) { m[x.impact] = (m[x.impact] || 0) + 1; return m; }, {});
     var score = Math.max(0, 100 - (byImpact.critical || 0) * 25 - (byImpact.serious || 0) * 10 - (byImpact.moderate || 0) * 4 - (byImpact.minor || 0) * 1);
@@ -254,6 +354,7 @@
       findings: findings, byImpact: byImpact, score: score,
       licenses: licenseTally,
       licensesCompatible: licensesCompatible, licenseConflicts: licenseConflicts,
+      assets: { counts: assets.counts, undeclared: assets.undeclared, fontPackages: assets.fontPackages || [] },
       clean: !(byImpact.critical || byImpact.serious)
     };
 
@@ -262,12 +363,20 @@
       S().write('license-report.json', {
         generatedAt: report.generatedAt, product: report.product, byClass: licenseTally,
         compatible: licensesCompatible, conflicts: licenseConflicts,
-        dependencies: deps.map(function (d) { return { name: d.name, license: d.license, class: d.licenseClass }; })
+        dependencies: deps.map(function (d) { return { name: d.name, license: d.license, class: d.licenseClass }; }),
+        assets: {
+          counts: assets.counts, undeclared: assets.undeclared, fontPackages: assets.fontPackages || [],
+          items: (assets.assets || []).map(function (a) { return { path: a.path, type: a.type, license: a.license, attribution: a.attribution }; })
+        }
       });
       S().write('dependency-report.md',
         '# Dependency + licence intelligence\n\n_Generated ' + new Date(report.generatedAt).toISOString() + '_\n\n' +
         '**Score ' + score + '/100** — ' + names.length + ' direct, ' + report.transitiveCount + ' resolved. Product licence: `' + (c.pj.license || (c.pj.private ? 'proprietary' : 'unlicensed')) + '`.\n\n' +
         'Licence mix: ' + (Object.keys(licenseTally).length ? Object.keys(licenseTally).map(function (k) { return k + ' ×' + licenseTally[k]; }).join(', ') : 'no runtime dependencies') + '\n\n' +
+        ((assets.counts.fonts || assets.counts.models || assets.counts.images)
+          ? 'Bundled assets: ' + assets.counts.fonts + ' font(s), ' + assets.counts.images + ' image(s), ' + assets.counts.models + ' model file(s)' +
+            (assets.undeclared ? ' — **' + assets.undeclared + ' with no declared licence/attribution**' : ' — all attributed') + '\n\n'
+          : '') +
         (findings.length ? findings.map(function (x) {
           return '- **' + x.impact.toUpperCase() + '** `' + x.kind + '`' + (x.dependency ? ' `' + x.dependency + '`' : '') + ' — ' + x.message;
         }).join('\n') : '_No dependency or licence issues found._') + '\n');
@@ -284,6 +393,6 @@
     try { var v = S() && S().read('dependency-intel.json'); return v == null ? null : (typeof v === 'string' ? JSON.parse(v) : v); } catch (_) { return null; }
   }
 
-  Engine.DepIntel = { analyze: analyze, load: load, classifyLicense: classifyLicense, ABANDONED: ABANDONED, ADVISORY: ADVISORY };
+  Engine.DepIntel = { analyze: analyze, load: load, classifyLicense: classifyLicense, assetLicenses: assetLicenses, ABANDONED: ABANDONED, ADVISORY: ADVISORY };
   console.info('[DepIntel] dependency + licence intelligence ready — Engine.DepIntel');
 })();

@@ -115,6 +115,10 @@
     'feature-graph.md':           'Readable feature-completion matrix',
     'decision-log.json':          'Decision ledger — ADRs harvested from the build evidence (assumptions, substitutions, refusals, rolled-back repairs, release decision) (spec §57-58)',
     'decision-report.md':         'Architecture Decision Records, newest first',
+    'conventions.json':           'Coding conventions inferred from the workspace — indent / quotes / semicolons / module system / naming / test framework / async + error style (spec §57)',
+    'conventions.md':             'Readable coding-conventions table + confidence',
+    'asset-licenses.json':        'Font / image / ML-model asset licence + attribution scan (spec §52)',
+    'packaging-evidence.json':    'Packaging targets — Python wheel (build + clean-venv install + import) / VST3 (JUCE project + recipe) (spec §35)',
     'intake.json':                'Non-text prompt intake — spec docs / JSON schema / OpenAPI parsed to entities + requirements (build-flow stage 1)',
     'cicd.json':                  'Multi-provider CI/CD generation — GitLab / Jenkins / Azure / Bitbucket from the detected stack (spec §40)',
     'cicd-report.md':             'Readable CI/CD generation summary',
@@ -719,6 +723,7 @@
     safe(function () { window.Engine.Signing && window.Engine.Signing.analyze(); });
     safe(function () { window.Engine.Observability && window.Engine.Observability.analyze(); });
     safe(function () { window.Engine.Registry && window.Engine.Registry.analyze(); });
+    safe(function () { window.Engine.Packaging && window.Engine.Packaging.analyze(); });
     safe(function () { if (window.Engine.Vision && window.Engine.Sovereign.read('design-reference.txt')) { var vp = window.Engine.Vision.analyze(); if (vp && vp.catch) vp.catch(function () {}); } });
 
     // ---- deep wiring trace (spec §12): control → fetch → route → service → db → table ----
@@ -732,6 +737,9 @@
 
     // ---- decision ledger / ADRs (spec §57-58) — after the gate for the release decision ----
     safe(function () { window.Engine.Decisions && window.Engine.Decisions.analyze(); });
+
+    // ---- coding conventions (spec §57) — make the implicit house style explicit ----
+    safe(function () { window.Engine.Conventions && window.Engine.Conventions.analyze(); });
 
     // ---- delivery archive (spec §19-20) — one self-contained acceptance bundle ----
     safe(function () { window.Engine.Delivery && window.Engine.Delivery.write(); });

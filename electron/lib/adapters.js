@@ -117,9 +117,13 @@ function probe() {
   out.host.git = !!which('git');
   out.host.docker = !!which('docker');
   out.host.python = !!(which('python') || which('python3'));
+  out.host.pip = !!(which('pip') || which('pip3'));
   out.host.psql = !!which('psql');
   out.host.go = !!which('go');
   out.host.java = !!which('java');
+  out.host.cmake = !!which('cmake');
+  // §35 packaging: python wheel needs python (+ ideally the `build` frontend); vst3 needs CMake + the JUCE SDK
+  out.packaging = { available: true, wheel: out.host.python, cmake: out.host.cmake, vst3Toolchain: !!(out.host.cmake && (out.host.cargo || which('c++') || which('cl'))) };
   let playwright = false; try { require.resolve('playwright'); playwright = true; } catch (_) {}
   out.desktop = { available: true, canRun: !!(out.host.cargo || out.host.electron), cargo: out.host.cargo, electron: out.host.electron, tauriCli: !!which('tauri') };
   out.extension = { available: true, canRun: true, playwright, wxt: !!which('wxt'), plain: true };
@@ -838,6 +842,93 @@ async function registryRun(opts) {
   return { status: ev.status, capability: 'npm-package-publish', reason: ev.reason, registry, stages, evidence: ev, evidenceFile: 'registry-evidence.json' };
 }
 
+/* ---- §35 packaging: Python wheel (PEP 517) build + clean-venv install + import ---- */
+async function packagingRun(opts) {
+  opts = opts || {};
+  const r = root();
+  const kind = opts.kind || 'wheel';
+
+  if (kind !== 'wheel') {
+    const ev = { capability: 'packaging', target: kind, generatedAt: Date.now(), status: 'BLOCKED',
+      reason: 'TOOLCHAIN_REQUIRED', need: kind === 'vst3'
+        ? 'a C++ toolchain + the JUCE framework (git clone https://github.com/juce-framework/JUCE) + CMake ≥ 3.22 — then `bash scripts/build-vst3.sh`'
+        : 'a platform build toolchain for ' + kind };
+    await writeEvidence(r, 'packaging-evidence.json', ev);
+    return Object.assign({ evidenceFile: 'packaging-evidence.json' }, ev);
+  }
+
+  const py = which('python3') || which('python') || null;
+  if (!py) {
+    const ev = { capability: 'packaging', target: 'wheel', generatedAt: Date.now(), status: 'BLOCKED',
+      reason: 'PYTHON_REQUIRED', need: 'Python 3.9+ on PATH (python3 / python)' };
+    await writeEvidence(r, 'packaging-evidence.json', ev);
+    return Object.assign({ evidenceFile: 'packaging-evidence.json' }, ev);
+  }
+  if (!fs.existsSync(path.join(r, 'pyproject.toml'))) {
+    const ev = { capability: 'packaging', target: 'wheel', generatedAt: Date.now(), status: 'BLOCKED',
+      reason: 'NO_PYPROJECT', need: 'a pyproject.toml — run Engine.Packaging.emit() to generate the packaging files first' };
+    await writeEvidence(r, 'packaging-evidence.json', ev);
+    return Object.assign({ evidenceFile: 'packaging-evidence.json' }, ev);
+  }
+
+  const stages = { BUILD_BACKEND: 'PENDING', WHEEL_BUILD: 'PENDING', CLEAN_VENV: 'PENDING', WHEEL_INSTALL: 'PENDING', IMPORT_SMOKE: 'PENDING', PYPI_EXTERNAL_PUBLISH: 'BLOCKED_CREDENTIAL_REQUIRED' };
+  const outDir = mkdtemp('wheel');
+
+  // prefer `python -m build`; fall back to `pip wheel` when `build` is absent
+  const hasBuild = await runIn(r, py, ['-c', 'import build'], { timeoutMs: 20000 });
+  let wheelOut;
+  if (hasBuild.code === 0) {
+    stages.BUILD_BACKEND = 'build';
+    wheelOut = await runIn(r, py, ['-m', 'build', '--wheel', '--outdir', outDir], { timeoutMs: 4 * 60 * 1000 });
+  } else {
+    stages.BUILD_BACKEND = 'pip-wheel';
+    wheelOut = await runIn(r, py, ['-m', 'pip', 'wheel', '.', '--no-deps', '-w', outDir], { timeoutMs: 4 * 60 * 1000 });
+  }
+  const wheel = fs.existsSync(outDir) ? fs.readdirSync(outDir).filter((n) => n.endsWith('.whl'))[0] : null;
+  if (wheelOut.code !== 0 || !wheel) {
+    stages.WHEEL_BUILD = 'FAIL';
+    const ev = { capability: 'packaging', target: 'wheel', generatedAt: Date.now(), status: 'FAIL', reason: 'WHEEL_BUILD_FAILED', stages, tail: (wheelOut.stderr || wheelOut.stdout || '').slice(-1200) };
+    await writeEvidence(r, 'packaging-evidence.json', ev);
+    try { fs.rmSync(outDir, { recursive: true, force: true }); } catch (_) {}
+    return Object.assign({ evidenceFile: 'packaging-evidence.json' }, ev);
+  }
+  stages.WHEEL_BUILD = 'PASS';
+
+  // clean venv → install the wheel → import the top package
+  const venv = mkdtemp('venv');
+  const mk = await runIn(venv, py, ['-m', 'venv', 'v'], { timeoutMs: 90000 });
+  stages.CLEAN_VENV = mk.code === 0 ? 'PASS' : 'FAIL';
+  const vpy = process.platform === 'win32' ? path.join(venv, 'v', 'Scripts', 'python.exe') : path.join(venv, 'v', 'bin', 'python');
+  let importOk = false, importName = opts.importName || null;
+  if (mk.code === 0) {
+    const pip = await runIn(venv, vpy, ['-m', 'pip', 'install', '--no-index', path.join(outDir, wheel)], { timeoutMs: 3 * 60 * 1000 });
+    stages.WHEEL_INSTALL = pip.code === 0 ? 'PASS' : 'FAIL';
+    if (pip.code === 0) {
+      if (!importName) {
+        try {
+          const tp = fs.readFileSync(path.join(r, 'pyproject.toml'), 'utf8');
+          importName = ((tp.match(/^\s*name\s*=\s*["']([^"']+)["']/m) || [])[1] || '').replace(/-/g, '_') || null;
+        } catch (_) {}
+      }
+      if (importName) {
+        const s = await runIn(venv, vpy, ['-c', 'import ' + importName + '; print("IMPORT_OK")'], { timeoutMs: 30000 });
+        importOk = /IMPORT_OK/.test(s.stdout || '');
+      }
+    }
+  }
+  stages.IMPORT_SMOKE = importOk ? 'PASS' : 'FAIL';
+
+  try { fs.rmSync(outDir, { recursive: true, force: true }); } catch (_) {}
+  try { fs.rmSync(venv, { recursive: true, force: true }); } catch (_) {}
+
+  const pass = stages.WHEEL_BUILD === 'PASS' && stages.WHEEL_INSTALL === 'PASS' && importOk;
+  const ev = { capability: 'packaging', target: 'wheel', generatedAt: Date.now(), status: pass ? 'PASS' : 'FAIL',
+    reason: pass ? null : 'INSTALL_OR_IMPORT_FAILED', wheel, importName, stages,
+    external: { PYPI_EXTERNAL_PUBLISH: 'BLOCKED_CREDENTIAL_REQUIRED — needs a PyPI account + token (`twine upload`)' } };
+  await writeEvidence(r, 'packaging-evidence.json', ev);
+  return Object.assign({ evidenceFile: 'packaging-evidence.json' }, ev);
+}
+
 /* ---- §6 signing: checksums + SBOM + provenance (offline) + cosign ---- */
 async function signRun(opts) {
   opts = opts || {};
@@ -1103,6 +1194,7 @@ async function run(kind, opts) {
     case 'ml': return mlRun(opts);
     case 'audio': return audioRun(opts);
     case 'registry': return registryRun(opts);
+    case 'packaging': return packagingRun(opts);
     case 'sign': return signRun(opts);
     case 'otel': return otelRun(opts);
     case 'extension': return extensionRun(opts);
@@ -1111,4 +1203,4 @@ async function run(kind, opts) {
   }
 }
 
-module.exports = { probe, run, evmRun, androidRun, iosRun, mlRun, audioRun, registryRun, signRun, otelRun, extensionRun, desktopRun };
+module.exports = { probe, run, evmRun, androidRun, iosRun, mlRun, audioRun, registryRun, packagingRun, signRun, otelRun, extensionRun, desktopRun };
