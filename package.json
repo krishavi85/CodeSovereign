@@ -1,7 +1,7 @@
 {
   "name": "codesovereign-desktop",
   "productName": "CodeSovereign",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "CodeSovereign — AI App Factory, packaged as a desktop application.",
   "author": "krishavi85",
   "license": "MIT",
@@ -23,6 +23,7 @@
     "dist:all": "electron-builder -mwl --publish never",
     "dist:dir": "electron-builder --dir --publish never",
     "installer:verify": "node scripts/verify-installer.js",
+    "installer:lifecycle": "node scripts/verify-installer.js --lifecycle",
     "postinstall": "electron-builder install-app-deps || exit 0"
   },
   "devDependencies": {

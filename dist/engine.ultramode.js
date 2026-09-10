@@ -24,7 +24,10 @@
 
    window.Engine.UltraMode
      STATES
-     start({ prompt, answers?, bounds?, injectedContext? })  -> Promise<run>
+     start({ prompt, answers?, bounds?, injectedContext?, documents?, audio? })  -> Promise<run>
+       audio: a voice brief (path / dataURL) — transcribed offline (whisper.cpp /
+              faster-whisper) and prepended to the prompt; a missing runtime/model
+              blocks the run with the exact install command, never a guess.
      resume(opts?)                                            -> Promise<run>
      answer(answers)                                          -> Promise<run>
      cancel()                                                 -> run
@@ -132,6 +135,9 @@
       input: {
         answers: input.answers || {},
         injectedContext: input.injectedContext || null,
+        documents: input.documents || null,
+        audio: input.audio || null,   // an audio brief — transcribed offline before the contract
+        useLLM: input.useLLM,
         autonomy: (Engine.Autonomy && Engine.Autonomy.get && Engine.Autonomy.get()) || 'engineer'
       },
       bounds: Object.assign({}, DEFAULT_BOUNDS, input.bounds || {}, { startedAt: now() }),
@@ -298,8 +304,18 @@
         return Promise.resolve();
       }
       var answers = Object.assign({}, run.input.answers || {}, run.clarification.answered || {});
-      return Engine.Contract.deriveFromPrompt(run.prompt, { useLLM: run.input.useLLM !== false })
+      return Engine.Contract.deriveFromPrompt(run.prompt, {
+        useLLM: run.input.useLLM !== false,
+        documents: run.input.documents || undefined,
+        audio: run.input.audio || undefined
+      })
         .then(function (contract) {
+          // a voice brief becomes the run's prompt once transcribed, so a resume
+          // after restart re-derives from the same text (the audio ref may be gone).
+          if (!run.prompt && contract.intake && contract.intake.audioTranscribed && contract.product && contract.product.objective) {
+            run.prompt = scrub(String(contract.product.objective));
+          }
+          run.intake = contract.intake || null;
           run.contract = {
             name: contract.product.name,
             type: contract.product.type,
@@ -325,6 +341,14 @@
             run.resultReason = 'The request asks for functionality that must not be built: ' +
               (contract.unsafe || []).map(function (u) { return u.reason; }).join('; ') + '.';
             transition(run, 'BLOCKED', 'unsafe request');
+            return;
+          }
+          // 1b) a voice-only brief that could not be transcribed offline
+          if (contract.verdict === 'blocked') {
+            var ab = (contract.intake && contract.intake.audioBlocked) || {};
+            run.resultReason = 'The voice brief could not be transcribed offline (' + (ab.reason || contract.blockedReason || 'TRANSCRIPTION_UNAVAILABLE') + '). ' +
+              'Provide a text prompt, or install a local speech-to-text runtime: ' + (ab.need || 'whisper.cpp + a ggml model') + '.';
+            transition(run, 'BLOCKED', 'audio intake blocked');
             return;
           }
           // 2) whole request is outside the supported stack

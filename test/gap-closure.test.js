@@ -58,6 +58,41 @@ module.exports = async function (t) {
     t.ok('§1b: normalizedPrompt is exposed', typeof n.normalizedPrompt === 'string' && n.normalizedPrompt.length > 0);
   }
 
+  /* ============ 1a-audio — voice brief -> transcript -> contract ============ */
+  {
+    // model present: the transcript becomes the prompt
+    const Audio = { transcribe: () => Promise.resolve({ status: 'PASS', text: 'build a web app to track expenses with categories and a monthly report', segments: [] }) };
+    const w = env(['engine-universal.js', 'engine.requirements.js', 'engine.intake.js', 'engine.intent.js', 'engine.contract.js'], { Audio });
+    const c = await w.Engine.Contract.deriveFromPrompt('', { useLLM: false, audio: '/tmp/brief.wav' });
+    t.equal('§1: audio transcribed -> intake count', c.intake.audioTranscribed, 1);
+    t.ok('§1: the transcript drives the contract objective', /expense/i.test(c.product.objective || c.product.name || ''));
+    t.equal('§1: verdict buildable from a voice brief', c.verdict, 'buildable');
+    t.ok('§1: an expense entity was derived from the spoken brief', (c.entities || []).some((e) => /expense|categor|report/i.test(e.name)));
+
+    // model missing + no text prompt: BLOCKED with the exact prerequisite
+    const AudioBlocked = { transcribe: () => Promise.resolve({ status: 'BLOCKED', reason: 'MODEL_WEIGHTS_REQUIRED', need: 'a whisper.cpp ggml model — ./models/download-ggml-model.sh base.en' }) };
+    const w2 = env(['engine-universal.js', 'engine.requirements.js', 'engine.contract.js'], { Audio: AudioBlocked });
+    const c2 = await w2.Engine.Contract.deriveFromPrompt('', { useLLM: false, audio: '/tmp/brief.wav' });
+    t.equal('§1: no model + no text -> verdict blocked', c2.verdict, 'blocked');
+    t.equal('§1: blockedReason names the audio failure', c2.blockedReason, 'AUDIO_MODEL_WEIGHTS_REQUIRED');
+    t.ok('§1: a blocking question carries the exact install command', (c2.blockingQuestions || []).some((q) => /download-ggml-model/.test((q.options || []).join(' '))));
+    t.ok('§1: intake.audioBlocked is recorded', c2.intake.audioBlocked && /MODEL_WEIGHTS/.test(c2.intake.audioBlocked.reason));
+
+    // model missing BUT a text prompt exists: proceed on the text, record the blocker
+    const w3 = env(['engine-universal.js', 'engine.requirements.js', 'engine.contract.js'], { Audio: AudioBlocked });
+    const c3 = await w3.Engine.Contract.deriveFromPrompt('a todo list with tags', { useLLM: false, audio: '/tmp/brief.wav' });
+    t.equal('§1: text fallback -> still buildable', c3.verdict, 'buildable');
+    t.ok('§1: the audio blocker is still surfaced', c3.intake.audioBlocked && /MODEL_WEIGHTS/.test(c3.intake.audioBlocked.reason));
+
+    // an audio file mixed into opts.documents is split out and routed to Engine.Audio
+    let sawRef = null;
+    const AudioSniff = { transcribe: (ref) => { sawRef = ref; return Promise.resolve({ status: 'PASS', text: 'a notes app', segments: [] }); } };
+    const w4 = env(['engine-universal.js', 'engine.requirements.js', 'engine.intake.js', 'engine.intent.js', 'engine.contract.js'], { Audio: AudioSniff });
+    const c4 = await w4.Engine.Contract.deriveFromPrompt('', { useLLM: false, documents: [{ name: 'voice-note.m4a', path: '/tmp/voice-note.m4a' }] });
+    t.equal('§1: a .m4a in documents is routed to Engine.Audio', sawRef, '/tmp/voice-note.m4a');
+    t.equal('§1: and it transcribes into the contract', c4.intake.audioTranscribed, 1);
+  }
+
   /* ============ 1c — contract LLM enrichment path (stub provider) ============ */
   {
     let asked = 0;

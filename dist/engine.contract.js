@@ -438,9 +438,58 @@
     return { isDSL: true, prompt: prose.trim(), target: target, targetRaw: targetRaw || null, constraints: constraints, mode: mode, build: build };
   }
 
+  // stage 1 (voice): an attached audio brief is transcribed offline (whisper.cpp /
+  // faster-whisper via the runtime bridge) and prepended to the prompt. A missing
+  // runtime / model → the transcript is BLOCKED with the exact install command;
+  // the flow still proceeds on any text prompt, and records the blocker.
+  function _audioToPrompt(prompt, opts) {
+    var refs = opts.audio ? (Array.isArray(opts.audio) ? opts.audio : [opts.audio]) : [];
+    if (!refs.length || !(window.Engine && Engine.Audio && Engine.Audio.transcribe)) return Promise.resolve(prompt);
+    return refs.reduce(function (chain, ref) {
+      return chain.then(function (acc) {
+        return Promise.resolve(Engine.Audio.transcribe(ref, {})).then(function (r) {
+          if (r && r.status === 'PASS' && r.text) { acc.texts.push(r.text.trim()); }
+          else if (r && r.status === 'BLOCKED') { acc.blocked = { reason: r.reason || 'TRANSCRIPTION_UNAVAILABLE', need: r.need || 'a local Whisper runtime + model' }; }
+          else if (r && r.status === 'FAIL') { acc.blocked = { reason: r.reason || 'TRANSCRIPTION_FAILED', need: r.detail || 'check the audio file + the whisper runtime' }; }
+          return acc;
+        }, function () { return chain; });
+      });
+    }, Promise.resolve({ texts: [], blocked: null })).then(function (acc) {
+      if (acc.blocked) opts._audioBlocked = acc.blocked;
+      if (acc.texts.length) {
+        opts._audioTranscribed = acc.texts.length;
+        var voice = acc.texts.join('\n');
+        return prompt ? (voice + '\n\n' + prompt) : voice;
+      }
+      return prompt;
+    });
+  }
+
+  var AUDIO_RE = /\.(wav|mp3|m4a|ogg|flac|aac|opus|webm)$/i;
   function deriveFromPrompt(prompt, opts) {
     opts = opts || {};
     prompt = String(prompt || '').trim();
+    // an audio brief may arrive as opts.audio, or mixed into opts.documents
+    // (kind:'audio', or a path/name that looks like an audio file) — split it out.
+    if (opts.documents) {
+      var docs = Array.isArray(opts.documents) ? opts.documents : [opts.documents];
+      var au = [], rest = [];
+      docs.forEach(function (d) {
+        var name = (d && (d.name || d.path || d.kind)) || (typeof d === 'string' ? d : '');
+        if ((d && d.kind === 'audio') || AUDIO_RE.test(String(name))) au.push(d.path || d.dataUrl || d);
+        else rest.push(d);
+      });
+      if (au.length) {
+        opts = Object.assign({}, opts, {
+          audio: [].concat(opts.audio ? (Array.isArray(opts.audio) ? opts.audio : [opts.audio]) : [], au),
+          documents: rest.length ? rest : undefined
+        });
+      }
+    }
+    return _audioToPrompt(prompt, opts).then(function (p) { return _deriveFromText(String(p || '').trim(), opts); });
+  }
+
+  function _deriveFromText(prompt, opts) {
     // §70: a terse `BUILD:/TARGET:/CONSTRAINTS:/MODE:` command is parsed to a
     // structured declaration before anything else touches the text.
     var _dsl = parseUltraDSL(prompt);
@@ -781,6 +830,12 @@
       targetAdapter: targetMeta ? targetMeta.adapter : null,
       targetRuntime: targetMeta ? targetMeta.runtime : null,
       intent: { source: (intent && intent.source) || 'rules', corrections: (intent && intent.corrections) || null, design: intentDesign || null },
+      intake: {
+        text: !!prompt,
+        audioTranscribed: opts._audioTranscribed || 0,
+        audioBlocked: opts._audioBlocked || null,
+        documents: opts.documents ? (Array.isArray(opts.documents) ? opts.documents.length : 1) : 0
+      },
       totals: {
         requirements: reqs.length,
         withMachineCriteria: reqs.filter(function (r) { return r.acceptanceCriteria.some(function (c) { return ACCEPT_KINDS.indexOf(c.kind) >= 0; }); }).length,
@@ -801,6 +856,14 @@
     // verification time and reported as BLOCKED with a precise reason.
     if (unsafe.length) contract.verdict = 'unsafe';
     else contract.verdict = 'buildable';
+    // a voice brief that could not be transcribed AND no text prompt to fall back
+    // on → the run is BLOCKED up front with the exact prerequisite, never a guess.
+    if (opts._audioBlocked && !prompt) {
+      contract.verdict = 'blocked';
+      contract.blockedReason = 'AUDIO_' + opts._audioBlocked.reason;
+      blocker('intake', 'The voice brief could not be transcribed offline. Provide a text prompt, or install a local speech-to-text runtime.',
+        opts._audioBlocked.reason, [opts._audioBlocked.need]);
+    }
     // a non-web target is still fully supported — but a safety refusal always wins
     if (target !== 'web') {
       contract.mode = 'from-prompt';
