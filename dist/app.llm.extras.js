@@ -232,11 +232,17 @@
     window.renderSettings = function () {
       const out = original.apply(this, arguments);
       const card = '<div id="llmSettingsHost">' + renderLlmSettingsCard() + '</div>';
-      // Anchor on card *text* (icons are already interpolated by the time we see
-      // the string). Prefer just before the Integrations card; fall back to a
-      // sibling of the last card, just before .screen-inner closes.
-      const anchor = out.match(/<div class="card"[^>]*>\s*<h3[^>]*>[\s\S]*?Integrations<\/h3>/);
-      if (anchor) return out.replace(anchor[0], card + '\n      ' + anchor[0]);
+      // Find the Integrations heading *text*, then the card that contains it.
+      // A /card[\s\S]*?Integrations/ (or even /h3[\s\S]*?Integrations/) regex
+      // starts at the first card/heading and drops the host at the top of the
+      // stack. slice() so '$' in earlier cards cannot be String.replace tokens.
+      const headingEnd = out.indexOf('Integrations</h3>');
+      if (headingEnd >= 0) {
+        const cardStart = out.lastIndexOf('<div class="card"', headingEnd);
+        if (cardStart >= 0) {
+          return out.slice(0, cardStart) + card + '\n      ' + out.slice(cardStart);
+        }
+      }
       const close = out.lastIndexOf('</div>');
       if (close >= 0) return out.slice(0, close) + card + '\n    ' + out.slice(close);
       return out + card;

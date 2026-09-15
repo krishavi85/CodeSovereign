@@ -27,9 +27,15 @@ module.exports = async function (t) {
   };
 
   // Mimic renderSettings() *after* template interpolation: icons are already SVGs.
+  // Include a card *before* Integrations (and a $ sequence) so a too-broad
+  // /card[\s\S]*?Integrations/ regex cannot pass this suite.
   function renderSettings() {
     return `
     <div class="screen-inner" style="padding:24px;max-width:1100px;margin:0 auto">
+      <div class="card" style="padding:20px;margin-bottom:18px">
+        <h3 class="cs-h3" style="margin-bottom:14px"><svg></svg> Workspace</h3>
+        <div>price $100 and $& leftover</div>
+      </div>
       <div class="card" style="padding:20px;margin-bottom:18px">
         <h3 class="cs-h3" style="margin-bottom:14px"><svg></svg> Environment</h3>
       </div>
@@ -67,7 +73,16 @@ module.exports = async function (t) {
   t.ok('provider <select> is present', /id="llmProvider"/.test(html));
   t.ok('API key input is present', /id="llmKey"/.test(html));
   t.ok('card sits before Integrations', html.indexOf('AI Provider') < html.indexOf('Integrations'));
+  t.ok(
+    'card sits after earlier cards, not at the top of the stack',
+    html.indexOf('Workspace') < html.indexOf('AI Provider')
+      && html.indexOf('Environment') < html.indexOf('AI Provider')
+  );
   t.ok('Integrations card is still present', /Integrations<\/h3>/.test(html));
+  t.ok(
+    'dollar sequences in earlier cards are not treated as replace tokens',
+    html.includes('price $100') && html.includes('$& leftover')
+  );
 
   // Fallback path: no Integrations heading (e.g. a future Settings rewrite).
   win.renderSettings = function () {
