@@ -2083,33 +2083,71 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
     }
   };
 
+  // Strict JS syntax (acorn module → script). Never uses acorn-loose, which
+  // accepts broken source. Falls back to new Function only when acorn is
+  // missing, and does not false-fail ESM in that case.
+  function parseJsSyntax(content){
+    const src = String(content || '');
+    if (!src.trim()) return { ok: true };
+    const acorn = (typeof window !== 'undefined' && window.acorn && typeof window.acorn.parse === 'function')
+      ? window.acorn : null;
+    if (acorn) {
+      const opts = { ecmaVersion: 'latest', allowHashBang: true, allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true };
+      try { acorn.parse(src, Object.assign({}, opts, { sourceType: 'module' })); return { ok: true }; }
+      catch (e1) {
+        try { acorn.parse(src, Object.assign({}, opts, { sourceType: 'script' })); return { ok: true }; }
+        catch (e2) {
+          return { ok: false, error: (e1 && e1.message) || (e2 && e2.message) || 'parse error' };
+        }
+      }
+    }
+    try { new Function(src); return { ok: true }; }
+    catch (e) {
+      if (/\b(?:import|export)\b/.test(src)) return { ok: true, skipped: 'esm-without-acorn' };
+      return { ok: false, error: e.message || String(e) };
+    }
+  }
+
+  const HTML_VOID = { area:1, base:1, br:1, col:1, embed:1, hr:1, img:1, input:1, link:1, meta:1, param:1, source:1, track:1, wbr:1 };
+  function htmlTagBalance(content){
+    const opens = (content.match(/<(?!\/|!|\?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g) || []).filter(tag => {
+      const name = ((tag.match(/^<([a-zA-Z][a-zA-Z0-9]*)/) || [])[1] || '').toLowerCase();
+      if (HTML_VOID[name]) return false;
+      if (/\/\s*>$/.test(tag)) return false;
+      return true;
+    });
+    const closes = content.match(/<\/([a-zA-Z][a-zA-Z0-9]*)\s*>/g) || [];
+    return { open: opens.length, close: closes.length, ok: opens.length === closes.length };
+  }
+
+  function stripJsComments(src){
+    return String(src || '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  }
+
   // ---------- Validators (real, against FS) ----------
   const Validator = {
+    parseJsSyntax: parseJsSyntax,
     runAll(){
       const issues = [];
       Object.keys(FS._data).forEach(p => {
         if (!FS.isFile(p)) return;
         const content = FS.read(p) || '';
         if (p.endsWith('.html')){
-          // tag balance
-          const open = (content.match(/<(?!\/)([a-zA-Z][a-zA-Z0-9]*)/g) || []).length;
-          const close = (content.match(/<\/([a-zA-Z][a-zA-Z0-9]*)/g) || []).length;
-          if (open !== close) issues.push({ severity:'warning', faultClass:'html.unbalanced', file:p, message:'Tag imbalance (' + open + ' open / ' + close + ' close)' });
+          const bal = htmlTagBalance(content);
+          if (!bal.ok) issues.push({ severity:'warning', faultClass:'html.unbalanced', file:p, message:'Tag imbalance (' + bal.open + ' open / ' + bal.close + ' close)' });
           // missing alt on img
           const imgs = content.match(/<img(?![^>]*alt=)[^>]*>/g);
           if (imgs) imgs.forEach(() => issues.push({ severity:'warning', faultClass:'html.alt', file:p, message:'<img> missing alt attribute' }));
           // lang attr
-          if (!/<html[^>]*lang=/.test(content)) issues.push({ severity:'warning', faultClass:'html.lang', file:p, message:'<html> missing lang attribute' });
+          if (/<html[\s>]/i.test(content) && !/<html[^>]*lang=/i.test(content)) issues.push({ severity:'warning', faultClass:'html.lang', file:p, message:'<html> missing lang attribute' });
         }
-        if (p.endsWith('.js')){
-          // basic syntax check
-          try { new Function(content); }
-          catch(e){ issues.push({ severity:'error', faultClass:'js.syntax', file:p, message:'JS syntax error: ' + e.message }); }
-          // console.log
-          const logs = (content.match(/console\.log\(/g) || []).length;
+        if (p.endsWith('.js') || p.endsWith('.mjs')){
+          const syn = parseJsSyntax(content);
+          if (!syn.ok) issues.push({ severity:'error', faultClass:'js.syntax', file:p, message:'JS syntax error: ' + syn.error });
+          const code = stripJsComments(content);
+          const logs = (code.match(/console\.log\(/g) || []).length;
           if (logs > 0) issues.push({ severity:'info', faultClass:'js.console', file:p, message: logs + ' console.log statement(s) (consider removing for production)' });
-          // eval
-          if (/\beval\s*\(/.test(content)) issues.push({ severity:'error', faultClass:'js.eval', file:p, message:'Use of eval() detected' });
+          if (/\beval\s*\(/.test(code)) issues.push({ severity:'error', faultClass:'js.eval', file:p, message:'Use of eval() detected' });
         }
         if (p.endsWith('.css')){
           // broken reference: url(...)
@@ -2218,5 +2256,5 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
   ];
 
   // ---------- Public API ----------
-  window.Engine = { FS, Proj, Agent, Validator, Preview, Deploy, TEMPLATES, AGENTS };
+  window.Engine = { FS, Proj, Agent, Validator, Preview, Deploy, TEMPLATES, AGENTS, parseJsSyntax };
 })();

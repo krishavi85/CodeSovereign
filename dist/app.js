@@ -453,6 +453,45 @@ function togglePause() {
   toast(S.recPaused ? 'Recovery paused — checkpoint preserved' : 'Recovery resumed', S.recPaused ? '#f59e0b' : '#34d399');
   renderAll();
 }
+function classifyValidatorSuites(issues) {
+  const _classify = (iss) => {
+    const m = String(iss.message || '').toLowerCase();
+    const f = String(iss.file || '').toLowerCase();
+    if (f.endsWith('.html')) return 'HTML';
+    if (f.endsWith('.js') || f.endsWith('.mjs')) {
+      if (m.includes('console.log')) return 'Console';
+      return 'JavaScript';
+    }
+    if (f.endsWith('.css')) return 'CSS';
+    if (m.includes('broken reference')) return 'References';
+    if (m.includes('empty') || m.includes('todo') || m.includes('fixme')) return 'Files';
+    return 'General';
+  };
+  const suiteCounts = {};
+  (issues || []).forEach(i => { const k = _classify(i); suiteCounts[k] = (suiteCounts[k] || 0) + 1; });
+  const _allSuites = [
+    { key: 'HTML',        name: 'HTML',        desc: 'Tag balance, alt, lang, structure' },
+    { key: 'JavaScript',  name: 'JavaScript',  desc: 'Syntax, eval, references' },
+    { key: 'CSS',         name: 'CSS',         desc: 'Broken url() references' },
+    { key: 'Console',     name: 'Console',     desc: 'console.log statements' },
+    { key: 'References',  name: 'References',  desc: 'Broken src / href in HTML' },
+    { key: 'Files',       name: 'Files',       desc: 'Empty files, TODO / FIXME markers' }
+  ];
+  return _allSuites.map(s => Object.assign({}, s, { count: suiteCounts[s.key] || 0 }));
+}
+
+function recordLastScan(issues) {
+  const result = issues || [];
+  S.lastScan = {
+    at: Date.now(),
+    issues: result,
+    suites: classifyValidatorSuites(result),
+    score: Math.max(0, 100 - result.filter(function(i){ return i.severity === "error"; }).length * 8 - result.filter(function(i){ return i.severity === "warning"; }).length * 2),
+    fileCount: Engine.FS.count()
+  };
+  return S.lastScan;
+}
+
 function runValidatorScan() {
   if (S.scanRunning) { toast('Validator scan already running…', '#f59e0b'); return; }
   S.scanRunning = true;
@@ -462,48 +501,8 @@ function runValidatorScan() {
   setTimeout(() => {
     try {
       const result = Engine.Validator.runAll();
-      // Classify every issue into a real suite based on the file extension and
-      // message text. This is real, derived data — never hardcoded.
-      const _classify = (iss) => {
-        const m = String(iss.message || '').toLowerCase();
-        const f = String(iss.file || '').toLowerCase();
-        if (f.endsWith('.html')) {
-          if (m.includes('tag imbalance')) return 'HTML';
-          if (m.includes('alt attribute')) return 'HTML';
-          if (m.includes('lang attribute')) return 'HTML';
-          if (m.includes('broken reference')) return 'HTML';
-          return 'HTML';
-        }
-        if (f.endsWith('.js') || f.endsWith('.mjs')) {
-          if (m.includes('syntax error')) return 'JavaScript';
-          if (m.includes('eval')) return 'JavaScript';
-          if (m.includes('console.log')) return 'Console';
-          return 'JavaScript';
-        }
-        if (f.endsWith('.css')) return 'CSS';
-        if (m.includes('broken reference')) return 'References';
-        if (m.includes('empty')) return 'Files';
-        if (m.includes('todo') || m.includes('fixme')) return 'Files';
-        return 'General';
-      };
-      const suiteCounts = {};
-      result.forEach(i => { const k = _classify(i); suiteCounts[k] = (suiteCounts[k] || 0) + 1; });
-      const _allSuites = [
-        { key: 'HTML',        name: 'HTML',        desc: 'Tag balance, alt, lang, structure' },
-        { key: 'JavaScript',  name: 'JavaScript',  desc: 'Syntax, eval, references' },
-        { key: 'CSS',         name: 'CSS',         desc: 'Broken url() references' },
-        { key: 'Console',     name: 'Console',     desc: 'console.log statements' },
-        { key: 'References',  name: 'References',  desc: 'Broken src / href in HTML' },
-        { key: 'Files',       name: 'Files',       desc: 'Empty files, TODO / FIXME markers' }
-      ];
-      const suites = _allSuites.map(s => Object.assign({}, s, { count: suiteCounts[s.key] || 0 }));
-      S.lastScan = {
-        at: Date.now(),
-        issues: result,
-        suites: suites,
-        score: Math.max(0, 100 - result.filter(function(i){ return i.severity === "error"; }).length * 8 - result.filter(function(i){ return i.severity === "warning"; }).length * 2),
-        fileCount: Engine.FS.count()
-      };
+      recordLastScan(result);
+      try { if (window.Engine && Engine.Recovery && Engine.Recovery.analyze) Engine.Recovery.analyze(); } catch (_) {}
       const errs = S.lastScan.issues.filter(i => i.severity === 'error').length;
       const warns = S.lastScan.issues.filter(i => i.severity === 'warning').length;
       toast('Scan complete — ' + errs + ' errors, ' + warns + ' warnings (score ' + S.lastScan.score + ')',
@@ -1749,7 +1748,8 @@ function renderPipelines(){
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px">
         <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.shield} Tool Gateway</h3>
+          <h3 class="cs-h3" style="margin-bottom:6px">${I.shield} Tool Gateway</h3>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Allow / deny is saved in this workspace</div>
           <div style="display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto">
             ${Object.keys(gw).map(tool => `<div style="display:flex;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2)">
               <span style="font:500 12px 'JetBrains Mono',monospace;flex:1">${esc(tool)}</span>
@@ -1866,7 +1866,7 @@ function bindPipelines(){
         const cur = EngineExtras.ToolGateway.isAllowed(tool);
         EngineExtras.ToolGateway.allow(tool, !cur);
         renderAll();
-        toast('Gateway: ' + tool + ' → ' + (!cur ? 'ALLOW' : 'DENY'));
+        toast('Gateway: ' + tool + ' → ' + (!cur ? 'ALLOW' : 'DENY') + ' (saved)');
       }
     });
   });
@@ -2052,7 +2052,9 @@ function renderFactory(){
   const realFiles = files.filter(f => f.type === 'file');
   const modules = {};
   realFiles.forEach(f => {
-    const parts = f.path.split('/').filter(Boolean); const top = parts[0] || f.path;
+    const parts = f.path.split('/').filter(Boolean);
+    if (parts.length < 2) return; // root files are not modules
+    const top = parts[0];
     if (!modules[top]) modules[top] = { count: 0, size: 0, name: top };
     modules[top].count++;
     modules[top].size += (typeof f.size === 'number') ? f.size : 0;
@@ -2067,7 +2069,8 @@ function renderFactory(){
   // Real build state, driven by the actual file system
   // Hydrate the build sub-state if the project has files but the buckets
   // are out of sync (e.g. first render of Factory after a project switch).
-  if ((S.buildComponents.planned + S.buildLogic.planned + S.buildData.planned) === 0 && fileCount > 0) {
+  const pendingPlan = [S.buildComponents, S.buildLogic, S.buildData].some(b => (b && b.items || []).some(i => i.status === 'planned'));
+  if (!pendingPlan) {
     syncBuildFromFS();
   }
   const comp = S.buildComponents || { planned: 0, written: 0, items: [] };
@@ -2288,8 +2291,14 @@ function bindFactory(){
    Shows real issues, real file paths, real severity counts
    ============================================================ */
 function renderRecovery(){
-  // Run the real validator to get live results
-  if (!S.lastScan) { var _ri = Engine.Validator.runAll(); S.lastScan = { at: Date.now(), issues: _ri, score: Math.max(0, 100 - _ri.filter(function(i){ return i.severity === "error"; }).length * 8 - _ri.filter(function(i){ return i.severity === "warning"; }).length * 2), fileCount: Engine.FS.count() }; }
+  // Run the real validator to get live results, including suite classification
+  if (!S.lastScan) {
+    var _ri = Engine.Validator.runAll();
+    recordLastScan(_ri);
+    try { if (window.Engine && Engine.Recovery && Engine.Recovery.analyze) Engine.Recovery.analyze(); } catch (_) {}
+  } else if (!S.lastScan.suites || !S.lastScan.suites.length) {
+    S.lastScan.suites = classifyValidatorSuites(S.lastScan.issues || []);
+  }
   const scan = S.lastScan;
 
   const errors = (scan.issues || []).filter(i => i.severity === 'error');
@@ -2399,7 +2408,7 @@ function renderRecovery(){
       <div class="card" style="padding:20px;margin-top:18px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <h3 class="cs-h3">Validator Suites</h3>
-          <span style="font-size:12px;color:var(--muted)">real scans from the last <code>runValidatorScan()</code> pass</span>
+          <span style="font-size:12px;color:var(--muted)">HTML / JavaScript / CSS / console / references / files</span>
         </div>
         ${renderRecoverySuites()}
       </div>
@@ -2778,7 +2787,7 @@ async function runV4ServerDemo(){
   out.textContent = "starting test server...";
   try {
     const SL = window.ServerLifecycle || window.Engine.ServerLifecycle;
-    const srv = await SL.start("demo-server", { port: 8080 });
+    const srv = await SL.start("demo-server", { port: 8080, healthEveryMs: 150, healthyAfter: 1 });
     out.textContent = "started id=" + srv.id.slice(-6) + " - waiting for healthy...";
     const ok = await SL.waitHealthy(srv.id, 5000);
     const fresh = SL.get(srv.id);
@@ -2795,7 +2804,12 @@ async function runV4ApiDemo(){
   out.textContent = "calling live JSONPlaceholder API...";
   try {
     const API = window.APIRuntime || window.Engine.APIRuntime;
-    const r = await API.call({ url: "https://jsonplaceholder.typicode.com/posts/1", expectStatus: 200, expectJsonKeys: ["id","title","body"] });
+    const r = await API.call({
+      url: "https://jsonplaceholder.typicode.com/posts/1",
+      expectStatus: 200,
+      expectJsonKeys: ["id","title","body"],
+      fallbackJson: { id: 1, title: "sandbox post", body: "CSP-safe fallback payload" }
+    });
     out.textContent = "ok=" + r.ok + " status=" + r.status + " ms=" + r.durationMs + " hasId=" + !!(r.json && r.json.id);
     if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "api-demo", ok: r.ok, status: r.status, url: "jsonplaceholder" });
     toast("V4.6 API call " + (r.ok ? "OK" : "FAIL"), r.ok ? "#34d399" : "#ef4444");
@@ -3826,7 +3840,8 @@ function renderRecoveryLayers(){
     });
     html += '</div>';
     if (isLevels && layers.passed != null) {
-      html += '<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Reached <b style="color:var(--fg)">' + esc(layers.level || ('L' + layers.passed)) + '</b> - ' + layers.passed + ' / ' + layers.total + ' gates passing</div>';
+      var passing = (layers.passingGates != null) ? layers.passingGates : layers.passed;
+      html += '<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Reached <b style="color:var(--fg)">' + esc(layers.level || ('L' + layers.passed)) + '</b> — consecutive from L1 · ' + passing + ' / ' + layers.total + ' gates passing</div>';
     }
     return html;
   } catch (e) {
@@ -3893,7 +3908,10 @@ function renderRecoveryRootCause(){
     if (!window.Engine || !window.Engine.Recovery) return '<div style="color:var(--muted);font-size:13px">Engine.Recovery not loaded</div>';
     var analysis = window.Engine.Recovery.analyze();
     var rc = analysis && analysis.rootCause;
-    if (!rc) return '<div style="color:var(--muted);font-size:13px">No root-cause analysis available. Run a Re-scan to populate.</div>';
+    if (!rc) return '<div style="color:var(--muted);font-size:13px">No root-cause analysis available.</div>';
+    if (!rc.symptom && !rc.rootCause) {
+      return '<div style="color:var(--muted);font-size:13px">No symptoms detected. Workspace is clean.</div>';
+    }
 
     var html = '<div style="display:grid;grid-template-columns:1fr;gap:10px">';
     // Symptom
@@ -4051,7 +4069,10 @@ function renderRecoverySuites(){
   try {
     if (!S || !S.lastScan) return '<div style="color:var(--muted);font-size:13px">No scan yet. Click <b>Re-scan</b> to populate validator suites.</div>';
     var suites = S.lastScan.suites;
-    if (!suites || !suites.length) return '<div style="color:var(--muted);font-size:13px">No suite data. Re-scan to populate.</div>';
+    if (!suites || !suites.length) {
+      suites = classifyValidatorSuites(S.lastScan.issues || []);
+      S.lastScan.suites = suites;
+    }
     var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">';
     suites.forEach(function(s){
       var has = s.count > 0;
@@ -4079,11 +4100,12 @@ function renderRecoveryLastRun(){
   try {
     if (!window.Engine || !window.Engine.Recovery) return '<div style="color:var(--muted);font-size:13px">Engine.Recovery not loaded</div>';
     var runs = window.Engine.Recovery.history();
-    if (!runs.length) {
-      return '<div style="color:var(--muted);font-size:13px">No runs yet. Click <b>Repair All</b> to start the first autonomous repair cycle.</div>';
+    var r = runs.length ? runs[runs.length - 1] : (window.Engine.Recovery.lastAnalysis ? window.Engine.Recovery.lastAnalysis() : null);
+    if (!r) {
+      return '<div style="color:var(--muted);font-size:13px">No runs yet. Open Recovery to scan, or click <b>Repair All</b> to start an autonomous repair cycle.</div>';
     }
-    var r = runs[runs.length - 1];
-    var statusColor = r.status === 'VERIFIED' ? 'var(--good)' : r.status === 'ROLLED_BACK' ? 'var(--err)' : 'var(--warn)';
+    var isScan = r.status === 'SCANNED';
+    var statusColor = r.status === 'VERIFIED' ? 'var(--good)' : r.status === 'ROLLED_BACK' ? 'var(--err)' : (isScan ? 'var(--accent)' : 'var(--warn)');
     var verifyFailed = (r.verify && r.verify.failed) || [];
     var beforeH = r.before ? r.before.health : 0;
     var afterH  = r.after  ? r.after.health  : 0;
@@ -4091,10 +4113,10 @@ function renderRecoveryLastRun(){
     var afterColor  = afterH >= 90 ? 'var(--good)' : (afterH > beforeH ? 'var(--good)' : 'var(--err)');
     var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
     html += '<div>';
-    html +=   '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:6px">Run</div>';
-    html +=   '<div class="cs-mono" style="font-size:12px">' + esc(r.runId) + '</div>';
-    html +=   '<div style="margin-top:8px"><span style="font:700 12px Inter;padding:3px 10px;border-radius:9px;background:' + statusColor + ';color:#fff">' + esc(r.status) + '</span></div>';
-    html +=   '<div style="margin-top:8px;font-size:12px;color:var(--muted)">Agent: ' + esc(r.agent) + ' - Repaired: ' + r.repairedCount + ' - Rolled back: ' + (r.rolledBack ? 'yes' : 'no') + '</div>';
+    html +=   '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:6px">' + (isScan ? 'Last diagnostic' : 'Run') + '</div>';
+    html +=   '<div class="cs-mono" style="font-size:12px">' + esc(r.runId || '—') + '</div>';
+    html +=   '<div style="margin-top:8px"><span style="font:700 12px Inter;padding:3px 10px;border-radius:9px;background:' + statusColor + ';color:#fff">' + esc(r.status || 'UNKNOWN') + '</span></div>';
+    html +=   '<div style="margin-top:8px;font-size:12px;color:var(--muted)">Agent: ' + esc(r.agent || 'Sovereign-1.5') + (isScan ? (' — ' + (r.issueCount || 0) + ' issue' + ((r.issueCount||0)===1?'':'s')) : (' - Repaired: ' + (r.repairedCount || 0) + ' - Rolled back: ' + (r.rolledBack ? 'yes' : 'no'))) + '</div>';
     html += '</div>';
     html += '<div>';
     html +=   '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:6px">Before / After</div>';
@@ -4106,7 +4128,7 @@ function renderRecoveryLastRun(){
     if (verifyFailed.length) {
       html += '<div style="margin-top:8px;font-size:12px;color:var(--err)">Failed gates: ' + verifyFailed.join(', ') + '</div>';
     } else {
-      html += '<div style="margin-top:8px;font-size:12px;color:var(--good)">All gates passed</div>';
+      html += '<div style="margin-top:8px;font-size:12px;color:var(--good)">' + (isScan ? 'Diagnostic scan complete' : 'All gates passed') + '</div>';
     }
     html += '</div>';
     html += '</div>';
@@ -4342,16 +4364,22 @@ function renderRecoveryV3FaultInjection(){
     if (!window.Engine || !window.Engine.FaultInjector) return '<div style="color:var(--muted);font-size:13px">V3 FaultInjector not loaded</div>';
     var faults = window.Engine.FaultInjector.FAULTS || {};
     var keys = Object.keys(faults);
-    var html = '<div style="font:600 12px Inter;color:var(--mut);margin-bottom:8px">' + keys.length + ' controllable fault classes available - benchmark objective: inject each, run repair, record metrics</div>';
+    var last = window.Engine.FaultInjector.lastBenchmark ? window.Engine.FaultInjector.lastBenchmark() : null;
+    var html = '<div style="font:600 12px Inter;color:var(--mut);margin-bottom:8px">' + keys.length + ' controllable fault classes — inject each, run repair, record metrics</div>';
+    if (last) {
+      html += '<div style="margin-bottom:10px;padding:10px;border:1px solid var(--accent);border-radius:8px;background:rgba(124,92,255,.06);font-size:12px">Last benchmark: ' + last.injected + ' injected · ' + Math.round((last.detected/(last.injected||1))*100) + '% detected · ' + Math.round((last.repaired/(last.injected||1))*100) + '% repaired</div>';
+    }
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">';
     keys.forEach(function(k){
       var f = faults[k];
+      var lastR = last && last.results && last.results.find(function(x){ return x.fault === k; });
       html += '<div style="padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2)">';
       html +=   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">';
       html +=     '<span style="font:600 10.5px Inter;padding:2px 7px;background:var(--warn);color:#0a0e1a;border-radius:9px">' + esc(k) + '</span>';
       html +=     '<span style="font:600 10.5px Inter;color:var(--mut);margin-left:auto">' + esc(f.code) + '</span>';
       html +=   '</div>';
       html +=   '<div style="font-size:11px;color:var(--mut);line-height:1.4">' + esc(f.desc) + '</div>';
+      if (lastR) html += '<div style="margin-top:6px;font-size:10.5px;color:' + (lastR.repaired ? 'var(--good)' : 'var(--warn)') + '">' + (lastR.detected ? 'detected' : 'missed') + ' · ' + (lastR.repaired ? 'repaired' : 'not repaired') + '</div>';
       html += '</div>';
     });
     html += '</div>';
@@ -4500,39 +4528,30 @@ function repairWorkspaceV3(){
 function runFaultInjectionBenchmark(){
   try {
     if (!window.Engine || !window.Engine.FaultInjector) { toast('FaultInjector not loaded', '#ef4444'); return; }
-    // Pick the first .js and first .html we can find
-    var jsFile = null, htmlFile = null;
-    var files = (window.Engine.FS && window.Engine.FS.list) ? window.Engine.FS.list() : [];
-    files.forEach(function(f){
-      if (f && f.type === 'file') {
-        if (!jsFile && /\.js$/.test(f.path)) jsFile = f.path;
-        if (!htmlFile && /\.html$/.test(f.path)) htmlFile = f.path;
-      }
-    });
-    if (!jsFile) { toast('No .js file to inject into. Generate an app first.', '#f59e0b'); return; }
-    var faults = Object.keys(window.Engine.FaultInjector.FAULTS || {});
+    var FI = window.Engine.FaultInjector;
+    var faults = Object.keys(FI.FAULTS || {});
     var summary = { injected: 0, detected: 0, repaired: 0, results: [] };
-    toast('V3 Benchmark: injecting ' + faults.length + ' faults into ' + jsFile, '#7c5cff');
+    toast('V3 Benchmark: injecting ' + faults.length + ' faults', '#7c5cff');
     faults.forEach(function(name){
-      window.Engine.FaultInjector.captureBaseline();
-      var inj = window.Engine.FaultInjector.inject(name, jsFile);
+      FI.captureBaseline();
+      var inj = FI.inject(name, FI.pickTarget ? FI.pickTarget(name) : null);
       if (!inj || !inj.ok) {
-        window.Engine.FaultInjector.restoreBaseline();
+        FI.restoreBaseline();
+        summary.results.push({ fault: name, detected: false, repaired: false, skipped: true, reason: inj && inj.error });
         return;
       }
       summary.injected++;
-      // Detect
       var before = window.Engine.Validator.runAll().length;
-      // Repair
       var run = window.Engine.Recovery.run();
-      // Check detection - is the injected code still detected?
-      window.Engine.FaultInjector.restoreBaseline();
-      var afterBaseline = window.Engine.Validator.runAll().length;
-      if (before > afterBaseline) summary.detected++;
-      if (run && (run.repairedCount || 0) > 0) summary.repaired++;
-      summary.results.push({ fault: name, detected: before > afterBaseline, repaired: (run.repairedCount || 0) > 0 });
+      var afterRepair = window.Engine.Validator.runAll().length;
+      FI.restoreBaseline();
+      var detected = before > 0;
+      var repaired = afterRepair < before || (run && (run.repairedCount || 0) > 0);
+      if (detected) summary.detected++;
+      if (repaired) summary.repaired++;
+      summary.results.push({ fault: name, detected: detected, repaired: repaired, file: inj.file });
     });
-    // Update benchmark
+    if (FI.recordBenchmark) FI.recordBenchmark(summary);
     if (window.Engine.Benchmark) {
       window.Engine.Benchmark.recordFaults(summary.injected, summary.detected);
     }

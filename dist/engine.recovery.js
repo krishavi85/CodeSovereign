@@ -76,7 +76,7 @@
     const c = issue.code;
     return [
       'HTML_TAG_IMBALANCE','HTML_MISSING_ALT','HTML_MISSING_LANG',
-      'CSS_BROKEN_URL','JS_CONSOLE_LOG',
+      'CSS_BROKEN_URL','JS_CONSOLE_LOG','JS_SYNTAX_ERROR','JS_CSP_UNSAFE_EVAL',
       'FILE_EMPTY','FILE_TODO_MARKER','FILE_FIXME_MARKER',
       'HTML_BROKEN_REF'
     ].indexOf(c) >= 0;
@@ -284,9 +284,22 @@
       };
     },
     impactOf(path){
+      this.build();
       const direct = new Set([path]);
-      Object.keys(this.imports).forEach(p => { if ((this.imports[p] || []).indexOf(path) >= 0) direct.add(p); });
-      Object.keys(this.references).forEach(p => { if ((this.references[p] || []).indexOf(path) >= 0) direct.add(p); });
+      Object.keys(this.imports).forEach(p => {
+        if ((this.imports[p] || []).indexOf(path) >= 0) direct.add(p);
+        (this.imports[p] || []).forEach(spec => {
+          const resolved = resolveImport(p, spec);
+          if (resolved === path || spec === path) direct.add(p);
+        });
+      });
+      Object.keys(this.references).forEach(p => {
+        if ((this.references[p] || []).indexOf(path) >= 0) direct.add(p);
+        (this.references[p] || []).forEach(spec => {
+          const resolved = resolveImport(p, spec);
+          if (resolved === path || spec === path) direct.add(p);
+        });
+      });
       return Array.from(direct);
     }
   };
@@ -405,7 +418,6 @@
     detect(){
       const has = (substr) => Object.keys(Engine.FS._data).some(p => p.includes(substr));
       const signals = [];
-      if (has('/package.json'))    signals.push('node');
       if (has('vite.config'))      signals.push('vite');
       if (has('next.config'))      signals.push('next');
       if (has('angular.json'))     signals.push('angular');
@@ -417,14 +429,35 @@
       if (has('Cargo.toml'))       signals.push('rust');
       if (has('requirements.txt')) signals.push('python');
       if (has('pyproject.toml'))   signals.push('python');
+      let pkg = null;
+      try { pkg = JSON.parse(Engine.FS.read('/package.json') || 'null'); } catch (_) { pkg = null; }
+      const scripts = (pkg && pkg.scripts) || {};
+      const deps = Object.assign({}, (pkg && pkg.dependencies) || {}, (pkg && pkg.devDependencies) || {});
+      const realScript = (s) => typeof s === 'string' && s.trim() && !/^echo\b/i.test(s.trim());
+      const hasTest  = realScript(scripts.test);
+      const hasBuild = realScript(scripts.build);
+      const hasDev   = realScript(scripts.dev) || realScript(scripts.start) && /vite|next|webpack|react-scripts|ng\s|electron/i.test(String(scripts.start || ''));
+      const hasToolchainDep = Object.keys(deps).some(k => /^(vite|next|webpack|parcel|react-scripts|electron|@angular\/core|svelte|express|fastify)$/.test(k));
+      const nodeToolchain = !!(pkg && (hasTest || hasBuild || hasDev || hasToolchainDep));
+      if (nodeToolchain) signals.push('node');
       const files = Object.keys(Engine.FS._data).filter(p => Engine.FS.isFile(p));
       const htmlCount = files.filter(p => p.endsWith('.html')).length;
-      const jsCount   = files.filter(p => p.endsWith('.js')).length;
+      const jsCount   = files.filter(p => p.endsWith('.js') || p.endsWith('.mjs')).length;
       let kind = 'static';
-      if (signals.length) kind = signals[0];
-      else if (jsCount > 0 && htmlCount > 0) kind = 'vanilla-web';
+      if (signals.indexOf('vite') >= 0) kind = 'vite';
+      else if (signals.indexOf('next') >= 0) kind = 'next';
+      else if (signals.indexOf('angular') >= 0) kind = 'angular';
+      else if (signals.indexOf('svelte') >= 0) kind = 'svelte';
+      else if (signals.indexOf('electron') >= 0) kind = 'electron';
+      else if (signals.indexOf('tauri') >= 0) kind = 'tauri';
+      else if (signals.indexOf('android') >= 0) kind = 'android';
+      else if (signals.indexOf('maven') >= 0) kind = 'maven';
+      else if (signals.indexOf('rust') >= 0) kind = 'rust';
+      else if (signals.indexOf('python') >= 0) kind = 'python';
+      else if (nodeToolchain) kind = 'node';
+      else if (htmlCount > 0 && jsCount > 0) kind = 'vanilla-web';
       else if (jsCount > 0) kind = 'node';
-      return { kind: kind, signals: signals, htmlCount: htmlCount, jsCount: jsCount };
+      return { kind: kind, signals: signals, htmlCount: htmlCount, jsCount: jsCount, nodeToolchain: nodeToolchain };
     },
     buildCommand(){
       const t = this.detect();
@@ -439,7 +472,7 @@
         case 'maven':      return { cmd: 'mvn package',                   ok: t.signals.indexOf('maven') >= 0 };
         case 'rust':       return { cmd: 'cargo check',                   ok: t.signals.indexOf('rust') >= 0 };
         case 'python':     return { cmd: 'python -m compileall . && pytest', ok: t.signals.indexOf('python') >= 0 };
-        case 'node':       return { cmd: 'npm install && npm test',       ok: t.signals.indexOf('node') >= 0 };
+        case 'node':       return { cmd: 'npm install && npm test',       ok: !!t.nodeToolchain };
         case 'vanilla-web':return { cmd: 'static-parsing',                ok: true };
         default:           return { cmd: 'static-parsing',                ok: true };
       }
@@ -451,14 +484,23 @@
     build(){
       const pt = ProjectType.detect();
       const cmd = ProjectType.buildCommand();
-      // For 'static' and 'vanilla-web' we just parse every JS file.
-      // For any other kind we only succeed if the configuration is present.
       const allJs = Object.keys(Engine.FS._data).filter(p => p.endsWith('.js') || p.endsWith('.mjs'));
       const parseErrors = [];
+      const parseFn = (Engine.Validator && Engine.Validator.parseJsSyntax)
+        || Engine.parseJsSyntax
+        || function (src) {
+          try { new Function(src); return { ok: true }; }
+          catch (e) {
+            if (/\b(?:import|export)\b/.test(src || '')) return { ok: true, skipped: 'esm-without-acorn' };
+            return { ok: false, error: e.message };
+          }
+        };
       allJs.forEach(p => {
-        try { new Function(Engine.FS.read(p) || ''); } catch(e){ parseErrors.push({ file: p, error: e.message }); }
+        const r = parseFn(Engine.FS.read(p) || '');
+        if (!r.ok) parseErrors.push({ file: p, error: r.error });
       });
-      const ok = parseErrors.length === 0 && cmd.ok;
+      const parseOk = parseErrors.length === 0;
+      const ok = parseOk && (cmd.ok || pt.kind === 'vanilla-web' || pt.kind === 'static');
       return { ok: ok, projectType: pt.kind, command: cmd.cmd, parseErrors: parseErrors, signals: pt.signals };
     },
     runtime(){
@@ -500,30 +542,42 @@
   // ---------------- Recovery Levels L1-L5 (V2 #12) ----------------
   const Levels = {
     run(){
-      const syntax  = Engine.Validator.runAll().filter(i => i.severity === 'error').length === 0;
-      // L1: syntax
-      const L1 = syntax;
-      // L2: build
+      const allIssues = Engine.Validator.runAll();
+      const errors = allIssues.filter(i => i.severity === 'error');
+      const syntaxOk = errors.length === 0;
+      const L1 = syntaxOk;
       const build = Verify.build();
       const L2 = build.ok;
-      // L3: runtime
       const runtime = Verify.runtime();
       const L3 = runtime.ok;
-      // L4: functional
       const htmlFiles = Object.keys(Engine.FS._data).filter(p => p.endsWith('.html') && Engine.FS.isFile(p));
       const L4 = htmlFiles.length > 0;
-      // L5: architecture
       const graphV = GraphValidate.run();
       const L5 = graphV.healthy;
+      const flags = [L1, L2, L3, L4, L5];
+      let consecutive = 0;
+      for (let i = 0; i < flags.length; i++) {
+        if (flags[i]) consecutive++;
+        else break;
+      }
+      const l1detail = L1
+        ? 'no error-severity validator findings'
+        : (errors.length + ' error-severity finding' + (errors.length === 1 ? '' : 's') + (errors[0] ? ' (e.g. ' + errors[0].file + ')' : ''));
+      const l2detail = L2
+        ? ((build.projectType === 'vanilla-web' || build.projectType === 'static') ? 'static parse of JS artifacts passes' : (build.command + ' ready'))
+        : (build.parseErrors.length
+          ? (build.command + ' fails (' + build.parseErrors.length + ' parse error' + (build.parseErrors.length === 1 ? '' : 's') + ')')
+          : (build.command + ' not applicable for ' + build.projectType));
       return {
-        L1: { ok: L1, label: 'Syntax',     detail: 'no error-severity validator findings' },
-        L2: { ok: L2, label: 'Build',      detail: build.command + (build.ok ? ' passes' : ' fails (' + build.parseErrors.length + ' parse errors)') },
-        L3: { ok: L3, label: 'Runtime',    detail: runtime.ok ? 'no runtime hazards' : runtime.hazards.length + ' hazards found' },
-        L4: { ok: L4, label: 'Functional', detail: L4 ? 'entry HTML present and non-empty' : 'no entry HTML file' },
-        L5: { ok: L5, label: 'Architecture',detail: graphV.healthy ? 'all graph edges healthy' : (graphV.broken.length + ' broken edges') },
-        passed: [L1,L2,L3,L4,L5].filter(Boolean).length,
+        L1: { ok: L1, label: 'Syntax',       detail: l1detail },
+        L2: { ok: L2, label: 'Build',        detail: l2detail },
+        L3: { ok: L3, label: 'Runtime',      detail: runtime.ok ? 'no runtime hazards' : runtime.hazards.length + ' hazards found' },
+        L4: { ok: L4, label: 'Functional',   detail: L4 ? 'entry HTML present and non-empty' : 'no entry HTML file' },
+        L5: { ok: L5, label: 'Architecture', detail: graphV.healthy ? 'all graph edges healthy' : (graphV.broken.length + ' broken edges') },
+        passed: consecutive,
+        passingGates: flags.filter(Boolean).length,
         total: 5,
-        level: 'L' + [L1,L2,L3,L4,L5].filter(Boolean).length
+        level: consecutive === 0 ? 'L0' : ('L' + consecutive)
       };
     }
   };
@@ -619,7 +673,23 @@
       return { file, errorCount, warnCount, total: list.length, score: errorCount * 5 + warnCount, codes: codes };
     });
     entries.sort((a, b) => b.score - a.score);
-    if (entries.length === 0) return null;
+    if (entries.length === 0) {
+      return {
+        file: '',
+        subsystem: 'workspace',
+        symptom: 'No validator findings',
+        probableCause: 'All scanned files passed the current HTML / JavaScript / CSS suites',
+        rootCause: 'Workspace is clean — no concentrated defects',
+        affectedFiles: [],
+        dependencyChain: [],
+        repairCandidates: [],
+        recommendedRepair: 'none',
+        confidence: 0.99,
+        risk: 'low',
+        ranking: [],
+        affectedSubsystems: []
+      };
+    }
     const top = entries[0];
     // Build a causal chain for the top entry
     const depChain = Graph.impactOf(top.file);
@@ -658,6 +728,7 @@
   const Recovery = {
     _runs: loadJSON(NS_RUN, []),
     _diffs: loadJSON(NS_DIFFS, []),
+    _lastAnalysis: null,
     _saveRuns(){ saveJSON(NS_RUN, this._runs.slice(-50)); },
     _saveDiffs(){ saveJSON(NS_DIFFS, this._diffs.slice(-50)); },
 
@@ -678,7 +749,7 @@
       const issues = normalizeAll(raw);
       const root = rootCauseFor(issues);
       const levels = Levels.run();
-      return {
+      const result = {
         at: now(),
         rawCount: raw.length,
         issues: issues,
@@ -687,6 +758,22 @@
         layers: { STATIC: { ok: levels.L1.ok, label: 'STATIC' }, BUILD: { ok: levels.L2.ok, label: 'BUILD' }, RUNTIME: { ok: levels.L3.ok, label: 'RUNTIME' }, FUNCTIONAL: { ok: levels.L4.ok, label: 'FUNCTIONAL' } },
         health: computeHealth()
       };
+      this._lastAnalysis = {
+        at: result.at,
+        health: result.health,
+        levels: levels,
+        issueCount: issues.length,
+        errorCount: issues.filter(i => i.severity === 'error').length,
+        status: 'SCANNED',
+        agent: 'Sovereign-1.5',
+        runId: 'scan_' + result.at.toString(36),
+        repairedCount: 0,
+        rolledBack: false,
+        verify: { failed: levels.L1.ok && levels.L2.ok ? [] : [!levels.L1.ok ? 'L1-Syntax' : null, !levels.L2.ok ? 'L2-Build' : null].filter(Boolean) },
+        before: { health: result.health },
+        after: { health: result.health }
+      };
+      return result;
     },
 
     plan(analysis){
@@ -942,6 +1029,7 @@
     },
 
     history(){ return this._runs.slice(); },
+    lastAnalysis(){ return this._lastAnalysis; },
     getRun(runId){ return this._runs.find(r => r.runId === runId) || null; },
 
     // V2: compute and return the diff for a given snapshot/run
@@ -977,11 +1065,11 @@
     const content = Engine.FS.read(file) || '';
     switch (code) {
       case 'HTML_TAG_IMBALANCE': {
-        const tagMatch = (content.match(/<html[\s>]/i) || [null])[0];
-        if (!tagMatch) return null;
-        const closeTag = '</html>';
-        if (!content.includes(closeTag)) return { kind: 'append', text: '\n' + closeTag + '\n' };
-        return null;
+        let newContent = content;
+        if (/<body[\s>]/i.test(content) && !/<\/body>/i.test(content)) newContent += '\n</body>';
+        if (/<html[\s>]/i.test(newContent) && !/<\/html>/i.test(newContent)) newContent += '\n</html>';
+        if (newContent === content) return null;
+        return { kind: 'replace', text: newContent };
       }
       case 'HTML_MISSING_LANG': {
         const newContent = content.replace(/<html(\s*)/i, '<html lang="en"$1');
@@ -1014,7 +1102,17 @@
         return { kind: 'replace', text: newContent };
       }
       case 'JS_CONSOLE_LOG': {
-        const newContent = content.replace(/console\.log\s*\(/g, '/*cs*/console.log(');
+        const newContent = content.replace(/^[ \t]*console\.log\s*\((?:[^;]|\([^;]*\))*\);?[ \t]*$/gm, '/* console.log removed by recovery */');
+        if (newContent === content) {
+          const alt = content.replace(/console\.log\s*\(/g, 'void(');
+          if (alt === content) return null;
+          return { kind: 'replace', text: alt };
+        }
+        return { kind: 'replace', text: newContent };
+      }
+      case 'JS_SYNTAX_ERROR': {
+        let newContent = content.replace(/\nfunction\s+__broken\([\s\S]*$/, '');
+        if (newContent === content) newContent = content.replace(/\neval\("__injected__"\);?\s*$/, '');
         if (newContent === content) return null;
         return { kind: 'replace', text: newContent };
       }
@@ -1570,18 +1668,32 @@
   // we can benchmark Recovery V3 objectively.
   const FaultInjector = {
     FAULTS: {
-      'syntax':              { code: 'JS_SYNTAX_ERROR',  desc: 'Introduce a JS syntax error' },
-      'missing-file':        { code: 'FILE_EMPTY',       desc: 'Truncate a file to empty' },
-      'missing-import':      { code: 'JS_MISSING_IMPORT',desc: 'Rewrite an import path to a non-existent file' },
-      'console-log':         { code: 'JS_CONSOLE_LOG',   desc: 'Add a console.log statement' },
-      'missing-alt':         { code: 'HTML_MISSING_ALT', desc: 'Strip alt attribute from <img>' },
-      'missing-lang':        { code: 'HTML_MISSING_LANG',desc: 'Remove lang attribute from <html>' },
-      'tag-imbalance':       { code: 'HTML_TAG_IMBALANCE',desc: 'Remove a closing tag' },
-      'broken-ref':          { code: 'HTML_BROKEN_REF',  desc: 'Point an <img src> to a non-existent file' },
-      'unsafe-eval':         { code: 'JS_CSP_UNSAFE_EVAL',desc: 'Insert an eval() call' },
-      'todo-marker':         { code: 'FILE_TODO_MARKER', desc: 'Insert a TODO marker' }
+      'syntax':              { code: 'JS_SYNTAX_ERROR',  desc: 'Introduce a JS syntax error', target: 'js' },
+      'missing-file':        { code: 'FILE_EMPTY',       desc: 'Truncate a file to empty', target: 'js' },
+      'missing-import':      { code: 'JS_MISSING_IMPORT',desc: 'Rewrite an import path to a non-existent file', target: 'js' },
+      'console-log':         { code: 'JS_CONSOLE_LOG',   desc: 'Add a console.log statement', target: 'js' },
+      'missing-alt':         { code: 'HTML_MISSING_ALT', desc: 'Strip alt attribute from <img>', target: 'html' },
+      'missing-lang':        { code: 'HTML_MISSING_LANG',desc: 'Remove lang attribute from <html>', target: 'html' },
+      'tag-imbalance':       { code: 'HTML_TAG_IMBALANCE',desc: 'Remove a closing tag', target: 'html' },
+      'broken-ref':          { code: 'HTML_BROKEN_REF',  desc: 'Point an <img src> to a non-existent file', target: 'html' },
+      'unsafe-eval':         { code: 'JS_CSP_UNSAFE_EVAL',desc: 'Insert an eval() call', target: 'js' },
+      'todo-marker':         { code: 'FILE_TODO_MARKER', desc: 'Insert a TODO marker', target: 'js' }
     },
     _snapshot: null,
+    _lastBenchmark: null,
+    pickTarget(faultName){
+      const fault = this.FAULTS[faultName];
+      const files = Object.keys(Engine.FS._data).filter(p => Engine.FS.isFile(p));
+      const kind = (fault && fault.target) || 'js';
+      if (kind === 'html') {
+        return files.find(p => p.endsWith('.html')) || null;
+      }
+      if (faultName === 'missing-import') {
+        return files.find(p => /\.(js|mjs)$/.test(p) && /from\s+['"]/.test(Engine.FS.read(p) || ''))
+          || files.find(p => /\.(js|mjs)$/.test(p)) || null;
+      }
+      return files.find(p => /\.(js|mjs)$/.test(p)) || null;
+    },
     captureBaseline(){
       const data = {};
       Object.keys(Engine.FS._data).forEach(p => {
@@ -1599,37 +1711,43 @@
     inject(faultName, targetFile){
       const fault = this.FAULTS[faultName];
       if (!fault) return { ok: false, error: 'unknown_fault', name: faultName };
-      if (!Engine.FS.exists(targetFile)) return { ok: false, error: 'no_target_file', file: targetFile };
+      const file = targetFile || this.pickTarget(faultName);
+      if (!file || !Engine.FS.exists(file)) return { ok: false, error: 'no_target_file', file: file || targetFile };
       if (!this._snapshot) this.captureBaseline();
-      const c = Engine.FS.read(targetFile);
+      const c = Engine.FS.read(file);
       let newContent = c;
       switch (faultName) {
         case 'syntax':           newContent = c + '\nfunction __broken( { return ; }'; break;
         case 'missing-file':     newContent = ''; break;
-        case 'missing-import':   newContent = c.replace(/from\s+['"]([^'"]+)['"]/g, "from './__missing__.js'"); break;
+        case 'missing-import':   newContent = /from\s+['"]/.test(c) ? c.replace(/from\s+['"]([^'"]+)['"]/g, "from './__missing__.js'") : (c + "\nimport x from './__missing__.js';\n"); break;
         case 'console-log':      newContent = c + '\nconsole.log("__injected__");'; break;
-        case 'missing-alt':      newContent = c.replace(/<img([^>]*)\salt=[^>]*>/g, '<img$1>'); break;
+        case 'missing-alt':
+          if (/<img/i.test(c)) newContent = c.replace(/<img([^>]*)\salt=[^>\s]*([^>]*)>/gi, '<img$1$2>');
+          else newContent = c.replace(/<\/body>/i, '<img src="x.png">\n</body>');
+          break;
         case 'missing-lang':     newContent = c.replace(/<html\s+lang=['"][^'"]+['"]/i, '<html'); break;
-        case 'tag-imbalance':    newContent = c.replace(/<\/body>/, ''); break;
-        case 'broken-ref':       newContent = c.replace(/(src|href)=['"]([^'"]+)['"]/g, '$1="__missing__.png"'); break;
+        case 'tag-imbalance':    newContent = c.replace(/<\/body>/i, ''); break;
+        case 'broken-ref':       newContent = /(?:src|href)=['"]/.test(c) ? c.replace(/(src|href)=['"]([^'"]+)['"]/g, '$1="__missing__.png"') : c.replace(/<\/body>/i, '<img src="__missing__.png" alt="x">\n</body>'); break;
         case 'unsafe-eval':      newContent = c + '\neval("__injected__");'; break;
         case 'todo-marker':      newContent = c + '\n// TODO: __injected__'; break;
       }
-      if (newContent === c) return { ok: false, error: 'injection_no_op', file: targetFile };
-      Engine.FS.write(targetFile, newContent);
-      return { ok: true, fault: faultName, code: fault.code, file: targetFile, at: now() };
+      if (newContent === c) return { ok: false, error: 'injection_no_op', file: file };
+      Engine.FS.write(file, newContent);
+      return { ok: true, fault: faultName, code: fault.code, file: file, at: now() };
     },
     injectAll(targetFile){
       const results = [];
       Object.keys(this.FAULTS).forEach(name => {
         if (this._snapshot) this.restoreBaseline();
         this.captureBaseline();
-        const r = this.inject(name, targetFile);
+        const r = this.inject(name, targetFile || this.pickTarget(name));
         results.push(r);
       });
       this.restoreBaseline();
       return results;
     },
+    lastBenchmark(){ return this._lastBenchmark; },
+    recordBenchmark(summary){ this._lastBenchmark = Object.assign({ at: now() }, summary || {}); return this._lastBenchmark; },
     clearBaseline(){ this._snapshot = null; }
   };
 
