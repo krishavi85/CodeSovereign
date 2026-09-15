@@ -233,12 +233,12 @@
       const out = original.apply(this, arguments);
       const card = '<div id="llmSettingsHost">' + renderLlmSettingsCard() + '</div>';
       // Anchor on card *text* (icons are already interpolated by the time we see
-      // the string). Prefer just before the Integrations card; fall back to the
-      // end of the .screen-inner stack.
+      // the string). Prefer just before the Integrations card; fall back to a
+      // sibling of the last card, just before .screen-inner closes.
       const anchor = out.match(/<div class="card"[^>]*>\s*<h3[^>]*>[\s\S]*?Integrations<\/h3>/);
       if (anchor) return out.replace(anchor[0], card + '\n      ' + anchor[0]);
-      const tail = out.lastIndexOf('</div>\n    </div>');
-      if (tail >= 0) return out.slice(0, tail) + card + '\n    ' + out.slice(tail);
+      const close = out.lastIndexOf('</div>');
+      if (close >= 0) return out.slice(0, close) + card + '\n    ' + out.slice(close);
       return out + card;
     };
     renderSettings.__llmInjected = true;

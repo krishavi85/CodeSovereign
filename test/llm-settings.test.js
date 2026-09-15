@@ -97,4 +97,11 @@ module.exports = async function (t) {
   vm.runInContext(extrasSrc, win2, { filename: 'app.llm.extras.js' });
   const fallback = win2.renderSettings();
   t.ok('fallback still injects the card', /id="llmSettingsHost"/.test(fallback) && /AI Provider/.test(fallback));
+  t.ok('fallback does not nest inside the last card', /<div class="card">hello<\/div>/.test(fallback));
+  t.ok('fallback host is a sibling after the last card', /hello<\/div>[\s\S]*id="llmSettingsHost"/.test(fallback));
+  t.ok(
+    'fallback host stays inside screen-inner',
+    fallback.indexOf('id="llmSettingsHost"') > fallback.indexOf('screen-inner')
+      && fallback.indexOf('id="llmSettingsHost"') < fallback.lastIndexOf('</div>')
+  );
 };
