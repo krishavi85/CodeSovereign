@@ -386,16 +386,44 @@
     return out.replace(/\/+/g, "/");
   }
 
-  function stripFence(body) {
+  function stripFence(body, path) {
     const trimmed = String(body == null ? "" : body).trim();
     if (!trimmed) return "";
-    const fenced = trimmed.match(/```(?:[\w-]+)?[ \t]*\n([\s\S]*?)\n```/);
-    if (fenced) return fenced[1];
-    const loose = trimmed.match(/```(?:[\w-]+)?\s*([\s\S]*?)```/);
-    if (loose) return loose[1].replace(/^\n/, "").replace(/\n$/, "");
-    const html = trimmed.match(/((?:<!DOCTYPE[\s\S]*?<\/html>|<html[\s\S]*?<\/html>))/i);
-    if (html) return html[1];
+    const ext = String(path || "").split(".").pop().toLowerCase();
+    const whole = trimmed.match(/^```(?:[\w+-]*)[ \t]*\n([\s\S]*?)\n```[ \t]*$/);
+    if (whole) return whole[1];
+    function preambleLooksLikeProse(pre) {
+      const s = String(pre || "").trim();
+      if (!s) return true;
+      if (/[{};]|function\s|const\s|let\s|var\s|<!DOCTYPE|<html|\/\*|^[@.][\w-]*\s*\{/i.test(s)) return false;
+      return s.length <= 400;
+    }
+    const open = trimmed.match(/```(?:[\w+-]*)[ \t]*\n/);
+    if (open && open.index != null && preambleLooksLikeProse(trimmed.slice(0, open.index))) {
+      const afterOpen = open.index + open[0].length;
+      const close = trimmed.lastIndexOf("\n```");
+      if (close > afterOpen) {
+        const trailing = trimmed.slice(close + 4).trim();
+        if (trailing.length <= 240 && preambleLooksLikeProse(trailing)) {
+          return trimmed.slice(afterOpen, close);
+        }
+      }
+    }
+    if (ext === "html" || ext === "htm") {
+      const html = trimmed.match(/((?:<!DOCTYPE[\s\S]*?<\/html>|<html[\s\S]*?<\/html>))/i);
+      if (html && html[1].length >= Math.min(trimmed.length * 0.5, html[1].length)) {
+        if (html[1].length >= trimmed.length * 0.5) return html[1];
+      }
+    }
     return trimmed;
+  }
+
+  function issuesForFiles(files, issues) {
+    const fileSet = {};
+    (files || []).forEach(function (f) { if (f && f.path) fileSet[f.path] = true; });
+    return (issues || []).filter(function (i) {
+      return !i || !i.file || fileSet[i.file];
+    });
   }
 
   function isTransportError(err) {
@@ -487,11 +515,7 @@
 
   function scoreBuild(files, issues) {
     files = files || [];
-    const fileSet = {};
-    files.forEach(function (f) { if (f && f.path) fileSet[f.path] = true; });
-    issues = (issues || []).filter(function (i) {
-      return !i || !i.file || fileSet[i.file];
-    });
+    issues = issuesForFiles(files, issues);
     const html = files.find(function (f) { return /\/index\.html$/i.test(f.path); });
     const css = files.filter(function (f) { return /\.css$/i.test(f.path); });
     const js = files.filter(function (f) { return /\.js$/i.test(f.path); });
@@ -544,6 +568,7 @@
   }
 
   function buildRefinePrompt(original, files, issues, quality) {
+    issues = issuesForFiles(files, issues);
     const fileBlk = (files || []).slice(0, 12).map(function (f) {
       return "FILE: " + f.path + "\n```\n" + String(f.content || "").slice(0, 4500) + "\n```";
     }).join("\n\n");
@@ -590,7 +615,7 @@
       const filePrompt = "Build this app:\n" + String(prompt || "") +
         "\n\nWrite the COMPLETE contents of " + path + " only. Polished UI, no 'Simple Notepad', no starter template. Optional markdown fence.";
       const res = await complete(filePrompt, specCtx, { system: fileSystem, temperature: 0.35, maxTokens: 8192, json: false });
-      targets.push({ path: path, content: stripFence(res.content) });
+      targets.push({ path: path, content: stripFence(res.content, path) });
     }
     return {
       summary: summary || ("Generated " + targets.length + " file(s) sequentially"),
@@ -819,10 +844,10 @@
           wrote = true;
           steps.push({ kind: "validate", text: "Running validators…" });
           onStep && onStep(steps[steps.length - 1]);
-          const issues = window.Engine.Validator.runAll();
           const files = (plan.targets || []).map(function (t) {
             return { path: t.path, content: t.content };
           });
+          const issues = issuesForFiles(files, window.Engine.Validator.runAll());
           quality = scoreBuild(files, issues);
           steps.push({ kind: "validate-result", issues: issues, quality: quality });
           onStep && onStep(steps[steps.length - 1]);
@@ -879,6 +904,7 @@
     isTransportError,
     isPlanParseError,
     scoreBuild,
+    issuesForFiles,
     buildRefinePrompt,
     snapshotWorkspace,
     rememberModels,

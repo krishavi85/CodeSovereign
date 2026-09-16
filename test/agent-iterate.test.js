@@ -172,7 +172,17 @@ module.exports = async function (t) {
   t.ok('leftover themed CSS is ignored when scoring only the written files', LLM.scoreBuild(thinNoCss.slice(0, 2), []).pass === false);
 
   const prose = 'Sure, here is the file:\n```html\n<html lang="en"><body>Hi</body></html>\n```\nHope this helps.';
-  t.equal('stripFence drops surrounding model prose', LLM.stripFence(prose).trim(), '<html lang="en"><body>Hi</body></html>');
+  t.equal('stripFence drops surrounding model prose', LLM.stripFence(prose, '/index.html').trim(), '<html lang="en"><body>Hi</body></html>');
+  const jsWithInnerFence = 'function demo(){\n  return `\n```html\n<div>hi</div>\n```\n`;\n}\n' + 'console.log("ok");\n'.repeat(8);
+  t.ok('stripFence does not truncate JS that contains an inner fence', LLM.stripFence(jsWithInnerFence, '/scripts/app.js') === jsWithInnerFence.trim());
+  const cssWithHtml = 'body{color:red}\n/* <html lang="en"><body>nope</body></html> */\n' + '.x{display:block}\n'.repeat(12);
+  t.ok('stripFence does not extract HTML out of a CSS file', LLM.stripFence(cssWithHtml, '/styles/app.css') === cssWithHtml.trim());
+
+  const leftoverIssue = { severity: 'error', file: '/evil.js', message: 'Use of eval() detected' };
+  const planIssue = { severity: 'warning', file: '/index.html', message: '<img> missing alt attribute' };
+  const refine = LLM.buildRefinePrompt('notepad', RICH.files, [leftoverIssue, planIssue], { score: 40, reasons: ['CSS is too thin'] });
+  t.ok('refine prompt includes issues from written files', /missing alt/.test(refine));
+  t.ok('refine prompt omits leftover workspace validator errors', !/eval/.test(refine));
 
   LLM.setConfig({
     providerId: 'lmstudio',
