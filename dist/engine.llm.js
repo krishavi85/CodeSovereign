@@ -390,30 +390,39 @@
     const trimmed = String(body == null ? "" : body).trim();
     if (!trimmed) return "";
     const ext = String(path || "").split(".").pop().toLowerCase();
-    const whole = trimmed.match(/^```(?:[\w+-]*)[ \t]*\n([\s\S]*?)\n```[ \t]*$/);
-    if (whole) return whole[1];
-    function preambleLooksLikeProse(pre) {
-      const s = String(pre || "").trim();
-      if (!s) return true;
-      if (/[{};]|function\s|const\s|let\s|var\s|<!DOCTYPE|<html|\/\*|^[@.][\w-]*\s*\{/i.test(s)) return false;
-      return s.length <= 400;
+    const lines = trimmed.split(/\r?\n/);
+
+    function lineLooksLikeSource(line) {
+      const s = String(line || "").trim();
+      if (!s) return false;
+      return /^(?:\/\/|\/\*|\*|const\s|let\s|var\s|function\s|import\s|export\s|class\s|return\s|if\s*\(|for\s*\(|while\s*\(|<!DOCTYPE|<html[\s>]|<body[\s>]|<script[\s>]|:root|@[\w-]|[.#][\w-]+\s*\{|[{}()]|"use strict"|'use strict')/i.test(s);
     }
-    const open = trimmed.match(/```(?:[\w+-]*)[ \t]*\n/);
-    if (open && open.index != null && preambleLooksLikeProse(trimmed.slice(0, open.index))) {
-      const afterOpen = open.index + open[0].length;
-      const close = trimmed.lastIndexOf("\n```");
-      if (close > afterOpen) {
-        const trailing = trimmed.slice(close + 4).trim();
-        if (trailing.length <= 240 && preambleLooksLikeProse(trailing)) {
-          return trimmed.slice(afterOpen, close);
-        }
+
+    if (lines.length >= 3 && /^```(?:[\w+-]*)[ \t]*$/.test(lines[0]) && /^```[ \t]*$/.test(lines[lines.length - 1])) {
+      return lines.slice(1, -1).join("\n");
+    }
+
+    let openAt = -1;
+    for (let i = 0; i < lines.length && i <= 4; i++) {
+      if (/^```(?:[\w+-]*)[ \t]*$/.test(lines[i])) { openAt = i; break; }
+      if (lineLooksLikeSource(lines[i])) break;
+      if (lines[i].indexOf("```") >= 0) break;
+    }
+    if (openAt >= 0) {
+      let closeAt = -1;
+      let skipped = 0;
+      for (let j = lines.length - 1; j > openAt; j--) {
+        if (/^```[ \t]*$/.test(lines[j])) { closeAt = j; break; }
+        if (lines[j].indexOf("```") >= 0) break;
+        skipped++;
+        if (skipped > 3) break;
       }
+      if (closeAt > openAt) return lines.slice(openAt + 1, closeAt).join("\n");
     }
-    if (ext === "html" || ext === "htm") {
+
+    if ((ext === "html" || ext === "htm") && !/^<!DOCTYPE|^<html/i.test(trimmed)) {
       const html = trimmed.match(/((?:<!DOCTYPE[\s\S]*?<\/html>|<html[\s\S]*?<\/html>))/i);
-      if (html && html[1].length >= Math.min(trimmed.length * 0.5, html[1].length)) {
-        if (html[1].length >= trimmed.length * 0.5) return html[1];
-      }
+      if (html && html[1].length >= trimmed.length * 0.5) return html[1];
     }
     return trimmed;
   }

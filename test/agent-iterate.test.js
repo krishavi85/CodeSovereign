@@ -173,8 +173,16 @@ module.exports = async function (t) {
 
   const prose = 'Sure, here is the file:\n```html\n<html lang="en"><body>Hi</body></html>\n```\nHope this helps.';
   t.equal('stripFence drops surrounding model prose', LLM.stripFence(prose, '/index.html').trim(), '<html lang="en"><body>Hi</body></html>');
+  const proseFn = 'Here is the function that saves notes:\n```javascript\nconst save = () => localStorage.setItem("n", body.value);\n```\nHope this helps; ping me.';
+  t.equal(
+    'stripFence unwraps a fence after an English sentence that mentions function',
+    LLM.stripFence(proseFn, '/scripts/app.js').trim(),
+    'const save = () => localStorage.setItem("n", body.value);'
+  );
   const jsWithInnerFence = 'function demo(){\n  return `\n```html\n<div>hi</div>\n```\n`;\n}\n' + 'console.log("ok");\n'.repeat(8);
   t.ok('stripFence does not truncate JS that contains an inner fence', LLM.stripFence(jsWithInnerFence, '/scripts/app.js') === jsWithInnerFence.trim());
+  const jsCommentInner = '// app.js — notes helper\nfunction demo(){\n  return `\n```html\n<div>hi</div>\n```\n`;\n}\n' + 'console.log("ok");\n'.repeat(4);
+  t.ok('stripFence does not unwrap a JS file that starts with a // comment', LLM.stripFence(jsCommentInner, '/scripts/app.js') === jsCommentInner.trim());
   const cssWithHtml = 'body{color:red}\n/* <html lang="en"><body>nope</body></html> */\n' + '.x{display:block}\n'.repeat(12);
   t.ok('stripFence does not extract HTML out of a CSS file', LLM.stripFence(cssWithHtml, '/styles/app.css') === cssWithHtml.trim());
 
