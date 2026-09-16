@@ -148,6 +148,10 @@ module.exports = async function (t) {
   t.ok('LLM provider includes llamacpp', win.Engine.LLM.providers.some((p) => p.id === 'llamacpp'));
   t.ok('LLM provider includes lmstudio', win.Engine.LLM.providers.some((p) => p.id === 'lmstudio'));
   t.ok('lmstudio needs no API key', win.Engine.LLM.providers.find((p) => p.id === 'lmstudio').local === true);
+  t.ok('LocalAI still requests JSON mode', win.Engine.LLM.providers.find((p) => p.id === 'localai').supportsJson === true);
+  t.ok('LM Studio does not request JSON mode', win.Engine.LLM.providers.find((p) => p.id === 'lmstudio').supportsJson === false);
+  t.ok('llama.cpp does not request JSON mode', win.Engine.LLM.providers.find((p) => p.id === 'llamacpp').supportsJson === false);
+  t.ok('json_object is not skipped for every local endpoint', !/supportsJson && !isLocalEndpoint/.test(fs.readFileSync(path.join(__dirname, '..', 'dist', 'engine.llm.js'), 'utf8')));
   const cfg = win.Engine.LLM.getConfig();
   t.equal('applyToLLM selected localai', cfg.providerId, 'localai');
   t.ok('localai needs no API key', win.Engine.LLM.providers.find((p) => p.id === 'localai').local === true);

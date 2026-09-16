@@ -195,32 +195,33 @@
       }).join("");
     }
 
-    function refreshModelList() {
+    function refreshModelList(opts) {
+      const fromProviderChange = !!(opts && opts.fromProviderChange);
       const cfg = llm.getConfig();
       const p = currentProvider();
       const local = !!(p && p.local);
-      const opts = mergeModelOptions(p, (modelCustomEl && modelCustomEl.value) || cfg.model || "");
+      const optsHtml = mergeModelOptions(p, (modelCustomEl && modelCustomEl.value) || cfg.model || "");
       if (modelEl) {
-        modelEl.innerHTML = opts || '<option value="">(type a model id)</option>';
-        modelEl.style.display = opts ? "" : "none";
+        modelEl.innerHTML = optsHtml || '<option value="">(type a model id)</option>';
+        modelEl.style.display = optsHtml ? "" : "none";
       }
       if (modelCustomEl) modelCustomEl.style.display = "";
       if (baseUrlRow) baseUrlRow.style.display = (local || (providerEl && providerEl.value === "openai_compat")) ? "block" : "none";
-      if (baseUrlEl && p && p.baseUrl) {
+      if (fromProviderChange && baseUrlEl && local && p && p.baseUrl) {
         const known = {
           "http://127.0.0.1:8080": 1, "http://localhost:8080": 1,
           "http://127.0.0.1:8081": 1, "http://localhost:8081": 1,
           "http://127.0.0.1:1234": 1, "http://localhost:1234": 1
         };
         const cur = String(baseUrlEl.value || "").replace(/\/+$/, "");
-        if (local && (!cur || known[cur])) baseUrlEl.value = p.baseUrl;
+        if (!cur || known[cur]) baseUrlEl.value = p.baseUrl;
       }
       if (keyRow) keyRow.style.display = local ? "none" : "block";
       if (keyHint && p) keyHint.textContent = p.notes || "";
     }
 
     if (providerEl) {
-      providerEl.onchange = refreshModelList;
+      providerEl.onchange = function () { refreshModelList({ fromProviderChange: true }); };
       refreshModelList();
     }
     if (modelEl) {
@@ -231,9 +232,11 @@
 
     function collect() {
       const p = currentProvider();
+      const custom = modelCustomEl && modelCustomEl.value.trim();
+      const selected = modelEl && modelEl.value;
       const data = {
         providerId: providerEl ? providerEl.value : "",
-        model: ((modelEl && modelEl.value) || (modelCustomEl && modelCustomEl.value.trim()) || ""),
+        model: custom || selected || "",
         baseUrl: baseUrlEl ? baseUrlEl.value.trim() : "",
         enabled: !!(enabledEl && enabledEl.checked)
       };

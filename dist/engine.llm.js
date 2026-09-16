@@ -202,8 +202,8 @@
       temperature: 0.2,
       max_tokens: 4096
     };
-    // Local GGUF servers (LM Studio, llama.cpp) often reject json_object.
-    if (provider.supportsJson && !isLocalEndpoint(provider, cfg)) {
+    // LM Studio / llama.cpp set supportsJson: false; LocalAI still requests JSON mode.
+    if (provider.supportsJson) {
       body.response_format = { type: "json_object" };
     }
     return { url, headers, body };
