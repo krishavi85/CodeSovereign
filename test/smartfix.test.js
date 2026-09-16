@@ -68,6 +68,9 @@ module.exports = async function (t) {
   const cap = E.Preview.capture();
   t.ok('capture stores an svg data URL', /^data:image\/svg\+xml/.test(cap.dataUrl || ''));
   t.ok('formatCapture mentions visible UI problems', /missing alt/i.test(E.LLM.formatCapture(cap)));
+  const obs = E.LLM.observeRuntime([{ path: '/index.html', content: E.FS.read('/index.html') }]);
+  t.ok('runtime observe stores a preview snapshot', !!(obs.capture && obs.capture.inspect));
+  t.ok('runtime observe sees the missing alt', (obs.capture.inspect.missingAltCount >= 1) || (obs.issues || []).some((i) => /alt/i.test(i.message || '')));
 
   const UI = E.UnresolvedInspector;
   ['db.connect', 'rt.timeout', 'sec.secret', 'html.alt'].forEach((id) => {
@@ -156,6 +159,6 @@ module.exports = async function (t) {
   t.ok('benchmark does not mark a still-present fault as repaired', dishonest.repaired === 0);
 
   const loop = await E.LLM.smartLoop({ kind: 'unresolved', llm: false });
-  t.ok('smartLoop records inspect/plan/patch/screenshot/score', ['inspect', 'plan', 'patch', 'screenshot', 'score'].every((k) => (loop.steps || []).some((s) => s.kind === k)));
+  t.ok('smartLoop records inspect/plan/patch/screenshot/evaluate', ['inspect', 'plan', 'patch', 'screenshot', 'evaluate'].every((k) => (loop.steps || []).some((s) => s.kind === k)));
   t.ok('smartLoop skipped LLM when disabled', loop.llm && loop.llm.skipped);
 };

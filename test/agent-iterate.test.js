@@ -182,6 +182,33 @@ module.exports = async function (t) {
   ];
   t.ok('leftover themed CSS is ignored when scoring only the written files', LLM.scoreBuild(thinNoCss.slice(0, 2), []).pass === false);
 
+  t.ok('brain classifies a new app as generate', LLM.classifyIntent('create a notepad app').mode === 'generate');
+  t.ok('brain selects repo+deps+runtime for a new app', LLM.classifyIntent('create a notepad app').engines.join(',') === 'repo,deps,runtime');
+  t.ok('npm install is a deps route', LLM.classifyIntent('npm install lodash for the notes app').mode === 'deps');
+  t.ok('github URL selects the repository engine', LLM.classifyIntent('use https://github.com/foo/bar as the starter').mode === 'repo');
+  t.ok('github URL is captured for RAG', LLM.classifyIntent('use https://github.com/foo/bar as the starter').remotes[0].indexOf('github.com/foo/bar') >= 0);
+  t.ok('start over only runs runtime, not a github scan', LLM.classifyIntent('start over from scratch').engines.join(',') === 'runtime');
+  t.ok('sidebar tweak without history is generate, not edit', LLM.classifyIntent('make the sidebar purple').mode === 'generate');
+
+  const secretFiles = RICH.files.map(function (f) {
+    if (f.path !== '/scripts/app.js') return f;
+    return { path: f.path, content: f.content + '\nconst apiKey = "sk-live-12345678secret";\n' };
+  });
+  const pretty = LLM.scoreBuild(secretFiles, []);
+  const judgedSecret = LLM.evaluateBuild(secretFiles, {
+    issues: [{ severity: 'error', file: '/scripts/app.js', message: 'Hard-coded secret', faultClass: 'sec.secret' }],
+    capture: null
+  }, pretty);
+  t.ok('visual score can still look fine with a secret', pretty.pass === true);
+  t.ok('brain evaluate fails a pretty UI that still has a P1 secret', judgedSecret.quality.pass === false);
+  t.ok('brain evaluate reports the P1', judgedSecret.p1 >= 1);
+
+  win.Engine.FS.write('/scripts/need-lodash.js', 'import _ from "lodash";\nexport const x = _.get;\n');
+  t.ok('scanDeps finds a missing lodash import', LLM.scanDeps().missing.indexOf('lodash') >= 0);
+  t.ok('install strategy names npm install lodash', LLM.scanDeps().install.some(function (p) { return /npm install lodash/.test(p.install); }));
+  const rag = LLM.formatRag(LLM.classifyIntent('npm install lodash'), LLM.scanRepo(), LLM.scanDeps(), null);
+  t.ok('RAG tells the model not to fake node_modules', /Do not fake node_modules/.test(rag));
+
   const prose = 'Sure, here is the file:\n```html\n<html lang="en"><body>Hi</body></html>\n```\nHope this helps.';
   t.equal('stripFence drops surrounding model prose', LLM.stripFence(prose, '/index.html').trim(), '<html lang="en"><body>Hi</body></html>');
   const proseFn = 'Here is the function that saves notes:\n```javascript\nconst save = () => localStorage.setItem("n", body.value);\n```\nHope this helps; ping me.';
@@ -283,6 +310,9 @@ module.exports = async function (t) {
   ] };
   t.ok('prior agent run counts as a follow-up', LLM.isFollowUp('make the sidebar purple') === true);
   t.ok('explicit restart is not a follow-up even with history', LLM.isFollowUp('start over from scratch') === false);
+  t.ok('brain treats a follow-up as edit, not a full rebuild', LLM.classifyIntent('make the sidebar purple').mode === 'edit');
+  t.ok('edit intent skips the dependency engine', LLM.classifyIntent('make the sidebar purple').engines.indexOf('deps') < 0);
+  t.ok('fix prompt on an existing app is repair', LLM.classifyIntent('fix the timeout error').mode === 'repair');
 
   const follow = LLM.buildFollowUpPrompt(
     'make the sidebar purple',
@@ -320,6 +350,9 @@ module.exports = async function (t) {
   };
   const followSteps = await win.Engine.Agent.run('make the sidebar purple');
   t.ok('follow-up run talks to the LLM', followCalls >= 1);
+  t.ok('agent records a Brain route step', followSteps.some(function (s) {
+    return s.kind === 'route' && /Brain:/.test(s.text || '');
+  }));
   t.ok('follow-up activity says it is editing the current app', followSteps.some(function (s) {
     return /Follow-up on the current app/i.test(s.text || '');
   }));

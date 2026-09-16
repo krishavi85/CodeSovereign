@@ -687,6 +687,247 @@
     try { return !!(status() && status().configured); } catch (_) { return false; }
   }
 
+  const NODE_BUILTINS = {
+    fs: 1, path: 1, http: 1, https: 1, url: 1, util: 1, os: 1, crypto: 1, stream: 1,
+    events: 1, buffer: 1, child_process: 1, net: 1, zlib: 1, querystring: 1, assert: 1,
+    process: 1, module: 1, console: 1, timers: 1, tty: 1, vm: 1
+  };
+
+  function referencedRemotes(prompt) {
+    const text = String(prompt || "");
+    const out = [];
+    const re = /https?:\/\/(?:www\.)?(?:github\.com|huggingface\.co)\/[^\s)'"`<>]+/gi;
+    let m;
+    while ((m = re.exec(text))) out.push(m[0].replace(/[.,;]+$/, ""));
+    return out;
+  }
+
+  function extractExternalImports(content) {
+    const names = [];
+    const re = /(?:from\s+['"]([^./'"][^'"]*)['"]|require\s*\(\s*['"]([^./'"][^'"]*)['"]\s*\)|import\s*\(\s*['"]([^./'"][^'"]*)['"]\s*\))/g;
+    let m;
+    const src = String(content || "");
+    while ((m = re.exec(src))) {
+      const raw = m[1] || m[2] || m[3] || "";
+      const pkg = raw.charAt(0) === "@" ? raw.split("/").slice(0, 2).join("/") : raw.split("/")[0];
+      if (pkg && !NODE_BUILTINS[pkg]) names.push(pkg);
+    }
+    return names;
+  }
+
+  // Router selects engines. Running GitHub/HF fetch + npm install on every
+  // "make the button purple" prompt would add noise, not intelligence.
+  function classifyIntent(prompt) {
+    const p = String(prompt || "");
+    const remotes = referencedRemotes(p);
+    if (looksLikeRestart(p)) {
+      return { mode: "generate", engines: ["runtime"], reason: "start-over", remotes: remotes };
+    }
+    if (/\b(install|npm i\b|yarn add|pip install|missing (?:module|dependency|package)|cannot find module|package\.json)\b/i.test(p)) {
+      return { mode: "deps", engines: ["deps", "runtime"], reason: "dependency-request", remotes: remotes };
+    }
+    if (remotes.length || /\b(clone|import (?:this )?repo|huggingface|hf\.co)\b/i.test(p)) {
+      const engines = ["repo", "runtime"];
+      if (/\binstall\b/i.test(p)) engines.splice(1, 0, "deps");
+      return { mode: "repo", engines: engines, reason: "external-source", remotes: remotes };
+    }
+    if (/\b(fix|repair|bug|broken|crash|workaround|placeholder|hard-?coded secret|timeout after)\b/i.test(p)) {
+      const prior = isFollowUp(p) || hasPriorTurns(p);
+      return {
+        mode: prior ? "repair" : "generate",
+        engines: ["repo", "deps", "runtime"],
+        reason: prior ? "repair-request" : "repair-without-app",
+        remotes: remotes
+      };
+    }
+    if (isFollowUp(p)) {
+      return { mode: "edit", engines: ["repo", "runtime"], reason: "follow-up-edit", remotes: remotes };
+    }
+    return { mode: "generate", engines: ["repo", "deps", "runtime"], reason: "new-app", remotes: remotes };
+  }
+
+  function scanRepo() {
+    const files = snapshotWorkspace();
+    const langs = {};
+    const paths = [];
+    files.forEach(function (f) {
+      const m = (f.path || "").match(/\.([a-z0-9]+)$/i);
+      const ext = m ? m[1].toLowerCase() : "other";
+      langs[ext] = (langs[ext] || 0) + 1;
+      if (f.path && !/^\/\.codesovereign\//.test(f.path)) paths.push(f.path);
+    });
+    let aider = null;
+    try {
+      const Stack = window.Engine && window.Engine.BuildingStack;
+      if (Stack && Stack.Aider && Stack.Aider.analyzeRepository) aider = Stack.Aider.analyzeRepository();
+    } catch (_) {}
+    let memory = [];
+    try {
+      const Mem = window.Engine && window.Engine.BuildingStack && window.Engine.BuildingStack.Memory;
+      if (Mem && Mem.search) {
+        memory = Mem.search("workspace errors files", "repository").slice(0, 5).map(function (h) { return h.text; });
+      }
+    } catch (_) {}
+    return { fileCount: files.length, languages: langs, paths: paths.slice(0, 40), aider: aider, memory: memory };
+  }
+
+  function scanDeps() {
+    const FS = window.Engine && window.Engine.FS;
+    let pkg = {};
+    try { pkg = JSON.parse((FS && FS.read && FS.read("/package.json")) || "{}") || {}; } catch (_) { pkg = {}; }
+    const declared = Object.assign({}, pkg.dependencies || {}, pkg.devDependencies || {});
+    const used = {};
+    snapshotWorkspace().forEach(function (f) {
+      if (!/\.(js|mjs|cjs|jsx|ts|tsx)$/.test(f.path || "")) return;
+      extractExternalImports(f.content).forEach(function (n) { used[n] = true; });
+    });
+    const missing = Object.keys(used).filter(function (n) { return !declared[n]; });
+    const DR = (window.Engine && window.Engine.DependencyResolver) || window.DependencyResolver;
+    const install = missing.map(function (n) {
+      const r = DR && DR.resolve ? DR.resolve(n) : { resolved: false, importName: n };
+      return { name: n, install: (r && r.install) || ("npm install " + n), resolved: !!(r && r.resolved) };
+    });
+    return { declared: Object.keys(declared), used: Object.keys(used), missing: missing, install: install };
+  }
+
+  function observeRuntime(writtenFiles) {
+    const scope = writtenFiles && writtenFiles.length ? writtenFiles : snapshotWorkspace();
+    const issues = [];
+    function pushIssue(i) {
+      if (!i) return;
+      const row = {
+        severity: i.severity || "warning",
+        file: i.file || (i.issue && i.issue.file) || "",
+        message: i.message || i.why || (i.issue && i.issue.message) || i.kind || "",
+        kind: i.kind,
+        faultClass: i.faultClass
+      };
+      if (!row.message) return;
+      issues.push(row);
+    }
+    try {
+      issuesForFiles(scope, window.Engine.Validator.runAll()).forEach(pushIssue);
+    } catch (_) {}
+    try {
+      const MD = (window.Engine && window.Engine.MockDetect) || window.MockDetect;
+      if (MD && MD.run) {
+        (MD.run() || []).forEach(function (m) {
+          pushIssue({ severity: m.severity || "warning", file: m.file, message: m.why || m.kind, kind: m.kind });
+        });
+      }
+    } catch (_) {}
+    try {
+      const UI = (window.Engine && window.Engine.UnresolvedInspector) || window.UnresolvedInspector;
+      if (UI && UI.collect) {
+        (UI.collect() || []).forEach(function (x) {
+          const it = x.issue || x;
+          pushIssue({
+            severity: it.severity || "warning",
+            file: it.file || x.file,
+            message: it.message || x.message,
+            kind: it.kind || x.kind,
+            faultClass: x.faultClass || it.faultClass
+          });
+        });
+      }
+    } catch (_) {}
+    const scoped = issuesForFiles(scope, issues);
+    let capture = null;
+    try {
+      if (window.Engine.Preview && window.Engine.Preview.capture) capture = window.Engine.Preview.capture();
+    } catch (_) {}
+    return { issues: scoped, capture: capture };
+  }
+
+  function evaluateBuild(files, observation, quality) {
+    const obs = observation || { issues: [], capture: null };
+    const scored = quality || scoreBuild(files, obs.issues);
+    const judged = {
+      score: scored.score,
+      pass: scored.pass,
+      errors: scored.errors,
+      warnings: scored.warnings,
+      files: scored.files,
+      htmlLen: scored.htmlLen,
+      cssLen: scored.cssLen,
+      reasons: (scored.reasons || []).slice()
+    };
+    const p1 = (obs.issues || []).filter(function (i) {
+      const sev = String(i.severity || "").toLowerCase();
+      const cls = String(i.faultClass || i.kind || "");
+      return sev === "error" || sev === "p1" || /sec\.secret|db\.connect|throw-placeholder|hardcoded-auth|rt\.timeout/.test(cls);
+    });
+    if (p1.length) {
+      judged.pass = false;
+      judged.reasons = judged.reasons.concat(p1.slice(0, 6).map(function (i) {
+        return (i.file || "") + ": " + (i.message || i.kind || "p1");
+      }));
+    }
+    const vis = (obs.capture && obs.capture.inspect && obs.capture.inspect.issues) || [];
+    if (vis.length) {
+      judged.reasons = judged.reasons.concat(vis);
+      if ((obs.capture.inspect && obs.capture.inspect.missingAltCount) || /placeholder notepad/i.test(vis.join(" "))) {
+        judged.pass = false;
+      }
+    }
+    return { quality: judged, p1: p1.length, issues: obs.issues || [], capture: obs.capture || null };
+  }
+
+  function formatRag(intent, repo, deps, observation) {
+    intent = intent || classifyIntent("");
+    const lines = [];
+    lines.push("AI BRAIN ROUTE: mode=" + intent.mode + " engines=" + (intent.engines || []).join(",") + " (" + intent.reason + ").");
+    lines.push("Decide, then patch. Do not ignore observed errors.");
+    if (intent.remotes && intent.remotes.length) {
+      lines.push("Referenced GitHub/HF URLs (work from the workspace; do not invent a clone):\n- " + intent.remotes.join("\n- "));
+    }
+    if (repo && repo.fileCount) {
+      lines.push("Repository scan: " + repo.fileCount + " files.\n- " + (repo.paths || []).slice(0, 24).join("\n- "));
+      if (repo.memory && repo.memory.length) lines.push("Memory hits:\n- " + repo.memory.join("\n- "));
+    }
+    if (deps && deps.missing && deps.missing.length) {
+      lines.push("Missing dependencies — install strategy:\n" + deps.install.map(function (p) {
+        return "- " + p.name + " → " + p.install;
+      }).join("\n"));
+      lines.push("Do not fake node_modules. Add the package to package.json or replace the import with in-app code.");
+    }
+    if (observation && observation.issues && observation.issues.length) {
+      lines.push("Observed issues after run:\n" + observation.issues.slice(0, 20).map(function (i) {
+        return "- [" + (i.severity || "info") + "] " + (i.file || "") + ": " + (i.message || "");
+      }).join("\n"));
+    }
+    const previewBlk = observation && observation.capture ? formatCapture(observation.capture) : "";
+    if (previewBlk) lines.push("Live preview snapshot of the built app:\n" + previewBlk);
+    return lines.join("\n\n");
+  }
+
+  function runSelectedEngines(intent, steps, onStep) {
+    const out = { repo: null, deps: null };
+    (intent.engines || []).forEach(function (eng) {
+      if (eng === "repo") {
+        out.repo = scanRepo();
+        const s = {
+          kind: "repo",
+          text: "Repository scan: " + out.repo.fileCount + " file(s)" +
+            (intent.remotes && intent.remotes.length ? "; refs " + intent.remotes.join(", ") : "")
+        };
+        steps.push(s);
+        onStep && onStep(s);
+      } else if (eng === "deps") {
+        out.deps = scanDeps();
+        const s = {
+          kind: "deps",
+          text: out.deps.missing.length
+            ? ("Install strategy: " + out.deps.install.map(function (p) { return p.install; }).join("; "))
+            : "No missing packages"
+        };
+        steps.push(s);
+        onStep && onStep(s);
+      }
+    });
+    return out;
+  }
+
   async function patchIssues(issues, capture) {
     if (!llmAvailable()) return { ok: false, skipped: true, reason: "llm-disabled" };
     const list = issues || [];
@@ -749,28 +990,30 @@
       push("error", "Auto-workaround failed: " + (e && e.message || e));
     }
     push("patch", "Applied " + ((auto.patched && auto.patched.length) || 0) + " auto-workaround(s)");
-    let capture = null;
-    try { capture = window.Engine.Preview.capture(); } catch (_) {}
-    if (capture) push("screenshot", "Preview snapshot: " + ((capture.inspect && capture.inspect.title) || "untitled") + (capture.issues && capture.issues.length ? " — " + capture.issues.join("; ") : ""), { capture: capture });
-    let remaining = (auto.remaining && auto.remaining.length) ? auto.remaining : (UI && UI.collect ? UI.collect() : []);
+    const files = snapshotWorkspace();
+    let observation = observeRuntime(files);
+    if (observation.capture) {
+      const vis = (observation.capture.inspect && observation.capture.inspect.issues) || [];
+      push("screenshot", "Preview snapshot: " + ((observation.capture.inspect && observation.capture.inspect.title) || "untitled") + (vis.length ? " — " + vis.join("; ") : " — UI looks wired"), { capture: observation.capture });
+    }
+    let remaining = (auto.remaining && auto.remaining.length) ? auto.remaining : (observation.issues || []);
     let llm = { skipped: true };
     if (remaining.length && llmAvailable() && opts.llm !== false) {
       push("llm", "LLM refine on remaining issues + preview snapshot…");
       try {
-        llm = await patchIssues(remaining, capture);
+        llm = await patchIssues(remaining, observation.capture);
         if (llm && llm.ok) push("llm-result", "LLM patched " + ((llm.files && llm.files.length) || 0) + " file(s)");
         else push("llm-result", "LLM skipped or returned no files");
       } catch (e) {
         llm = { ok: false, error: e && e.message || String(e) };
         push("error", "LLM refine failed: " + llm.error);
       }
-      try { capture = window.Engine.Preview.capture(); } catch (_) {}
-      remaining = UI && UI.collect ? UI.collect() : remaining;
+      observation = observeRuntime(snapshotWorkspace());
+      remaining = observation.issues || remaining;
     }
-    const files = snapshotWorkspace();
-    const quality = scoreBuild(files, (window.Engine && window.Engine.Validator) ? window.Engine.Validator.runAll() : []);
-    push("score", "Quality " + quality.score + (quality.pass ? " (pass)" : " (needs more)"));
-    return { steps: steps, patched: auto.patched || [], remaining: remaining, capture: capture, llm: llm, quality: quality };
+    const judged = evaluateBuild(snapshotWorkspace(), observation);
+    push("evaluate", "Brain evaluated: quality " + judged.quality.score + (judged.quality.pass ? " pass" : " — repair/retry") + (judged.p1 ? ", " + judged.p1 + " P1" : ""));
+    return { steps: steps, patched: auto.patched || [], remaining: remaining, capture: observation.capture, llm: llm, quality: judged.quality };
   }
 
   async function sequentialGenerate(prompt, specCtx, onChunk) {
@@ -1001,13 +1244,21 @@
       }
       let ctx = specContext() || {};
       const followUp = isFollowUp(prompt);
+      const intent = classifyIntent(prompt);
       if (followUp) ctx = Object.assign({}, ctx, { followUp: true });
+      ctx = Object.assign({}, ctx, { brainMode: intent.mode });
 
       return (async function () {
         let extraUser = null;
         let quality = { score: 0, pass: false, reasons: ["not generated"] };
         let lastErr = null;
         let wrote = false;
+        steps.push({
+          kind: "route",
+          text: "Brain: " + intent.mode + " via " + intent.engines.join(" + ") + " (" + intent.reason + ")"
+        });
+        onStep && onStep(steps[steps.length - 1]);
+        const engines = runSelectedEngines(intent, steps, onStep);
         if (followUp) {
           const existing = snapshotWorkspace();
           const existingIssues = existing.length
@@ -1015,6 +1266,9 @@
             : [];
           extraUser = buildFollowUpPrompt(prompt, existing, existingIssues, conversationHistory(prompt));
         }
+        extraUser = extraUser
+          ? (extraUser + "\n\n" + formatRag(intent, engines.repo, engines.deps, null))
+          : formatRag(intent, engines.repo, engines.deps, null);
         for (let round = 1; round <= MAX_ROUNDS; round++) {
           steps.push({
             kind: "plan",
@@ -1040,39 +1294,36 @@
           onStep && onStep(steps[steps.length - 1]);
           await writeTargets(plan.targets, steps, onStep);
           wrote = true;
-          steps.push({ kind: "validate", text: "Running validators…" });
+          steps.push({ kind: "validate", text: "Runtime observe — validators, mocks, live preview…" });
           onStep && onStep(steps[steps.length - 1]);
           const files = (plan.targets || []).map(function (t) {
             return { path: t.path, content: t.content };
           });
-          const issues = issuesForFiles(files, window.Engine.Validator.runAll());
-          quality = scoreBuild(files, issues);
-          let capture = null;
-          try {
-            if (window.Engine.Preview && window.Engine.Preview.capture) capture = window.Engine.Preview.capture();
-          } catch (_) {}
-          if (capture) {
-            const vis = (capture.inspect && capture.inspect.issues) || [];
+          if (intent.engines.indexOf("deps") >= 0) engines.deps = scanDeps();
+          const observation = observeRuntime(files);
+          const judged = evaluateBuild(files, observation, scoreBuild(files, observation.issues));
+          quality = judged.quality;
+          if (observation.capture) {
+            const vis = (observation.capture.inspect && observation.capture.inspect.issues) || [];
             steps.push({
               kind: "screenshot",
-              text: "Preview snapshot: " + ((capture.inspect && capture.inspect.title) || "untitled") +
+              text: "Preview snapshot: " + ((observation.capture.inspect && observation.capture.inspect.title) || "untitled") +
                 (vis.length ? " — " + vis.join("; ") : " — UI looks wired"),
-              capture: capture
+              capture: observation.capture
             });
             onStep && onStep(steps[steps.length - 1]);
-            if (vis.length) {
-              quality.reasons = (quality.reasons || []).concat(vis);
-              if (capture.inspect.missingAltCount || /placeholder notepad/i.test(vis.join(" "))) quality.pass = false;
-            }
           }
-          steps.push({ kind: "validate-result", issues: issues, quality: quality });
+          steps.push({ kind: "evaluate", text: "Brain evaluated: quality " + quality.score + (quality.pass ? " pass" : " — repair/retry") + (judged.p1 ? ", " + judged.p1 + " P1" : "") });
+          onStep && onStep(steps[steps.length - 1]);
+          steps.push({ kind: "validate-result", issues: judged.issues, quality: quality });
           onStep && onStep(steps[steps.length - 1]);
           if (quality.pass) {
             steps.push({ kind: "done", text: "Run complete (LLM, " + round + " round(s), quality " + quality.score + "). Prompt again to keep editing this app." });
             onStep && onStep(steps[steps.length - 1]);
             return steps;
           }
-          extraUser = buildRefinePrompt(prompt, files, issues, quality, { followUp: followUp, capture: capture });
+          extraUser = buildRefinePrompt(prompt, files, judged.issues, quality, { followUp: followUp, capture: observation.capture }) +
+            "\n\n" + formatRag(intent, engines.repo, engines.deps, observation);
         }
         if (!wrote) {
           steps.push({
@@ -1127,6 +1378,13 @@
     llmAvailable,
     patchIssues,
     smartLoop,
+    classifyIntent,
+    scanRepo,
+    scanDeps,
+    observeRuntime,
+    evaluateBuild,
+    formatRag,
+    extractExternalImports,
     isFollowUp,
     looksLikeRestart,
     conversationHistory,

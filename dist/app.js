@@ -932,9 +932,9 @@ function renderAgent() {
       ${time ? `<span style="font-size:11px;color:#6b7488;flex:none">${time}</span>` : ''}
     </div>`;
 
-  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','user':'You' };
-  const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket','error':'alert','user':'user' };
-  const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c','error':'#f87171','user':'#fbbf24' };
+  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','user':'You','route':'Router','repo':'Repo','deps':'Deps','screenshot':'Observer','evaluate':'Brain' };
+  const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket','error':'alert','user':'user','route':'sparkle','repo':'branch','deps':'clip','screenshot':'eye','evaluate':'flask' };
+  const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c','error':'#f87171','user':'#fbbf24','route':'#a78bfa','repo':'#22d3ee','deps':'#60a5fa','screenshot':'#34d399','evaluate':'#a78bfa' };
 
   let activityRows;
   if (steps.length === 0) {
