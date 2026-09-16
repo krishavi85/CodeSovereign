@@ -76,6 +76,9 @@ module.exports = async function (t) {
   t.ok('Refresh models button is present', /id="llmRefreshModelsBtn"/.test(html));
   t.ok('collect prefers typed custom model id', /const custom = modelCustomEl && modelCustomEl.value.trim/.test(extrasSrc) && /model: custom \|\| selected/.test(extrasSrc));
   t.ok('URL remap runs only when the provider changes', /fromProviderChange/.test(extrasSrc) && extrasSrc.includes('http://127.0.0.1:1234'));
+  t.ok('local providers keep the token field visible', extrasSrc.includes('API token (optional)') && extrasSrc.includes('keyRow.style.display = "block"'));
+  t.ok('collect saves localToken for local providers', extrasSrc.includes('data.localToken'));
+  t.ok('provider switch does not copy cloud apiKey into local token field', extrasSrc.includes('Never copy the leftover cloud apiKey'));
   t.ok('card sits before Integrations', html.indexOf('AI Provider') < html.indexOf('Integrations'));
   t.ok(
     'card sits after earlier cards, not at the top of the stack',
@@ -123,4 +126,48 @@ module.exports = async function (t) {
     fallback.indexOf('id="llmSettingsHost"') > fallback.indexOf('screen-inner')
       && fallback.indexOf('id="llmSettingsHost"') < fallback.lastIndexOf('</div>')
   );
+
+  const llmLocal = {
+    providers: [{ id: 'lmstudio', label: 'LM Studio (local)', local: true, modelOptions: [] }],
+    getConfig: () => ({
+      providerId: 'lmstudio',
+      model: 'tinylama-1.1B-Q5_K_M',
+      apiKey: 'sk-secret',
+      localToken: '',
+      baseUrl: 'http://127.0.0.1:1234'
+    }),
+    status: () => ({ configured: true, enabled: true, providerId: 'lmstudio', model: 'tinylama-1.1B-Q5_K_M' }),
+    resolveProvider: () => ({
+      id: 'lmstudio',
+      label: 'LM Studio (local)',
+      local: true,
+      notes: 'paste token',
+      baseUrl: 'http://127.0.0.1:1234'
+    }),
+    providerById: () => ({ id: 'lmstudio', label: 'LM Studio (local)', local: true, modelOptions: [] }),
+    Gguf: { list: () => [] }
+  };
+  const win3 = {
+    console,
+    document: {
+      readyState: 'complete',
+      addEventListener: () => {},
+      getElementById: () => null,
+      createElement: () => ({ style: {}, appendChild: () => {} })
+    },
+    Engine: { LLM: llmLocal },
+    renderSettings: function () {
+      return '<div class="screen-inner">\n      <div class="card"><h3 class="cs-h3">Integrations</h3></div>\n    </div>';
+    },
+    renderAll: function () { return 'ok'; },
+    S: { screen: 'settings' },
+    setTimeout: (fn) => fn()
+  };
+  win3.window = win3;
+  vm.createContext(win3);
+  vm.runInContext(extrasSrc, win3, { filename: 'app.llm.extras.js' });
+  const localHtml = win3.renderSettings();
+  t.ok('LM Studio card shows optional API token field', /API token \(optional\)/.test(localHtml));
+  t.ok('LM Studio key row is visible', /id="llmKeyRow"[^>]*display:block/.test(localHtml));
+  t.ok('LM Studio card does not prefill the leftover cloud key', !/sk-secret/.test(localHtml));
 };

@@ -73,7 +73,7 @@
       : "Not configured \u2014 Agent uses the built-in deterministic synthesizer.";
 
     const p = llm.resolveProvider(cfg);
-    const isLocal = !!(p && p.local);
+    const isLocal = !!(p && p.local) || /127\.0\.0\.1|localhost/i.test(String(cfg.baseUrl || (p && p.baseUrl) || ""));
     const modelSel = modelOptionsFor(p, cfg.model);
     const ggufs = (llm.Gguf && llm.Gguf.list && llm.Gguf.list()) || [];
     const ggufRows = ggufs.length
@@ -115,9 +115,9 @@
           <input id="llmBaseUrl" placeholder="http://127.0.0.1:1234" value="${esc(cfg.baseUrl || (p && p.baseUrl) || "")}" style="width:100%;padding:9px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter"/>
         </div>
 
-        <div id="llmKeyRow" style="margin-bottom:12px;display:${isLocal ? "none" : "block"}">
-          <div style="font:600 11px Inter;letter-spacing:.05em;color:#7b859c;text-transform:uppercase;margin-bottom:5px">API Key</div>
-          <input id="llmKey" type="password" placeholder="paste key here" value="${esc(cfg.apiKey || "")}" style="width:100%;padding:9px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter" autocomplete="off"/>
+        <div id="llmKeyRow" style="margin-bottom:12px;display:block">
+          <div id="llmKeyLabel" style="font:600 11px Inter;letter-spacing:.05em;color:#7b859c;text-transform:uppercase;margin-bottom:5px">${isLocal ? "API token (optional)" : "API Key"}</div>
+          <input id="llmKey" type="password" placeholder="${isLocal ? "paste local server token if required" : "paste key here"}" value="${esc(isLocal ? (cfg.localToken || "") : (cfg.apiKey || ""))}" style="width:100%;padding:9px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter" autocomplete="off"/>
         </div>
         <div id="llmKeyHint" style="font-size:11.5px;color:var(--muted);margin:-6px 0 12px">${esc(p && p.notes || "")}</div>
 
@@ -161,6 +161,7 @@
     const baseUrlRow = document.getElementById("llmBaseUrlRow");
     const baseUrlEl = document.getElementById("llmBaseUrl");
     const keyRow = document.getElementById("llmKeyRow");
+    const keyLabel = document.getElementById("llmKeyLabel");
     const keyEl = document.getElementById("llmKey");
     const enabledEl = document.getElementById("llmEnabled");
     const testBtn = document.getElementById("llmTestBtn");
@@ -173,6 +174,13 @@
 
     function currentProvider() {
       return llm.providerById(providerEl ? providerEl.value : "") || llm.resolveProvider(llm.getConfig());
+    }
+
+    function formIsLocal() {
+      const p = currentProvider();
+      if (p && p.local) return true;
+      const url = String((baseUrlEl && baseUrlEl.value) || "").toLowerCase();
+      return /127\.0\.0\.1|localhost/.test(url);
     }
 
     function mergeModelOptions(p, currentModel) {
@@ -199,7 +207,7 @@
       const fromProviderChange = !!(opts && opts.fromProviderChange);
       const cfg = llm.getConfig();
       const p = currentProvider();
-      const local = !!(p && p.local);
+      const local = formIsLocal();
       const optsHtml = mergeModelOptions(p, (modelCustomEl && modelCustomEl.value) || cfg.model || "");
       if (modelEl) {
         modelEl.innerHTML = optsHtml || '<option value="">(type a model id)</option>';
@@ -216,7 +224,15 @@
         const cur = String(baseUrlEl.value || "").replace(/\/+$/, "");
         if (!cur || known[cur]) baseUrlEl.value = p.baseUrl;
       }
-      if (keyRow) keyRow.style.display = local ? "none" : "block";
+      if (keyRow) keyRow.style.display = "block";
+      if (keyLabel) keyLabel.textContent = local ? "API token (optional)" : "API Key";
+      if (keyEl) {
+        keyEl.placeholder = local ? "paste local server token if required" : "paste key here";
+        if (fromProviderChange) {
+          // Never copy the leftover cloud apiKey into the localhost token field.
+          keyEl.value = local ? (cfg.localToken || "") : (cfg.apiKey || "");
+        }
+      }
       if (keyHint && p) keyHint.textContent = p.notes || "";
     }
 
@@ -231,7 +247,6 @@
     }
 
     function collect() {
-      const p = currentProvider();
       const custom = modelCustomEl && modelCustomEl.value.trim();
       const selected = modelEl && modelEl.value;
       const data = {
@@ -240,7 +255,11 @@
         baseUrl: baseUrlEl ? baseUrlEl.value.trim() : "",
         enabled: !!(enabledEl && enabledEl.checked)
       };
-      if (!(p && p.local) && keyEl) data.apiKey = keyEl.value.trim();
+      if (formIsLocal()) {
+        if (keyEl) data.localToken = keyEl.value.trim();
+      } else if (keyEl) {
+        data.apiKey = keyEl.value.trim();
+      }
       return data;
     }
 
@@ -273,7 +292,11 @@
         testOut.textContent = "Testing connection to " + (providerEl.value) + " ...";
         try {
           const r = await llm.testConnection();
-          testOut.textContent = JSON.stringify(r, null, 2);
+          let msg = JSON.stringify(r, null, 2);
+          if (!r.ok && r.status === 401) {
+            msg += "\n\n" + (r.hint || "This local server requires a Bearer token. Paste it in the API token field above, then Test again.");
+          }
+          testOut.textContent = msg;
           if (r.ok) {
             testOut.style.color = "var(--good)";
             try { window.csToast && window.csToast("LLM connection OK", "#34d399"); } catch (_) {}

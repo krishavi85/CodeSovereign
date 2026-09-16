@@ -76,7 +76,7 @@
       local: true,
       keyHeader: "Authorization",
       keyPrefix: "Bearer ",
-      notes: "LM Studio OpenAI-compatible server. Start the server in LM Studio (Developer → Local Server) on http://127.0.0.1:1234 — no API key required. Load a GGUF there, or register one below."
+      notes: "LM Studio OpenAI-compatible server. Start the server in LM Studio (Developer → Local Server) on http://127.0.0.1:1234. If it asks for an API token, paste it below — it is sent only to this local URL, never as your cloud key. Load a GGUF there, or register one below."
     },
     {
       id: "localai",
@@ -89,7 +89,7 @@
       local: true,
       keyHeader: "Authorization",
       keyPrefix: "Bearer ",
-      notes: "OpenAI-compatible local gateway. Default http://127.0.0.1:8080 — no API key required. https://github.com/mudler/LocalAI"
+      notes: "OpenAI-compatible local gateway. Default http://127.0.0.1:8080. Leave the token blank unless your LocalAI server requires one. https://github.com/mudler/LocalAI"
     },
     {
       id: "llamacpp",
@@ -102,7 +102,7 @@
       local: true,
       keyHeader: "Authorization",
       keyPrefix: "Bearer ",
-      notes: "llama-server OpenAI-compatible endpoint. Default http://127.0.0.1:8081 — no API key required. Point it at a registered GGUF: llama-server -m model.gguf --port 8081"
+      notes: "llama-server OpenAI-compatible endpoint. Default http://127.0.0.1:8081. Leave the token blank unless the server was started with --api-key. Point it at a registered GGUF: llama-server -m model.gguf --port 8081"
     }
   ];
 
@@ -116,7 +116,7 @@
         if (c && typeof c === "object") return c;
       }
     } catch (_) {}
-    return { providerId: "", model: "", apiKey: "", baseUrl: "", enabled: false };
+    return { providerId: "", model: "", apiKey: "", localToken: "", baseUrl: "", enabled: false };
   }
   function saveConfig(cfg) {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(cfg || {})); } catch (_) {}
@@ -150,6 +150,24 @@
 
   function needsApiKey(provider, cfg) {
     return !isLocalEndpoint(provider, cfg);
+  }
+
+  // Local servers never receive the cloud apiKey (Electron keychain still
+  // injects it into getConfig). Optional localToken is the only localhost auth.
+  function authToken(provider, cfg) {
+    if (isLocalEndpoint(provider, cfg)) return String((cfg && cfg.localToken) || "");
+    return String((cfg && cfg.apiKey) || "");
+  }
+
+  function applyAuthHeaders(headers, provider, cfg) {
+    const token = authToken(provider, cfg);
+    if (!token) return headers;
+    if (!provider || !provider.keyHeader || provider.keyHeader === "Authorization") {
+      headers["Authorization"] = ((provider && provider.keyPrefix) || "Bearer ") + token;
+    } else {
+      headers[provider.keyHeader] = token;
+    }
+    return headers;
   }
 
   // ----- Build a code-generation system prompt -----
@@ -186,13 +204,7 @@
   function buildRequest(provider, cfg, systemPrompt, userPrompt) {
     const url = provider.baseUrl.replace(/\/+$/, "") + (provider.chatPath || "/v1/chat/completions");
     const headers = { "Content-Type": "application/json" };
-    if (cfg.apiKey && !isLocalEndpoint(provider, cfg)) {
-      if (provider.keyHeader === "Authorization") {
-        headers["Authorization"] = (provider.keyPrefix || "Bearer ") + cfg.apiKey;
-      } else {
-        headers[provider.keyHeader] = cfg.apiKey;
-      }
-    }
+    applyAuthHeaders(headers, provider, cfg);
     const body = {
       model: cfg.model || provider.defaultModel || "gpt-4o-mini",
       messages: [
@@ -214,8 +226,10 @@
     const provider = resolveProvider(cfg);
     if (!provider.baseUrl) return { ok: false, models: [], error: "No base URL set." };
     const url = provider.baseUrl.replace(/\/+$/, "") + "/v1/models";
+    const headers = {};
+    applyAuthHeaders(headers, provider, cfg);
     try {
-      const res = await fetch(url, { method: "GET" });
+      const res = await fetch(url, { method: "GET", headers: headers });
       const text = await res.text();
       let data = null;
       try { data = JSON.parse(text); } catch (_) { data = null; }
@@ -326,7 +340,7 @@
         body: JSON.stringify(req.body)
       });
       const text = await res.text();
-      return {
+      const out = {
         ok: res.ok,
         status: res.status,
         text: text.slice(0, 200),
@@ -334,6 +348,12 @@
         url: req.url,
         provider: provider.id
       };
+      if (!res.ok && res.status === 401 && isLocalEndpoint(provider, cfg)) {
+        out.hint = cfg.localToken
+          ? "The local server rejected this token. In LM Studio open Developer → Local Server and copy the current API token."
+          : "This local server requires a Bearer token. Paste the LM Studio API token in the field above — it is sent only to localhost, never as your cloud key.";
+      }
+      return out;
     } catch (e) {
       return { ok: false, error: String(e && e.message || e), url: req.url, provider: provider.id };
     }
@@ -348,7 +368,7 @@
       providerId: cfg.providerId || "",
       model: cfg.model || "",
       baseUrl: cfg.baseUrl || provider.baseUrl || "",
-      hasKey: !!cfg.apiKey,
+      hasKey: isLocalEndpoint(provider, cfg) ? !!cfg.localToken : !!cfg.apiKey,
       enabled: !!cfg.enabled,
       local: isLocalEndpoint(provider, cfg)
     };
@@ -514,6 +534,8 @@
     resolveProvider,
     isLocalEndpoint,
     needsApiKey,
+    authToken,
+    applyAuthHeaders,
     complete,
     llmPlan,
     testConnection,

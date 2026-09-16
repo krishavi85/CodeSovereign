@@ -205,6 +205,60 @@ module.exports = async function (t) {
   t.equal('router switches to lmstudio', S.Router.get().gateway, 'lmstudio');
   t.equal('lmstudio apply keeps registered model', win.Engine.LLM.getConfig().providerId, 'lmstudio');
 
+  win.Engine.LLM.setConfig({
+    providerId: 'lmstudio',
+    apiKey: 'sk-secret',
+    localToken: 'lms-token',
+    enabled: true,
+    model: 'tinylama-1.1B-Q5_K_M',
+    baseUrl: 'http://127.0.0.1:1234'
+  });
+  const pLocal = win.Engine.LLM.providerById('lmstudio');
+  const cfgLocal = win.Engine.LLM.getConfig();
+  t.equal('authToken for LM Studio is localToken', win.Engine.LLM.authToken(pLocal, cfgLocal), 'lms-token');
+  t.ok('authToken does not use leftover cloud key', String(win.Engine.LLM.authToken(pLocal, cfgLocal)).indexOf('sk-secret') < 0);
+  t.equal(
+    'LM Studio Authorization is Bearer localToken',
+    win.Engine.LLM.applyAuthHeaders({}, pLocal, cfgLocal).Authorization,
+    'Bearer lms-token'
+  );
+  t.ok(
+    'LM Studio without localToken sends no Authorization',
+    !win.Engine.LLM.applyAuthHeaders({}, pLocal, Object.assign({}, cfgLocal, { localToken: '' })).Authorization
+  );
+  t.equal(
+    'cloud still uses apiKey not localToken',
+    win.Engine.LLM.applyAuthHeaders({}, win.Engine.LLM.providerById('openai'), { apiKey: 'sk-secret', localToken: 'lms-token' }).Authorization,
+    'Bearer sk-secret'
+  );
+
+  let lastFetch = null;
+  win.fetch = async function (url, opts) {
+    lastFetch = { url: String(url), headers: (opts && opts.headers) || {}, method: (opts && opts.method) || 'GET' };
+    const authed = lastFetch.headers.Authorization === 'Bearer lms-token';
+    return {
+      ok: authed,
+      status: authed ? 200 : 401,
+      text: async () => authed ? '{"ok":true}' : '{"error":"An LM Studio API token is required"}'
+    };
+  };
+  const pingOk = await win.Engine.LLM.testConnection();
+  t.ok('testConnection with localToken succeeds', pingOk.ok === true && pingOk.status === 200);
+  t.equal('chat completions send Bearer localToken', lastFetch.headers.Authorization, 'Bearer lms-token');
+  t.ok('chat completions URL is LM Studio', /127\.0\.0\.1:1234/.test(lastFetch.url));
+
+  const listed = await win.Engine.LLM.listModels();
+  t.ok('listModels sends the same Bearer token', lastFetch.method === 'GET' && lastFetch.headers.Authorization === 'Bearer lms-token');
+  t.ok('listModels hits /v1/models', /\/v1\/models$/.test(lastFetch.url));
+  t.ok('listModels reports ok when token matches', listed.ok === true);
+
+  win.Engine.LLM.setConfig({ localToken: '' });
+  const ping401 = await win.Engine.LLM.testConnection();
+  t.ok('testConnection without localToken is 401', ping401.ok === false && ping401.status === 401);
+  t.ok('401 without token sends no Authorization', !lastFetch.headers.Authorization);
+  t.ok('401 without token does not leak cloud key', !lastFetch.headers.Authorization || String(lastFetch.headers.Authorization).indexOf('sk-secret') < 0);
+  t.ok('401 hint tells the user to paste the LM Studio token', /Bearer token/.test(String(ping401.hint || '')));
+
   S.Execution.set('aider');
   t.equal('execution backend is aider', S.Execution.current(), 'aider');
   t.ok('cline agents listed', S.Execution.agents.indexOf('RepairAgent') >= 0);

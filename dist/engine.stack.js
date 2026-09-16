@@ -200,7 +200,7 @@
           persist();
         }
         // Omit apiKey so Electron keychain is not wiped and cs.stack.v1 never
-        // receives the live cloud secret. Local fetches skip Authorization.
+        // receives the live cloud secret. Local Authorization uses localToken only.
         const ggufs = (LLM.Gguf && LLM.Gguf.list && LLM.Gguf.list()) || [];
         const keepModel = isLocalProv && cur.model ? cur.model : ((ggufs[0] && String(ggufs[0].name).replace(/\.gguf$/i, '')) || '');
         const defaults = {
