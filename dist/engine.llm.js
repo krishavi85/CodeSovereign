@@ -64,6 +64,32 @@
       keyHeader: "Authorization",
       keyPrefix: "Bearer ",
       notes: "Use for any OpenAI-compatible endpoint (Together, Groq, OpenRouter, LM Studio, Ollama, vLLM...)."
+    },
+    {
+      id: "localai",
+      label: "LocalAI (Sovereign Model Gateway)",
+      baseUrl: "http://127.0.0.1:8080",
+      chatPath: "/v1/chat/completions",
+      defaultModel: "qwen2.5-coder",
+      modelOptions: ["qwen2.5-coder", "llama3.1", "mistral", "phi-3"],
+      supportsJson: true,
+      local: true,
+      keyHeader: "Authorization",
+      keyPrefix: "Bearer ",
+      notes: "OpenAI-compatible local gateway. Default http://127.0.0.1:8080 — no API key required. https://github.com/mudler/LocalAI"
+    },
+    {
+      id: "llamacpp",
+      label: "llama.cpp (local GGUF)",
+      baseUrl: "http://127.0.0.1:8081",
+      chatPath: "/v1/chat/completions",
+      defaultModel: "qwen2.5-coder-7b-instruct",
+      modelOptions: ["qwen2.5-coder-7b-instruct", "codellama-7b-instruct", "deepseek-coder"],
+      supportsJson: true,
+      local: true,
+      keyHeader: "Authorization",
+      keyPrefix: "Bearer ",
+      notes: "llama-server OpenAI-compatible endpoint. Default http://127.0.0.1:8081 — no API key required. https://github.com/ggerganov/llama.cpp"
     }
   ];
 
@@ -96,11 +122,21 @@
   function resolveProvider(cfg) {
     let p = providerById(cfg.providerId);
     if (!p) p = PROVIDERS[0];
-    // custom base URL override
-    if (p.id === "openai_compat" && cfg.baseUrl) {
+    // custom base URL override for openai_compat and local gateways
+    if (cfg.baseUrl && (p.id === "openai_compat" || p.local)) {
       p = Object.assign({}, p, { baseUrl: cfg.baseUrl.replace(/\/+$/, "") });
     }
     return p;
+  }
+
+  function isLocalEndpoint(provider, cfg) {
+    if (provider && provider.local) return true;
+    const url = String((cfg && cfg.baseUrl) || (provider && provider.baseUrl) || "").toLowerCase();
+    return /127\.0\.0\.1|localhost/.test(url);
+  }
+
+  function needsApiKey(provider, cfg) {
+    return !isLocalEndpoint(provider, cfg);
   }
 
   // ----- Build a code-generation system prompt -----
@@ -162,10 +198,13 @@
 
   async function complete(prompt, ctx) {
     const cfg = loadConfig();
-    if (!cfg.enabled || !cfg.apiKey) {
+    const provider = resolveProvider(cfg);
+    if (!cfg.enabled) {
       throw new Error("LLM not configured. Set provider + key in Settings.");
     }
-    const provider = resolveProvider(cfg);
+    if (needsApiKey(provider, cfg) && !cfg.apiKey) {
+      throw new Error("LLM not configured. Set provider + key in Settings.");
+    }
     if (!provider.baseUrl) {
       throw new Error("Provider has no baseUrl. Set a custom base URL in Settings.");
     }
@@ -236,8 +275,8 @@
   // ----- Connection test -----
   async function testConnection() {
     const cfg = loadConfig();
-    if (!cfg.apiKey) return { ok: false, error: "No API key set." };
     const provider = resolveProvider(cfg);
+    if (needsApiKey(provider, cfg) && !cfg.apiKey) return { ok: false, error: "No API key set." };
     if (!provider.baseUrl) return { ok: false, error: "No base URL set." };
     const req = buildRequest(
       provider,
@@ -267,13 +306,16 @@
 
   function status() {
     const cfg = loadConfig();
+    const provider = resolveProvider(cfg);
+    const ready = !!cfg.enabled && !!provider.baseUrl && (!needsApiKey(provider, cfg) || !!cfg.apiKey);
     return {
-      configured: !!(cfg.enabled && cfg.apiKey),
+      configured: ready,
       providerId: cfg.providerId || "",
       model: cfg.model || "",
-      baseUrl: cfg.baseUrl || "",
+      baseUrl: cfg.baseUrl || provider.baseUrl || "",
       hasKey: !!cfg.apiKey,
-      enabled: !!cfg.enabled
+      enabled: !!cfg.enabled,
+      local: isLocalEndpoint(provider, cfg)
     };
   }
 
@@ -288,7 +330,8 @@
 
     Agent.run = function (prompt, onStep) {
       const cfg = loadConfig();
-      const useLLM = !!(cfg.enabled && cfg.apiKey);
+      const provider = resolveProvider(cfg);
+      const useLLM = !!cfg.enabled && !!provider.baseUrl && (!needsApiKey(provider, cfg) || !!cfg.apiKey);
       if (!useLLM) {
         return originalRun(prompt, onStep);
       }
