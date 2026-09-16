@@ -185,6 +185,8 @@ module.exports = async function (t) {
   t.ok('brain classifies a new app as generate', LLM.classifyIntent('create a notepad app').mode === 'generate');
   t.ok('brain selects repo+deps+runtime for a new app', LLM.classifyIntent('create a notepad app').engines.join(',') === 'repo,deps,runtime');
   t.ok('npm install is a deps route', LLM.classifyIntent('npm install lodash for the notes app').mode === 'deps');
+  t.ok('install button is not a deps route', LLM.classifyIntent('add an install button to the toolbar').mode === 'generate');
+  t.ok('twitter clone is not an external-repo route', LLM.classifyIntent('build a twitter clone').mode === 'generate');
   t.ok('github URL selects the repository engine', LLM.classifyIntent('use https://github.com/foo/bar as the starter').mode === 'repo');
   t.ok('github URL is captured for RAG', LLM.classifyIntent('use https://github.com/foo/bar as the starter').remotes[0].indexOf('github.com/foo/bar') >= 0);
   t.ok('start over only runs runtime, not a github scan', LLM.classifyIntent('start over from scratch').engines.join(',') === 'runtime');
@@ -208,6 +210,10 @@ module.exports = async function (t) {
   t.ok('install strategy names npm install lodash', LLM.scanDeps().install.some(function (p) { return /npm install lodash/.test(p.install); }));
   const rag = LLM.formatRag(LLM.classifyIntent('npm install lodash'), LLM.scanRepo(), LLM.scanDeps(), null);
   t.ok('RAG tells the model not to fake node_modules', /Do not fake node_modules/.test(rag));
+  const genRag = LLM.formatRag(LLM.classifyIntent('create a notepad app'), LLM.scanRepo(), LLM.scanDeps(), null);
+  t.ok('generate RAG tells the model this is a new app', /NEW APP/.test(genRag));
+  t.ok('generate RAG does not ask the model to patch leftovers', !/Decide, then patch/.test(genRag));
+  t.ok('generate RAG does not list leftover workspace paths as the product', !/Repository scan:/.test(genRag));
 
   const prose = 'Sure, here is the file:\n```html\n<html lang="en"><body>Hi</body></html>\n```\nHope this helps.';
   t.equal('stripFence drops surrounding model prose', LLM.stripFence(prose, '/index.html').trim(), '<html lang="en"><body>Hi</body></html>');
@@ -369,6 +375,9 @@ module.exports = async function (t) {
   const preview = win.Engine.Preview.build();
   t.ok('Live Preview injects a nested CSP', preview && /Content-Security-Policy/.test(preview));
   t.ok('preview CSP sets connect-src none so srcdoc cannot call local LLM ports', /connect-src 'none'/.test(preview));
+  t.ok('preview HTML severs window.opener', /window\.opener=null/.test(preview));
+  t.ok('Preview.openTab is exported', typeof win.Engine.Preview.openTab === 'function');
+  t.ok('IDE preview tab uses a detached blob open', appSrc.includes('Preview.openTab') && !appSrc.includes("w.document.write(h)"));
   t.ok('preview HTML does not re-allow loopback model servers', !/127\.0\.0\.1:1234/.test(preview) && !/localhost:8080/.test(preview));
   const snap = win.Engine.Preview.capture();
   t.ok('agent preview snapshot captures the built app title', snap && snap.inspect && /Nova Notes/i.test(snap.inspect.title || ''));

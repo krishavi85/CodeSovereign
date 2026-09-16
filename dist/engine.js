@@ -2198,10 +2198,11 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
       if (!FS.exists(htmlPath)) return null;
       let html = FS.read(htmlPath) || '';
       const previewCsp = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'\">";
+      const detachOpener = "<script>try{if(window.opener)window.opener=null;}catch(e){}</script>";
       if (/<head[\s>]/i.test(html)) {
-        html = html.replace(/<head([^>]*)>/i, '<head$1>' + previewCsp);
+        html = html.replace(/<head([^>]*)>/i, '<head$1>' + previewCsp + detachOpener);
       } else {
-        html = previewCsp + html;
+        html = previewCsp + detachOpener + html;
       }
       // inline <link rel="stylesheet" href="..."> for local css
       html = html.replace(/<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>/g, (m, href) => {
@@ -2296,6 +2297,19 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
       };
       this._lastCapture = cap;
       return cap;
+    },
+    openTab(html){
+      html = html == null ? this.build() : String(html);
+      if (!html) return { ok: false, reason: 'no-html' };
+      try {
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank', 'noopener,noreferrer');
+        setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 30000);
+        return { ok: true, detached: true };
+      } catch (e) {
+        return { ok: false, error: String(e && e.message || e) };
+      }
     }
   };
 

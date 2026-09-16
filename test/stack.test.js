@@ -137,6 +137,10 @@ module.exports = async function (t) {
 
   const sb = S.Backends.generate('supabase');
   t.ok('supabase generator writes migration', sb.ok && win.Engine.FS.exists('/supabase/migrations/0001_init.sql'));
+  const sbSql = win.Engine.FS.read('/supabase/migrations/0001_init.sql') || '';
+  t.ok('supabase RLS is enabled', /enable row level security/.test(sbSql));
+  t.ok('supabase profiles are not world-readable', !/using \(true\)/i.test(sbSql));
+  t.ok('supabase profiles policy is own-row', /auth\.uid\(\) = id/.test(sbSql));
 
   const plan = S.Verify.testcontainersPlan();
   t.ok('testcontainers plan has services', plan.services.length >= 1);

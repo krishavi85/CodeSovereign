@@ -723,12 +723,12 @@
     if (looksLikeRestart(p)) {
       return { mode: "generate", engines: ["runtime"], reason: "start-over", remotes: remotes };
     }
-    if (/\b(install|npm i\b|yarn add|pip install|missing (?:module|dependency|package)|cannot find module|package\.json)\b/i.test(p)) {
+    if (/\b(npm i(?:nstall)?\b|yarn add|pnpm (?:add|i)\b|pip install|missing (?:module|dependency|package)|cannot find module)\b/i.test(p)) {
       return { mode: "deps", engines: ["deps", "runtime"], reason: "dependency-request", remotes: remotes };
     }
-    if (remotes.length || /\b(clone|import (?:this )?repo|huggingface|hf\.co)\b/i.test(p)) {
+    if (remotes.length || /\b(git clone|clone (?:this |the )?(?:repo|repository)|import (?:this )?repo)\b/i.test(p) || /huggingface\.co|\bhf\.co\b/i.test(p)) {
       const engines = ["repo", "runtime"];
-      if (/\binstall\b/i.test(p)) engines.splice(1, 0, "deps");
+      if (/\b(npm i(?:nstall)?\b|yarn add|pip install)\b/i.test(p)) engines.splice(1, 0, "deps");
       return { mode: "repo", engines: engines, reason: "external-source", remotes: remotes };
     }
     if (/\b(fix|repair|bug|broken|crash|workaround|placeholder|hard-?coded secret|timeout after)\b/i.test(p)) {
@@ -876,16 +876,24 @@
   function formatRag(intent, repo, deps, observation) {
     intent = intent || classifyIntent("");
     const lines = [];
+    const fresh = intent.mode === "generate";
+    const hasObs = !!(observation && ((observation.issues && observation.issues.length) || observation.capture));
     lines.push("AI BRAIN ROUTE: mode=" + intent.mode + " engines=" + (intent.engines || []).join(",") + " (" + intent.reason + ").");
-    lines.push("Decide, then patch. Do not ignore observed errors.");
+    if (fresh && !hasObs) {
+      lines.push("NEW APP: replace leftover starter/template files. Do not patch the seeded project. Return a complete new product.");
+    } else if (fresh && hasObs) {
+      lines.push("Improve the app you just generated. Do not revert to the starter template. Do not ignore observed errors.");
+    } else {
+      lines.push("Decide, then patch the EXISTING app. Do not ignore observed errors. Do not start a different product.");
+    }
     if (intent.remotes && intent.remotes.length) {
       lines.push("Referenced GitHub/HF URLs (work from the workspace; do not invent a clone):\n- " + intent.remotes.join("\n- "));
     }
-    if (repo && repo.fileCount) {
+    if (!fresh && repo && repo.fileCount) {
       lines.push("Repository scan: " + repo.fileCount + " files.\n- " + (repo.paths || []).slice(0, 24).join("\n- "));
       if (repo.memory && repo.memory.length) lines.push("Memory hits:\n- " + repo.memory.join("\n- "));
     }
-    if (deps && deps.missing && deps.missing.length) {
+    if ((!fresh || hasObs) && deps && deps.missing && deps.missing.length) {
       lines.push("Missing dependencies — install strategy:\n" + deps.install.map(function (p) {
         return "- " + p.name + " → " + p.install;
       }).join("\n"));
@@ -1267,8 +1275,8 @@
           extraUser = buildFollowUpPrompt(prompt, existing, existingIssues, conversationHistory(prompt));
         }
         extraUser = extraUser
-          ? (extraUser + "\n\n" + formatRag(intent, engines.repo, engines.deps, null))
-          : formatRag(intent, engines.repo, engines.deps, null);
+          ? (extraUser + "\n\n" + formatRag(intent, followUp ? engines.repo : null, followUp || intent.mode === "deps" ? engines.deps : null, null))
+          : formatRag(intent, followUp ? engines.repo : null, followUp || intent.mode === "deps" ? engines.deps : null, null);
         for (let round = 1; round <= MAX_ROUNDS; round++) {
           steps.push({
             kind: "plan",
@@ -1323,7 +1331,7 @@
             return steps;
           }
           extraUser = buildRefinePrompt(prompt, files, judged.issues, quality, { followUp: followUp, capture: observation.capture }) +
-            "\n\n" + formatRag(intent, engines.repo, engines.deps, observation);
+            "\n\n" + formatRag(intent, followUp ? scanRepo() : null, engines.deps, observation);
         }
         if (!wrote) {
           steps.push({

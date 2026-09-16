@@ -1575,7 +1575,7 @@ function bindIDE() {
   const rp = document.getElementById('refreshPreviewIde'); if (rp) rp.onclick = () => { renderAll(); };
   // Live Preview panel bindings (preview tab in IDE bottom panel)
   const rpp = document.getElementById('refreshPreviewPanel'); if (rpp) rpp.onclick = () => { renderAll(); };
-  const opp = document.getElementById('openPreviewPanel'); if (opp) opp.onclick = () => { const h = Engine.Preview.build(); if (h) { const w = window.open('', '_blank'); if (w) { w.document.open(); w.document.write(h); w.document.close(); } } };
+  const opp = document.getElementById('openPreviewPanel'); if (opp) opp.onclick = () => { if (Engine.Preview.openTab) Engine.Preview.openTab(); };
   // Inject srcdoc into the Live Preview panel iframe after render
   const panelEpoch = S._previewEpoch;
   setTimeout(() => {
