@@ -329,7 +329,8 @@ module.exports = async function (t) {
   t.ok('index.html loads the desktop layer', /desktop\/desktop-app\.js/.test(html));
   const deskSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'desktop', 'desktop-app.js'), 'utf8');
   const llmSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'engine.llm.js'), 'utf8');
-  t.ok('desktop migrates localToken into the keychain', deskSrc.includes("creds.get('llm.localToken')") && deskSrc.includes("creds.set('llm.localToken'"));
+  t.ok('desktop migrates localToken into the keychain', deskSrc.includes('llm.localToken') && deskSrc.includes("hydrate('llm.localToken'"));
+  t.ok('desktop ignores empty keychain writes until hydrate', deskSrc.includes('keyReady') && deskSrc.includes('tokenReady') && deskSrc.includes('must not delete the stored secret'));
   t.ok('LLM runtime reads go through the public getConfig wrap', llmSrc.includes('function liveConfig') && /const cfg = liveConfig\(\)/.test(llmSrc));
   t.ok('CSP allows LocalAI on 8080', /http:\/\/127\.0\.0\.1:8080/.test(html) && /http:\/\/localhost:8080/.test(html));
   t.ok('CSP allows llama.cpp on 8081', /http:\/\/127\.0\.0\.1:8081/.test(html) && /http:\/\/localhost:8081/.test(html));

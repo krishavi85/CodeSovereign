@@ -169,6 +169,8 @@
     var _get = Engine.LLM.getConfig, _set = Engine.LLM.setConfig;
     var keyCache = null;
     var tokenCache = null;
+    var keyReady = false;
+    var tokenReady = false;
 
     function stripStore(field) {
       try {
@@ -178,33 +180,38 @@
       } catch (_) {}
     }
 
-    D.creds.get('llm.apiKey').then(function (r) {
-      var stored = r && r.value;
-      var cfg = _get();
-      if (!stored && cfg && cfg.apiKey) {
-        D.creds.set('llm.apiKey', cfg.apiKey);
-        stored = cfg.apiKey;
-      }
-      keyCache = stored || '';
-      if (stored) {
-        _set({ apiKey: stored });
-        stripStore('apiKey');
-      }
-    });
+    function refreshLlmSettings() {
+      try {
+        var host = document.getElementById('llmSettingsHost');
+        if (!host) return;
+        host.__llmBound = false;
+        if (window.S && window.S.screen === 'settings' && typeof window.renderAll === 'function') {
+          window.renderAll();
+        }
+      } catch (_) {}
+    }
 
-    D.creds.get('llm.localToken').then(function (r) {
-      var stored = r && r.value;
-      var cfg = _get();
-      if (!stored && cfg && cfg.localToken) {
-        D.creds.set('llm.localToken', cfg.localToken);
-        stored = cfg.localToken;
-      }
-      tokenCache = stored || '';
-      if (stored) {
-        _set({ localToken: stored });
-        stripStore('localToken');
-      }
-    });
+    function hydrate(credKey, field, apply) {
+      D.creds.get(credKey).then(function (r) {
+        var stored = r && r.value;
+        var cfg = _get();
+        if (!stored && cfg && cfg[field]) {
+          D.creds.set(credKey, cfg[field]);
+          stored = cfg[field];
+        }
+        apply(stored || '');
+        if (stored) {
+          var patch = {};
+          patch[field] = stored;
+          _set(patch);
+          stripStore(field);
+        }
+        refreshLlmSettings();
+      });
+    }
+
+    hydrate('llm.apiKey', 'apiKey', function (v) { keyCache = v; keyReady = true; });
+    hydrate('llm.localToken', 'localToken', function (v) { tokenCache = v; tokenReady = true; });
 
     Engine.LLM.getConfig = function () {
       var c = _get() || {};
@@ -215,20 +222,23 @@
     Engine.LLM.setConfig = function (patch) {
       if (!patch) return _set(patch);
       var copy = {}; for (var k in patch) copy[k] = patch[k];
-      var strip = false;
       if (typeof patch.apiKey === 'string') {
-        keyCache = patch.apiKey;
-        D.creds.set('llm.apiKey', patch.apiKey);
+        // Ignore empty writes until the keychain has hydrated — Save/Test
+        // on a still-empty Settings field must not delete the stored secret.
+        if (keyReady || patch.apiKey) {
+          keyCache = patch.apiKey;
+          D.creds.set('llm.apiKey', patch.apiKey);
+        }
         delete copy.apiKey;
-        strip = true;
       }
       if (typeof patch.localToken === 'string') {
-        tokenCache = patch.localToken;
-        D.creds.set('llm.localToken', patch.localToken);
+        if (tokenReady || patch.localToken) {
+          tokenCache = patch.localToken;
+          D.creds.set('llm.localToken', patch.localToken);
+        }
         delete copy.localToken;
-        strip = true;
       }
-      return _set(strip ? copy : patch);
+      return _set(copy);
     };
   }
 
