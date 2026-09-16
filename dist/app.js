@@ -2295,10 +2295,10 @@ function renderRecovery(){
   if (!S.lastScan) {
     var _ri = Engine.Validator.runAll();
     recordLastScan(_ri);
-    try { if (window.Engine && Engine.Recovery && Engine.Recovery.analyze) Engine.Recovery.analyze(); } catch (_) {}
   } else if (!S.lastScan.suites || !S.lastScan.suites.length) {
     S.lastScan.suites = classifyValidatorSuites(S.lastScan.issues || []);
   }
+  try { if (window.Engine && Engine.Recovery && Engine.Recovery.analyze) Engine.Recovery.analyze(); } catch (_) {}
   const scan = S.lastScan;
 
   const errors = (scan.issues || []).filter(i => i.severity === 'error');
