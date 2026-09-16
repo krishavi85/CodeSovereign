@@ -2187,6 +2187,12 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
       const htmlPath = '/index.html';
       if (!FS.exists(htmlPath)) return null;
       let html = FS.read(htmlPath) || '';
+      const previewCsp = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'\">";
+      if (/<head[\s>]/i.test(html)) {
+        html = html.replace(/<head([^>]*)>/i, '<head$1>' + previewCsp);
+      } else {
+        html = previewCsp + html;
+      }
       // inline <link rel="stylesheet" href="..."> for local css
       html = html.replace(/<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>/g, (m, href) => {
         if (FS.exists(href)) return '<style>' + (FS.read(href) || '') + '</style>';

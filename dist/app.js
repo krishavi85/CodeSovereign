@@ -331,11 +331,13 @@ function loadAgentSession() {
 }
 function saveAgentSession() {
   try {
+    const proj = (window.Engine && Engine.Proj && Engine.Proj.current) ? Engine.Proj.current() : null;
     localStorage.setItem(AGENT_SESSION_KEY, JSON.stringify({
       agentRuns: (S.agentRuns || []).slice(-20),
       agentChat: (S.agentChat || []).slice(-40),
       agentBuilt: !!S.agentBuilt,
-      lastPrompt: S.lastPrompt || ''
+      lastPrompt: S.lastPrompt || '',
+      projectId: proj && proj.id || ''
     }));
   } catch (_) {}
 }
@@ -348,6 +350,71 @@ function resetAgentSession() {
   S.agentPrompt = '';
   try { localStorage.removeItem(AGENT_SESSION_KEY); } catch (_) {}
 }
+function sessionMatchesWorkspace(sess) {
+  if (!sess) return false;
+  try {
+    const html = Engine.FS.read('/index.html');
+    if (!html) return false;
+    const proj = Engine.Proj.current && Engine.Proj.current();
+    if (sess.projectId && proj && sess.projectId !== proj.id) return false;
+    if (sess.agentBuilt && String(html).length < 40) return false;
+    return true;
+  } catch (_) { return false; }
+}
+function hydrateAgentSession() {
+  const sess = loadAgentSession();
+  if (!sess) return;
+  if (!sessionMatchesWorkspace(sess)) {
+    resetAgentSession();
+    return;
+  }
+  if (Array.isArray(sess.agentRuns) && sess.agentRuns.length) S.agentRuns = sess.agentRuns;
+  if (Array.isArray(sess.agentChat) && sess.agentChat.length) S.agentChat = sess.agentChat;
+  if (sess.agentBuilt) S.agentBuilt = true;
+  if (sess.lastPrompt && !S.lastPrompt) S.lastPrompt = sess.lastPrompt;
+}
+function promptIsRestart(p) {
+  try {
+    if (window.Engine && Engine.LLM && typeof Engine.LLM.looksLikeRestart === 'function') {
+      return !!Engine.LLM.looksLikeRestart(p);
+    }
+  } catch (_) {}
+  return /\b(start over|from scratch|brand[- ]new(?: app)?|replace (?:the |this )?(?:entire )?app|rebuild (?:everything|from scratch)|throw (?:it|this) away|different (?:app|product))\b/i.test(String(p || ''));
+}
+function flushIdeBuffer() {
+  if (!S.ideFile || !S.ideDirty) return false;
+  try { Engine.FS.write(S.ideFile, S.ideBuffer); } catch (_) { return false; }
+  S.ideDirty = false;
+  try { markArtifactWritten(S.ideFile); } catch (_) {}
+  return true;
+}
+function sendIdeFollowUp() {
+  const p = (S.ideFollowUp || '').trim();
+  if (!p) { toast('Type a follow-up first', '#f59e0b'); return; }
+  flushIdeBuffer();
+  S.agentPrompt = p;
+  S.ideFollowUp = '';
+  runAgent();
+}
+function clearWorkspace() {
+  try { Engine.FS.clearAll(); } catch (_) {}
+  try { Engine.Recovery && Engine.Recovery.resetState && Engine.Recovery.resetState(); } catch (_) {}
+  S.lastScan = null;
+  resetAgentSession();
+  toast('Workspace cleared');
+  renderAll();
+}
+function resetAllData() {
+  if (!confirm('Reset everything?')) return;
+  resetAgentSession();
+  try { Engine.FS.clearAll(); } catch (_) {}
+  try { Engine.Recovery && Engine.Recovery.resetState && Engine.Recovery.resetState(); } catch (_) {}
+  S.lastScan = null;
+  try { Engine.Proj.list().forEach(p => Engine.Proj.remove(p.id)); } catch (_) {}
+  location.reload();
+}
+window.clearWorkspace = clearWorkspace;
+window.resetAllData = resetAllData;
 
 function genApp() {
   const p = S.prompt.trim();
@@ -387,7 +454,8 @@ function runAgent() {
   S.agentRuns = [...S.agentRuns, p];
   S.agentPrompt = '';
   S.agentStopped = false;
-  toast(S.agentBuilt ? 'Follow-up started — editing the current app' : 'Run started — Planner is analyzing the request', '#a78bfa');
+  const restart = promptIsRestart(p);
+  toast(!restart && S.agentBuilt ? 'Follow-up started — editing the current app' : 'Run started — Planner is analyzing the request', '#a78bfa');
   // Also include any active spec from the Universal composer
   const ctx = (S.univ && S.univ.state) ? {
     source: 'universal-composer',
@@ -406,7 +474,8 @@ function runAgentWith(prompt, specCtx) {
   // clear any previous timers
   _agentTimers.forEach(t => clearTimeout(t));
   _agentTimers = [];
-  const followUp = !!(S.agentBuilt || (S.agentRuns || []).some(p => p && p !== prompt));
+  const restart = promptIsRestart(prompt);
+  const followUp = !restart && !!(S.agentBuilt || (S.agentRuns || []).some(p => p && p !== prompt));
   S.lastPrompt = prompt;
   S.agentChat = [...(S.agentChat || []), { role: 'user', text: prompt, at: Date.now() }];
   S.agentRunning = true;
@@ -1527,20 +1596,12 @@ function bindIDE() {
         e.preventDefault();
         const p = (S.ideFollowUp || '').trim();
         if (!p) { toast('Type a follow-up first', '#f59e0b'); return; }
-        S.agentPrompt = p;
-        S.ideFollowUp = '';
-        runAgent();
+        sendIdeFollowUp();
       }
     };
   }
   const ideSend = document.getElementById('ideFollowUpBtn');
-  if (ideSend) ideSend.onclick = () => {
-    const p = (S.ideFollowUp || '').trim();
-    if (!p) { toast('Type a follow-up first', '#f59e0b'); return; }
-    S.agentPrompt = p;
-    S.ideFollowUp = '';
-    runAgent();
-  };
+  if (ideSend) ideSend.onclick = sendIdeFollowUp;
   const ideAgent = document.getElementById('ideOpenAgentBtn');
   if (ideAgent) ideAgent.onclick = () => { S.screen = 'agent'; renderAll(); };
 }
@@ -3142,8 +3203,8 @@ function renderSettings(){
           </div>
         </div>
         <div style="margin-top:18px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn ghost" onclick="Engine.FS.clearAll();try{Engine.Recovery.resetState()}catch(e){};S.lastScan=null;toast('Workspace cleared');renderAll()">Clear workspace</button>
-          <button class="btn ghost" onclick="if(confirm('Reset everything?')){Engine.FS.clearAll();try{Engine.Recovery.resetState()}catch(e){};S.lastScan=null;Engine.Proj.list().forEach(p=>Engine.Proj.delete(p.id));location.reload()}">Reset all data</button>
+          <button class="btn ghost" onclick="clearWorkspace()">Clear workspace</button>
+          <button class="btn ghost" onclick="resetAllData()">Reset all data</button>
         </div>
       </div>
 
@@ -3705,13 +3766,8 @@ document.addEventListener('DOMContentLoaded', () => {
   S.ideBuffer = S.ideBuffer || '';
   S.ideDirty = false;
   try {
-    const sess = loadAgentSession();
-    if (sess) {
-      if (Array.isArray(sess.agentRuns) && sess.agentRuns.length) S.agentRuns = sess.agentRuns;
-      if (Array.isArray(sess.agentChat) && sess.agentChat.length) S.agentChat = sess.agentChat;
-      if (sess.agentBuilt) S.agentBuilt = true;
-      if (sess.lastPrompt && !S.lastPrompt) S.lastPrompt = sess.lastPrompt;
-    }
+    if (Engine.FS.count() === 0) resetAgentSession();
+    hydrateAgentSession();
   } catch (_) {}
 
   // Seed an initial project if workspace is empty

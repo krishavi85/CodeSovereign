@@ -142,6 +142,10 @@ module.exports = async function (t) {
   t.ok('Agent session persists across screens', appSrc.includes('cs.agent.session.v1'));
   t.ok('Recovery fills the Cross-Tab card after render (inline scripts in innerHTML never run)', /crossTabHost[\s\S]{0,400}renderCrossTabCard/.test(appSrc) || /getElementById\('crossTabHost'\)/.test(appSrc) && appSrc.includes('bindRecovery'));
   t.ok('bindRecovery paints Cross-Tab Communication', /function bindRecovery[\s\S]*renderCrossTabCard/.test(appSrc));
+  t.ok('runAgentWith treats start-over as a new run, not a follow-up', appSrc.includes('promptIsRestart') && appSrc.includes('followUp = !restart'));
+  t.ok('IDE follow-up writes unsaved editor buffer before Agent.run', appSrc.includes('function flushIdeBuffer') && appSrc.includes('function sendIdeFollowUp'));
+  t.ok('Clear workspace resets the agent session', /function clearWorkspace[\s\S]{0,400}resetAgentSession/.test(appSrc));
+  t.ok('session hydrate requires the current workspace', appSrc.includes('sessionMatchesWorkspace'));
 
   const { win, store } = load();
   const LLM = win.Engine.LLM;
@@ -328,4 +332,9 @@ module.exports = async function (t) {
 
   win.S = { agentRuns: [], agentBuilt: false, agentChat: [] };
   t.ok('first prompt with no history is not a follow-up', LLM.isFollowUp('create a notepad app') === false);
+
+  const preview = win.Engine.Preview.build();
+  t.ok('Live Preview injects a nested CSP', preview && /Content-Security-Policy/.test(preview));
+  t.ok('preview CSP sets connect-src none so srcdoc cannot call local LLM ports', /connect-src 'none'/.test(preview));
+  t.ok('preview HTML does not re-allow loopback model servers', !/127\.0\.0\.1:1234/.test(preview) && !/localhost:8080/.test(preview));
 };
