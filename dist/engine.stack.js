@@ -117,7 +117,22 @@
   });
   state.router = Object.assign({}, DEFAULT_STATE.router, state.router || {});
 
-  function persist() { save(NS, state); }
+  function scrubRouterSecrets(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    if (obj.router && obj.router.cloudSnapshot && Object.prototype.hasOwnProperty.call(obj.router.cloudSnapshot, 'apiKey')) {
+      delete obj.router.cloudSnapshot.apiKey;
+    }
+    return obj;
+  }
+  function persist() {
+    scrubRouterSecrets(state);
+    const copy = JSON.parse(JSON.stringify(state));
+    scrubRouterSecrets(copy);
+    save(NS, copy);
+  }
+  if (state.router && state.router.cloudSnapshot && Object.prototype.hasOwnProperty.call(state.router.cloudSnapshot, 'apiKey')) {
+    persist();
+  }
 
   function byId(id) { return CATALOG.find(function (e) { return e.id === id; }) || null; }
   function isEnabled(id) { return !!state.enabled[id]; }
@@ -177,25 +192,24 @@
           state.router.cloudSnapshot = {
             providerId: cur.providerId || '',
             model: cur.model || '',
-            apiKey: cur.apiKey || '',
             baseUrl: cur.baseUrl || '',
             enabled: !!cur.enabled
           };
           persist();
         }
+        // Omit apiKey so Electron keychain is not wiped and cs.stack.v1 never
+        // receives the live cloud secret. Local fetches skip Authorization.
         LLM.setConfig({
           providerId: r.gateway === 'localai' ? 'localai' : 'llamacpp',
           baseUrl: r.gateway === 'localai' ? r.localaiUrl : r.llamaUrl,
           model: r.gateway === 'localai' ? 'qwen2.5-coder' : 'qwen2.5-coder-7b-instruct',
-          enabled: true,
-          apiKey: ''
+          enabled: true
         });
       } else if (isLocalProv) {
-        const snap = state.router.cloudSnapshot || { providerId: 'minimax', model: '', apiKey: '', baseUrl: '', enabled: false };
+        const snap = state.router.cloudSnapshot || { providerId: 'minimax', model: '', baseUrl: '', enabled: false };
         LLM.setConfig({
           providerId: snap.providerId || 'minimax',
           model: snap.model || '',
-          apiKey: snap.apiKey || '',
           baseUrl: snap.baseUrl || '',
           enabled: !!snap.enabled
         });

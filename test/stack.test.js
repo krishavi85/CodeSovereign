@@ -4,9 +4,9 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 
-function load() {
+function load(seed) {
   const distDir = path.join(__dirname, '..', 'dist');
-  const store = {};
+  const store = Object.assign({}, seed || {});
   const win = {
     console,
     localStorage: {
@@ -72,7 +72,7 @@ const DOC_LINKS = [
 ];
 
 module.exports = async function (t) {
-  const { win } = load();
+  const { win, store } = load();
   const S = win.BuildingStack;
   t.ok('BuildingStack is exposed', !!S);
 
@@ -149,21 +149,41 @@ module.exports = async function (t) {
   const cfg = win.Engine.LLM.getConfig();
   t.equal('applyToLLM selected localai', cfg.providerId, 'localai');
   t.ok('localai needs no API key', win.Engine.LLM.providers.find((p) => p.id === 'localai').local === true);
-  t.equal('local gateway stores empty apiKey', win.Engine.LLM.getConfig().apiKey, '');
 
   win.Engine.LLM.setConfig({ providerId: 'openai', apiKey: 'sk-secret', enabled: true, model: 'gpt-4o-mini', baseUrl: '' });
+  let lastPatch = null;
+  const origSet = win.Engine.LLM.setConfig;
+  win.Engine.LLM.setConfig = function (patch) {
+    lastPatch = patch;
+    return origSet.call(this, patch);
+  };
   S.Router.setGateway('localai');
-  t.equal('switching to localai clears cloud apiKey', win.Engine.LLM.getConfig().apiKey, '');
+  t.ok('local switch does not pass apiKey', lastPatch && !Object.prototype.hasOwnProperty.call(lastPatch, 'apiKey'));
+  t.equal('switching to localai keeps the LLM key in its own store', win.Engine.LLM.getConfig().apiKey, 'sk-secret');
   t.equal('switching to localai sets provider', win.Engine.LLM.getConfig().providerId, 'localai');
+  t.ok('router snapshot has no apiKey', S.Router.get().cloudSnapshot && S.Router.get().cloudSnapshot.apiKey == null);
+  t.ok('cs.stack.v1 does not contain the cloud key', String(store['cs.stack.v1'] || '').indexOf('sk-secret') < 0);
+  t.ok('cs.stack.v1 snapshot omits apiKey field', !/"apiKey"/.test(String(store['cs.stack.v1'] || '')));
   S.Router.setGateway('cloud');
+  t.ok('cloud restore does not pass apiKey', lastPatch && !Object.prototype.hasOwnProperty.call(lastPatch, 'apiKey'));
   t.equal('cloud restore providerId', win.Engine.LLM.getConfig().providerId, 'openai');
   t.equal('cloud restore apiKey', win.Engine.LLM.getConfig().apiKey, 'sk-secret');
   S.Router.setGateway('llamacpp');
-  t.equal('llamacpp also clears apiKey', win.Engine.LLM.getConfig().apiKey, '');
+  t.ok('llamacpp switch does not pass apiKey', lastPatch && !Object.prototype.hasOwnProperty.call(lastPatch, 'apiKey'));
+  t.equal('llamacpp keeps the LLM key in its own store', win.Engine.LLM.getConfig().apiKey, 'sk-secret');
   S.reset();
   t.equal('reset gateway is cloud', S.Router.get().gateway, 'cloud');
   t.equal('reset restores cloud provider', win.Engine.LLM.getConfig().providerId, 'openai');
   t.equal('reset restores cloud apiKey', win.Engine.LLM.getConfig().apiKey, 'sk-secret');
+  win.Engine.LLM.setConfig = origSet;
+
+  const leaked = load({
+    'cs.stack.v1': JSON.stringify({
+      router: { gateway: 'localai', cloudSnapshot: { providerId: 'openai', apiKey: 'sk-leaked', model: 'gpt-4o' } }
+    })
+  });
+  t.ok('boot scrubs a leaked snapshot key from storage', String(leaked.store['cs.stack.v1'] || '').indexOf('sk-leaked') < 0);
+  t.ok('boot snapshot has no apiKey', !leaked.win.BuildingStack.Router.get().cloudSnapshot || leaked.win.BuildingStack.Router.get().cloudSnapshot.apiKey == null);
 
   S.Execution.set('aider');
   t.equal('execution backend is aider', S.Execution.current(), 'aider');
