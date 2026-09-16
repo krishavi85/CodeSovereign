@@ -456,7 +456,7 @@
       else if (signals.indexOf('python') >= 0) kind = 'python';
       else if (nodeToolchain) kind = 'node';
       else if (htmlCount > 0 && jsCount > 0) kind = 'vanilla-web';
-      else if (jsCount > 0) kind = 'node';
+      else if (jsCount > 0) kind = 'static';
       return { kind: kind, signals: signals, htmlCount: htmlCount, jsCount: jsCount, nodeToolchain: nodeToolchain };
     },
     buildCommand(){
@@ -500,7 +500,7 @@
         if (!r.ok) parseErrors.push({ file: p, error: r.error });
       });
       const parseOk = parseErrors.length === 0;
-      const ok = parseOk && (cmd.ok || pt.kind === 'vanilla-web' || pt.kind === 'static');
+      const ok = parseOk && (cmd.ok || pt.kind === 'vanilla-web' || pt.kind === 'static' || !pt.nodeToolchain);
       return { ok: ok, projectType: pt.kind, command: cmd.cmd, parseErrors: parseErrors, signals: pt.signals };
     },
     runtime(){
@@ -1037,6 +1037,28 @@
       this._saveRuns();
       this._saveDiffs();
       try { localStorage.removeItem(NS_RUN); localStorage.removeItem(NS_DIFFS); } catch (_) {}
+    },
+    installFsHooks(fs){
+      const FS = fs || Engine.FS;
+      if (!FS || FS.__recoveryResetWrapped) return FS;
+      const origClear = FS.clear && FS.clear.bind(FS);
+      const origClearAll = FS.clearAll && FS.clearAll.bind(FS);
+      if (origClear) {
+        FS.clear = function () {
+          const r = origClear();
+          try { Recovery.resetState(); } catch (_) {}
+          return r;
+        };
+      }
+      if (origClearAll) {
+        FS.clearAll = function () {
+          const r = origClearAll();
+          try { Recovery.resetState(); } catch (_) {}
+          return r;
+        };
+      }
+      FS.__recoveryResetWrapped = true;
+      return FS;
     },
     getRun(runId){ return this._runs.find(r => r.runId === runId) || null; },
 
@@ -2044,24 +2066,7 @@
   window.GoldenPaths      = GoldenPaths;
   window.Certificate      = Certificate;
   window.Benchmark        = Benchmark;
-  try {
-    const _clear = Engine.FS.clear && Engine.FS.clear.bind(Engine.FS);
-    const _clearAll = Engine.FS.clearAll && Engine.FS.clearAll.bind(Engine.FS);
-    if (_clear) {
-      Engine.FS.clear = function () {
-        const r = _clear();
-        try { Recovery.resetState(); } catch (_) {}
-        return r;
-      };
-    }
-    if (_clearAll) {
-      Engine.FS.clearAll = function () {
-        const r = _clearAll();
-        try { Recovery.resetState(); } catch (_) {}
-        return r;
-      };
-    }
-  } catch (_) {}
+  try { Recovery.installFsHooks(Engine.FS); } catch (_) {}
   try {
     if (window.Engine) {
       window.Engine.Recovery      = Recovery;

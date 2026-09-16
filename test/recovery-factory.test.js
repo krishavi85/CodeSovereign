@@ -152,4 +152,17 @@ module.exports = async function (t) {
   t.ok('clearAll resets recovery history', E.Recovery.history().length === 0);
   t.ok('stale lastScan is invalidated when file count changes', /lastScan\.fileCount !== Engine\.FS\.count\(\)/.test(appSrc));
   t.ok('fault benchmark compares against baseline count', /afterInject > baselineCount/.test(appSrc));
+
+  const saved = Object.assign({}, E.FS._data);
+  Object.keys(E.FS._data).forEach((p) => { if (E.FS.isFile(p)) E.FS.remove(p); });
+  E.FS.write('/lib/util.js', 'export const n = 1;\n');
+  const jsOnly = E.ProjectType.detect();
+  t.equal('JS-only workspace without toolchain is static, not node', jsOnly.kind, 'static');
+  const jsBuild = E.Verify.build();
+  t.ok('JS-only parse-clean tree passes L2', jsBuild.ok === true);
+  Object.keys(E.FS._data).forEach((p) => { if (E.FS.isFile(p)) E.FS.remove(p); });
+  Object.keys(saved).forEach((p) => { if (saved[p] && saved[p].type === 'file') E.FS.write(p, saved[p].content); });
+
+  t.ok('desktop-fs reinstalls recovery FS hooks', /installFsHooks/.test(fs.readFileSync(path.join(__dirname, '..', 'dist', 'desktop', 'desktop-fs.js'), 'utf8')));
+  t.ok('Recovery.installFsHooks is exported', typeof E.Recovery.installFsHooks === 'function');
 };

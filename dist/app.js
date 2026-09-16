@@ -3032,8 +3032,8 @@ function renderSettings(){
           </div>
         </div>
         <div style="margin-top:18px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn ghost" onclick="Engine.FS.clearAll();S.lastScan=null;toast('Workspace cleared');renderAll()">Clear workspace</button>
-          <button class="btn ghost" onclick="if(confirm('Reset everything?')){Engine.FS.clearAll();S.lastScan=null;Engine.Proj.list().forEach(p=>Engine.Proj.delete(p.id));location.reload()}">Reset all data</button>
+          <button class="btn ghost" onclick="Engine.FS.clearAll();try{Engine.Recovery.resetState()}catch(e){};S.lastScan=null;toast('Workspace cleared');renderAll()">Clear workspace</button>
+          <button class="btn ghost" onclick="if(confirm('Reset everything?')){Engine.FS.clearAll();try{Engine.Recovery.resetState()}catch(e){};S.lastScan=null;Engine.Proj.list().forEach(p=>Engine.Proj.delete(p.id));location.reload()}">Reset all data</button>
         </div>
       </div>
 
