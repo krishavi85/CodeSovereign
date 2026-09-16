@@ -206,7 +206,15 @@
       }
       if (modelCustomEl) modelCustomEl.style.display = "";
       if (baseUrlRow) baseUrlRow.style.display = (local || (providerEl && providerEl.value === "openai_compat")) ? "block" : "none";
-      if (baseUrlEl && local && !baseUrlEl.value && p && p.baseUrl) baseUrlEl.value = p.baseUrl;
+      if (baseUrlEl && p && p.baseUrl) {
+        const known = {
+          "http://127.0.0.1:8080": 1, "http://localhost:8080": 1,
+          "http://127.0.0.1:8081": 1, "http://localhost:8081": 1,
+          "http://127.0.0.1:1234": 1, "http://localhost:1234": 1
+        };
+        const cur = String(baseUrlEl.value || "").replace(/\/+$/, "");
+        if (local && (!cur || known[cur])) baseUrlEl.value = p.baseUrl;
+      }
       if (keyRow) keyRow.style.display = local ? "none" : "block";
       if (keyHint && p) keyHint.textContent = p.notes || "";
     }

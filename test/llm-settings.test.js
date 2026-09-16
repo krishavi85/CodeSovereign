@@ -74,6 +74,7 @@ module.exports = async function (t) {
   t.ok('API key input is present', /id="llmKey"/.test(html));
   t.ok('GGUF library is on the Settings card', /id="llmGgufBox"/.test(html) && /id="llmGgufFile"/.test(html));
   t.ok('Refresh models button is present', /id="llmRefreshModelsBtn"/.test(html));
+  t.ok('switching local providers remaps stock loopback URLs', extrasSrc.includes('http://127.0.0.1:1234') && extrasSrc.includes('known'));
   t.ok('card sits before Integrations', html.indexOf('AI Provider') < html.indexOf('Integrations'));
   t.ok(
     'card sits after earlier cards, not at the top of the stack',
