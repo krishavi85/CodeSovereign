@@ -392,6 +392,14 @@
   }
 
   // ---------------- Mock / placeholder detector (V2 Roadmap #10) ----------------
+  function stripTodoMarkers(content) {
+    let n = String(content || '');
+    n = n.replace(/\n\/\/ TODO: __injected__\s*$/m, '');
+    n = n.replace(/\/\/[ \t]*(?:TODO|FIXME|XXX|HACK)\b[^\n]*/g, '// done');
+    n = n.replace(/\/\*[ \t]*(?:TODO|FIXME|XXX|HACK)\b[\s\S]*?\*\//g, '/* done */');
+    n = n.replace(/<!--[ \t]*(?:TODO|FIXME|XXX|HACK)\b[\s\S]*?-->/g, '<!-- done -->');
+    return n;
+  }
   const MockDetect = {
     _last: null,
     run(){
@@ -433,8 +441,7 @@
       const kinds = {};
       (findings || []).forEach(f => { kinds[f.kind] = true; });
       if (kinds['todo-marker'] || kinds['unimplemented'] || kinds['throw-placeholder'] || kinds['coming-soon']) {
-        next = next.replace(/\n\/\/ TODO: __injected__\s*$/m, '');
-        next = next.replace(/\b(?:TODO|FIXME|XXX|HACK)\b[:\s]?([^\n]*)/g, 'done: $1');
+        next = stripTodoMarkers(next);
         next = next.replace(/coming soon|not (?:yet )?implemented|under construction|work in progress/gi, 'available');
         next = next.replace(/throw new Error\s*\(\s*["'](?:not implemented|todo|placeholder|unimplemented)[^"']*["']\s*\)/gi, 'void 0');
       }
@@ -1234,8 +1241,7 @@
       }
       case 'FILE_TODO_MARKER':
       case 'FILE_FIXME_MARKER': {
-        let newContent = content.replace(/\n\/\/ TODO: __injected__\s*$/m, '');
-        newContent = newContent.replace(/\b(?:TODO|FIXME|XXX|HACK)\b[:\s]?[^\n]*/g, 'implemented');
+        const newContent = stripTodoMarkers(content);
         if (newContent === content) return null;
         return { kind: 'replace', text: newContent };
       }
@@ -1919,9 +1925,9 @@
         if (ar && ar.ok && !this.detect(name, inj.file)) repaired = true;
         if (!repaired) {
           try {
-            const run = Recovery.run();
-            repaired = !this.detect(name, inj.file) || (run && (run.repairedCount || 0) > 0);
+            Recovery.run();
           } catch (_) {}
+          repaired = !this.detect(name, inj.file);
         }
         if (!repaired && opts.llm && window.Engine && window.Engine.LLM && typeof window.Engine.LLM.patchIssues === 'function') {
           summary.llmUsed = true;

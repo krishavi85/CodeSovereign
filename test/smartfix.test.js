@@ -107,6 +107,39 @@ module.exports = async function (t) {
   t.ok('workspace restored after benchmark', /lang="en"/.test(E.FS.read('/index.html') || ''));
   t.ok('lastBenchmark stored', !!(E.FaultInjector.lastBenchmark() && E.FaultInjector.lastBenchmark().injected));
 
+  E.FS.write('/scripts/todo-string.js', 'const msg = "TODO: wire API";\n// TODO: finish this\n');
+  const todoPlan = E.Recovery.plan();
+  const todoStep = (todoPlan.steps || []).find((s) => s.file === '/scripts/todo-string.js' && s.kind === 'patch');
+  if (todoStep) E.Recovery.repair({ steps: [todoStep], issues: [] });
+  else E.UnresolvedInspector.applyWorkaround({ faultClass: 'file.todo', issue: { file: '/scripts/todo-string.js' } });
+  const todoSrc = E.FS.read('/scripts/todo-string.js') || '';
+  t.ok('TODO inside a string is not rewritten', /"TODO: wire API"/.test(todoSrc));
+  t.ok('TODO comment is rewritten', !/\/\/ TODO: finish this/.test(todoSrc));
+
+  E.FS.write('/scripts/timeouts.js', 'const timeout = 5;\nconst wait = 5000;\nconst timeoutMs = 5000;\n');
+  E.UnresolvedInspector.applyWorkaround({ faultClass: 'rt.timeout', issue: { file: '/scripts/timeouts.js' } });
+  const toSrc = E.FS.read('/scripts/timeouts.js') || '';
+  t.ok('5-second timeout becomes 30 seconds', /const timeout = 30;/.test(toSrc));
+  t.ok('5000ms timeout becomes 30000ms', /timeoutMs = 30000/.test(toSrc));
+  t.ok('unrelated 5000 literal is not rewritten', /const wait = 5000;/.test(toSrc));
+
+  const runsBefore = (E.Recovery.history() || []).length;
+  const noop = E.UnresolvedInspector.applyWorkaround({ faultClass: 'db.connect', issue: { file: '/scripts/timeouts.js', message: 'DB connection refused' } });
+  t.ok('targeted no-op does not claim success', !noop.ok);
+  t.equal('targeted no-op does not run Recovery.repair on the whole workspace', (E.Recovery.history() || []).length, runsBefore);
+
+  const origAuto = E.FaultInjector.autoRepair.bind(E.FaultInjector);
+  const origRun = E.Recovery.run.bind(E.Recovery);
+  E.FaultInjector.autoRepair = function () { return { ok: false, error: 'forced' }; };
+  E.Recovery.run = function () { return { repairedCount: 9, status: 'PARTIAL' }; };
+  Object.keys(E.FS._data).forEach((p) => { if (E.FS.isFile(p)) E.FS.remove(p); });
+  E.FS.write('/index.html', '<!doctype html><html lang="en"><body></body></html>');
+  E.FS.write('/scripts/app.js', 'export const n = 1;\n');
+  const dishonest = E.FaultInjector.runBenchmark();
+  E.FaultInjector.autoRepair = origAuto;
+  E.Recovery.run = origRun;
+  t.ok('benchmark does not mark a still-present fault as repaired', dishonest.repaired === 0);
+
   const loop = await E.LLM.smartLoop({ kind: 'unresolved', llm: false });
   t.ok('smartLoop records inspect/plan/patch/screenshot/score', ['inspect', 'plan', 'patch', 'screenshot', 'score'].every((k) => (loop.steps || []).some((s) => s.kind === k)));
   t.ok('smartLoop skipped LLM when disabled', loop.llm && loop.llm.skipped);

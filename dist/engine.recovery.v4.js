@@ -736,7 +736,7 @@
             if (/(?:ECONNREFUSED|connection refused|createPool\s*\(|new\s+Pool\s*\()/i.test(c) && !/retry|backoff/i.test(c)) {
               this._push(out, { id: 'db_' + out.length, file: p, message: 'DB connection refused', severity: 'error', faultClass: 'db.connect', source: 'scan', package: 'pg' });
             }
-            if (/(?:Timeout after 5s|timeout(?:Ms)?\s*[:=]\s*5(?:000)?\b|AbortSignal\.timeout\(\s*5000\s*\))/i.test(c)) {
+            if (/(?:Timeout after 5s|timeout(?:Ms)?\s*[:=]\s*5000\b|timeout(?:Ms)?\s*[:=]\s*5\b|AbortSignal\.timeout\(\s*5000\s*\))/i.test(c)) {
               this._push(out, { id: 'rt_' + out.length, file: p, message: 'Timeout after 5s', severity: 'error', faultClass: 'rt.timeout', source: 'scan' });
             }
             if (/(?:api[_-]?key|secret|password|token)\s*[:=]\s*['"][^'"]{8,}['"]/i.test(c) || /AKIA[0-9A-Z]{16}/.test(c) || /sk-(?:live|test)-[A-Za-z0-9]{8,}/.test(c) || /Hard-coded secret/.test(c)) {
@@ -804,12 +804,12 @@
           n = n.replace(/sk-(?:live|test)-[A-Za-z0-9]{8,}/g, 'process.env.SECRET_KEY');
           if (!FS.exists('/.env.example')) FS.write('/.env.example', 'APP_SECRET=\nAWS_ACCESS_KEY_ID=\nSECRET_KEY=\n');
         } else if (id === 'rt.timeout') {
-          n = c.replace(/timeout(?:Ms)?(\s*[:=]\s*)5(?:000)?\b/gi, 'timeout$130000');
-          n = n.replace(/AbortSignal\.timeout\(\s*5000\s*\)/g, 'AbortSignal.timeout(30000)');
+          n = c.replace(/AbortSignal\.timeout\(\s*5000\s*\)/g, 'AbortSignal.timeout(30000)');
+          n = n.replace(/(timeout(?:Ms)?)(\s*[:=]\s*)5000\b/gi, '$1$230000');
           n = n.replace(/Timeout after 5s/g, 'Timeout after 30s');
-          if (n === c) n = c.replace(/\b5000\b/g, '30000');
+          n = n.replace(/(timeout(?:Ms)?)(\s*[:=]\s*)5\b/gi, '$1$230');
         } else if (id === 'db.connect') {
-          if (!/function\s+withDbRetry/.test(c)) {
+          if (/(?:ECONNREFUSED|connection refused|createPool\s*\(|new\s+Pool\s*\()/i.test(c) && !/function\s+withDbRetry/.test(c)) {
             n = c + '\nfunction withDbRetry(connect, attempts){ attempts = attempts || 3; var last; function tryOnce(n){ try { return connect(); } catch (e) { last = e; if (n <= 1) throw last; /* inspect migration log */ return tryOnce(n - 1); } } return tryOnce(attempts); }\n';
           }
         } else if (id === 'js.eval') {
@@ -817,7 +817,9 @@
         } else if (id === 'js.console') {
           n = c.replace(/^[ \t]*console\.log\s*\((?:[^;]|\([^;]*\))*\);?[ \t]*$/gm, '/* console.log removed */');
         } else if (id === 'file.todo') {
-          n = c.replace(/\b(?:TODO|FIXME|XXX|HACK)\b[:\s]?[^\n]*/g, 'implemented');
+          n = (window.Engine && window.Engine.MockDetect && window.Engine.MockDetect.patchFile)
+            ? window.Engine.MockDetect.patchFile(file, c, [{ kind: 'todo-marker' }])
+            : c.replace(/\n\/\/ TODO: __injected__\s*$/m, '').replace(/\/\/[ \t]*(?:TODO|FIXME|XXX|HACK)\b[^\n]*/g, '// done');
         } else if (id === 'js.syntax') {
           n = c.replace(/\nfunction\s+__broken\([\s\S]*$/, '');
         } else if (id.indexOf('mock.') === 0 || id === 'html.form') {
@@ -828,13 +830,6 @@
           FS.write(file, n);
           return { ok: true, file: file, faultClass: id };
         }
-      }
-      if (window.Engine && window.Engine.Recovery && window.Engine.Recovery.plan) {
-        try {
-          const plan = window.Engine.Recovery.plan();
-          const run = window.Engine.Recovery.repair(plan);
-          if (run && (run.repairedCount || 0) > 0) return { ok: true, file: file, faultClass: id, via: 'recovery' };
-        } catch (_) {}
       }
       return { ok: false, file: file, faultClass: id };
     },
