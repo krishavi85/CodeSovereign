@@ -76,6 +76,7 @@ module.exports = async function (t) {
   t.ok('Refresh models button is present', /id="llmRefreshModelsBtn"/.test(html));
   t.ok('collect prefers typed custom model id', /const custom = modelCustomEl && modelCustomEl.value.trim/.test(extrasSrc) && /model: custom \|\| selected/.test(extrasSrc));
   t.ok('URL remap runs only when the provider changes', /fromProviderChange/.test(extrasSrc) && extrasSrc.includes('http://127.0.0.1:1234'));
+  t.ok('provider change remaps leftover cloud URLs to the local default', extrasSrc.includes('leftover cloud URLs'));
   t.ok('local providers keep the token field visible', extrasSrc.includes('API token (optional)') && extrasSrc.includes('keyRow.style.display = "block"'));
   t.ok('collect saves localToken for local providers', extrasSrc.includes('data.localToken'));
   t.ok('provider switch does not copy cloud apiKey into local token field', extrasSrc.includes('Never copy the leftover cloud apiKey'));

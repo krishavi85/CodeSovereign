@@ -222,7 +222,9 @@
           "http://127.0.0.1:1234": 1, "http://localhost:1234": 1
         };
         const cur = String(baseUrlEl.value || "").replace(/\/+$/, "");
-        if (!cur || known[cur]) baseUrlEl.value = p.baseUrl;
+        const loopback = /127\.0\.0\.1|localhost/i.test(cur);
+        // Remap empty, stock local ports, and leftover cloud URLs — keep a custom loopback port.
+        if (!cur || known[cur] || !loopback) baseUrlEl.value = p.baseUrl;
       }
       if (keyRow) keyRow.style.display = "block";
       if (keyLabel) keyLabel.textContent = local ? "API token (optional)" : "API Key";
