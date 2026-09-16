@@ -315,36 +315,7 @@
     return html.slice(0, i) + recoveryCards() + html.slice(i);
   });
 
-  // Marketplace is async HTML from MarketplaceUI.renderMarketplace
-  let mpTries = 0;
-  function wrapMarketplace() {
-    const ui = window.MarketplaceUI;
-    if (!ui || typeof ui.render !== 'function') {
-      if (mpTries++ < 40) setTimeout(wrapMarketplace, 50);
-      return;
-    }
-    if (ui.render.__stackInjected) return;
-    const orig = ui.render;
-    ui.render = function () {
-      orig.apply(this, arguments);
-      let n = 0;
-      const t = setInterval(function () {
-        n++;
-        const main = document.getElementById('main');
-        if (main && main.querySelector && main.querySelector('.screen-inner') && /Template Marketplace/.test(main.textContent || '')) {
-          if (!document.getElementById('stackMarketplaceBanner')) {
-            const inner = main.querySelector('.screen-inner');
-            if (inner && inner.insertAdjacentHTML) inner.insertAdjacentHTML('afterbegin', marketplaceBannerHtml());
-          }
-          bindStack(main);
-          clearInterval(t);
-        }
-        if (n > 25) clearInterval(t);
-      }, 40);
-    };
-    ui.render.__stackInjected = true;
-  }
-  wrapMarketplace();
+  window.renderStackMarketplaceBanner = marketplaceBannerHtml;
 
   function bindStack(root) {
     root = root || document.getElementById('main') || document;

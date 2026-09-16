@@ -189,8 +189,9 @@ module.exports = async function (t) {
   t.ok('injects into Agent', /renderAgent/.test(extras));
   t.ok('injects into Factory', /renderFactory/.test(extras));
   t.ok('injects into Pipelines', /renderPipelines/.test(extras));
-  t.ok('marketplace injector does not rewrite #main.innerHTML', !/main\.innerHTML\s*=/.test(extras));
-  t.ok('marketplace injector uses insertAdjacentHTML', /insertAdjacentHTML/.test(extras));
+  t.ok('marketplace banner is composed into Marketplace HTML', /renderStackMarketplaceBanner/.test(fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.marketplace.js'), 'utf8')));
+  t.ok('marketplace bind calls bindBuildingStack', /bindBuildingStack/.test(fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.marketplace.js'), 'utf8')));
+  t.ok('stack UI does not wrap MarketplaceUI.render', !/MarketplaceUI/.test(extras) && !/insertAdjacentHTML/.test(extras));
 
   // UI injector: stack card lands on Settings without a new page.
   const uiStore = {};

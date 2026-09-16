@@ -57,6 +57,7 @@
 
     return `
 <div class="screen-inner" style="display:flex;flex-direction:column;gap:16px">
+  ${typeof window.renderStackMarketplaceBanner === 'function' ? window.renderStackMarketplaceBanner() : ''}
   <div class="card" style="padding:18px">
     <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
       <div style="width:42px;height:42px;border-radius:11px;background:linear-gradient(135deg,#22d3ee,#7c6ff5);display:flex;align-items:center;justify-content:center;color:#06121f">
@@ -171,6 +172,9 @@ function bindMarketplace(root) {
         finally { btn.disabled = false; btn.textContent = 'Install'; }
       });
     });
+    if (typeof window.bindBuildingStack === 'function') {
+      try { window.bindBuildingStack(root); } catch (_) {}
+    }
   }
 
   function showPreview(t) {
