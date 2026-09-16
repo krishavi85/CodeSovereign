@@ -246,6 +246,7 @@
     const arch = (specCtx && specCtx.architecture) || "";
     const mods = (specCtx && (specCtx.modules || (specCtx.classification && specCtx.classification.estimatedModules))) || 0;
     const cls = (specCtx && specCtx.classification && specCtx.classification.primaryType) || "web_application";
+    const followUp = !!(specCtx && specCtx.followUp);
     const ctxBlk = (specCtx && specCtx.classification)
       ? "\n\n[PROJECT CONTEXT FROM UNIVERSAL COMPOSER]\n" +
         "primaryType: " + cls + "\n" +
@@ -253,11 +254,14 @@
         "stack: " + JSON.stringify(stack) + "\n" +
         (arch ? "architecture: " + JSON.stringify(arch) + "\n" : "")
       : "";
+    const stance = followUp
+      ? "You are editing an EXISTING app in the workspace. Preserve product identity, name, architecture, and working features. Apply the user's latest request. Return complete updated files — do not switch to a different product."
+      : "Replace any leftover files from a previous project. Do not keep starter-template copy.";
     return [
       "You are CodeSovereign's coding agent — an expert product engineer, not a tutorial generator.",
       "You write production-quality, fully working source files. No placeholders, no TODOs, no pseudo-code, no 'Simple Notepad'.",
       "Ship a distinctive, polished UI: app shell, sidebar or top nav, dark theme, design tokens, real empty states, keyboard shortcuts, and local persistence.",
-      "Replace any leftover files from a previous project. Do not keep starter-template copy.",
+      stance,
       "Prefer a single JSON object (no prose, no markdown fences) with this shape:",
       '{ "summary": "<one-line summary of what you built>",',
       '  "files": [ { "path": "/index.html", "content": "<full file contents>" }, ... ] }',
@@ -576,7 +580,73 @@
     };
   }
 
-  function buildRefinePrompt(original, files, issues, quality) {
+  function looksLikeRestart(prompt) {
+    return /\b(start over|from scratch|brand[- ]new(?: app)?|replace (?:the |this )?(?:entire )?app|rebuild (?:everything|from scratch)|throw (?:it|this) away|different (?:app|product))\b/i.test(String(prompt || ""));
+  }
+
+  function conversationHistory(latest) {
+    const out = [];
+    try {
+      const S = window.S;
+      if (!S) return out;
+      const chat = Array.isArray(S.agentChat) ? S.agentChat : [];
+      if (chat.length) {
+        chat.forEach(function (t) {
+          if (!t || !t.text) return;
+          out.push({ role: t.role || "user", text: String(t.text).slice(0, 500) });
+        });
+      } else {
+        (S.agentRuns || []).forEach(function (p) {
+          out.push({ role: "user", text: String(p).slice(0, 500) });
+        });
+      }
+    } catch (_) {}
+    const latestTrim = String(latest || "").trim();
+    return out.filter(function (t) {
+      return !(t.role === "user" && String(t.text).trim() === latestTrim);
+    }).slice(-10);
+  }
+
+  function hasPriorTurns(prompt) {
+    try {
+      const S = window.S;
+      if (!S) return false;
+      if (S.agentBuilt) return true;
+      const runs = Array.isArray(S.agentRuns) ? S.agentRuns : [];
+      return runs.some(function (p) {
+        return String(p || "").trim() && String(p).trim() !== String(prompt || "").trim();
+      });
+    } catch (_) { return false; }
+  }
+
+  function isFollowUp(prompt) {
+    if (looksLikeRestart(prompt)) return false;
+    return hasPriorTurns(prompt);
+  }
+
+  function buildFollowUpPrompt(latest, files, issues, history) {
+    const fileBlk = (files || []).slice(0, 12).map(function (f) {
+      return "FILE: " + f.path + "\n```\n" + String(f.content || "").slice(0, 4500) + "\n```";
+    }).join("\n\n");
+    const issueBlk = (issues || []).slice(0, 24).map(function (i) {
+      return "- [" + (i.severity || "info") + "] " + (i.file || "") + ": " + (i.message || i.msg || "");
+    }).join("\n");
+    const histBlk = (history || []).map(function (t) {
+      return "- " + (t.role === "assistant" ? "Agent" : "User") + ": " + t.text;
+    }).join("\n");
+    return [
+      "FOLLOW-UP on the EXISTING app. Do not start a different product.",
+      "Keep the current architecture, name, and working features unless the latest request explicitly replaces them.",
+      "Apply this latest request as an edit: " + String(latest || ""),
+      histBlk ? ("Conversation so far:\n" + histBlk) : "",
+      "Validator issues to consider:\n" + (issueBlk || "(none)"),
+      "Current workspace files — return the FULL updated contents of every file that should remain:\n" + fileBlk,
+      "Preserve distinctive UI. No 'Simple Notepad'. No leftover music-app copy. No starter-template dashboard unless that is the current app."
+    ].filter(Boolean).join("\n\n");
+  }
+
+  function buildRefinePrompt(original, files, issues, quality, opts) {
+    opts = opts || {};
     issues = issuesForFiles(files, issues);
     const fileBlk = (files || []).slice(0, 12).map(function (f) {
       return "FILE: " + f.path + "\n```\n" + String(f.content || "").slice(0, 4500) + "\n```";
@@ -584,8 +654,11 @@
     const issueBlk = (issues || []).slice(0, 24).map(function (i) {
       return "- [" + (i.severity || "info") + "] " + (i.file || "") + ": " + (i.message || i.msg || "");
     }).join("\n");
+    const lead = opts.followUp
+      ? "The current version is NOT good enough. Improve THIS same app to production quality. Do not switch products."
+      : "The current version is NOT good enough. Rebuild the entire app to production quality.";
     return [
-      "The current version is NOT good enough. Rebuild the entire app to production quality.",
+      lead,
       "Original request:\n" + String(original || ""),
       "Quality score: " + ((quality && quality.score) || 0) + ". Failures:\n- " + ((quality && quality.reasons) || []).join("\n- "),
       "Validator issues:\n" + (issueBlk || "(none)"),
@@ -821,18 +894,29 @@
         onStep && onStep(steps[steps.length - 1]);
         return Promise.resolve(steps);
       }
-      const ctx = specContext();
+      let ctx = specContext() || {};
+      const followUp = isFollowUp(prompt);
+      if (followUp) ctx = Object.assign({}, ctx, { followUp: true });
 
       return (async function () {
         let extraUser = null;
         let quality = { score: 0, pass: false, reasons: ["not generated"] };
         let lastErr = null;
         let wrote = false;
+        if (followUp) {
+          const existing = snapshotWorkspace();
+          const existingIssues = existing.length
+            ? issuesForFiles(existing, window.Engine.Validator.runAll())
+            : [];
+          extraUser = buildFollowUpPrompt(prompt, existing, existingIssues, conversationHistory(prompt));
+        }
         for (let round = 1; round <= MAX_ROUNDS; round++) {
           steps.push({
             kind: "plan",
             text: round === 1
-              ? "Calling LLM to build the app (round 1/" + MAX_ROUNDS + ")…"
+              ? (followUp
+                  ? "Follow-up on the current app (round 1/" + MAX_ROUNDS + ")…"
+                  : "Calling LLM to build the app (round 1/" + MAX_ROUNDS + ")…")
               : "Quality too low (score " + quality.score + ") — refining round " + round + "/" + MAX_ROUNDS + "…"
           });
           onStep && onStep(steps[steps.length - 1]);
@@ -861,11 +945,11 @@
           steps.push({ kind: "validate-result", issues: issues, quality: quality });
           onStep && onStep(steps[steps.length - 1]);
           if (quality.pass) {
-            steps.push({ kind: "done", text: "Run complete (LLM, " + round + " round(s), quality " + quality.score + ")." });
+            steps.push({ kind: "done", text: "Run complete (LLM, " + round + " round(s), quality " + quality.score + "). Prompt again to keep editing this app." });
             onStep && onStep(steps[steps.length - 1]);
             return steps;
           }
-          extraUser = buildRefinePrompt(prompt, files, issues, quality);
+          extraUser = buildRefinePrompt(prompt, files, issues, quality, { followUp: followUp });
         }
         if (!wrote) {
           steps.push({
@@ -915,6 +999,10 @@
     scoreBuild,
     issuesForFiles,
     buildRefinePrompt,
+    buildFollowUpPrompt,
+    isFollowUp,
+    looksLikeRestart,
+    conversationHistory,
     snapshotWorkspace,
     rememberModels,
     cachedModels,

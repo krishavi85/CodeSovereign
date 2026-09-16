@@ -102,7 +102,10 @@ const S = {
   prompt: '',
   agentPrompt: '',
   agentRuns: [],
+  agentChat: [],
   agentSteps: [],
+  agentBuilt: false,
+  lastPrompt: '',
   agentRunning: false,
   planApproved: false,
   agentStopped: false,
@@ -117,6 +120,7 @@ const S = {
   ideDevice: 'desktop',
   ideBuffer: '',     // current edit buffer
   ideDirty: false,
+  ideFollowUp: '',
   temp: 0.3, maxTok: 8192, lmCtx: 32768, lmGpu: 99, lmTemp: 0.2,
   selIssue: 0,
   recPaused: false,
@@ -164,6 +168,7 @@ function toast(msg, color = '#a78bfa') {
 }
 window.toast = toast;
 window.csToast = toast;
+window.S = S;
 
 function renderToasts() {
   const root = document.getElementById('toasts');
@@ -317,10 +322,38 @@ function cycleAgent() {
 }
 function toggleEnv(key) { S.env = (key || (S.env === 'prod' ? 'dev' : 'prod')).toString().toLowerCase(); renderAll(); }
 
+const AGENT_SESSION_KEY = 'cs.agent.session.v1';
+function loadAgentSession() {
+  try {
+    const raw = localStorage.getItem(AGENT_SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+function saveAgentSession() {
+  try {
+    localStorage.setItem(AGENT_SESSION_KEY, JSON.stringify({
+      agentRuns: (S.agentRuns || []).slice(-20),
+      agentChat: (S.agentChat || []).slice(-40),
+      agentBuilt: !!S.agentBuilt,
+      lastPrompt: S.lastPrompt || ''
+    }));
+  } catch (_) {}
+}
+function resetAgentSession() {
+  S.agentRuns = [];
+  S.agentChat = [];
+  S.agentSteps = [];
+  S.agentBuilt = false;
+  S.lastPrompt = '';
+  S.agentPrompt = '';
+  try { localStorage.removeItem(AGENT_SESSION_KEY); } catch (_) {}
+}
+
 function genApp() {
   const p = S.prompt.trim();
   if (!p) { toast('Describe the app first — or pick a “Try” prompt', '#f59e0b'); return; }
   if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
+  S.lastPrompt = p;
   S.agentRuns = [...S.agentRuns, p];
   S.prompt = '';
   S.agentStopped = false;
@@ -348,12 +381,13 @@ function genApp() {
 
 function runAgent() {
   const p = S.agentPrompt.trim();
-  if (!p) { toast('Describe what you want to build first', '#f59e0b'); return; }
+  if (!p) { toast(S.agentBuilt ? 'Type a follow-up for this app first' : 'Describe what you want to build first', '#f59e0b'); return; }
   if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
+  S.lastPrompt = p;
   S.agentRuns = [...S.agentRuns, p];
   S.agentPrompt = '';
   S.agentStopped = false;
-  toast('Run started — Planner is analyzing the request', '#a78bfa');
+  toast(S.agentBuilt ? 'Follow-up started — editing the current app' : 'Run started — Planner is analyzing the request', '#a78bfa');
   // Also include any active spec from the Universal composer
   const ctx = (S.univ && S.univ.state) ? {
     source: 'universal-composer',
@@ -372,9 +406,17 @@ function runAgentWith(prompt, specCtx) {
   // clear any previous timers
   _agentTimers.forEach(t => clearTimeout(t));
   _agentTimers = [];
-  S.agentSteps = [];
+  const followUp = !!(S.agentBuilt || (S.agentRuns || []).some(p => p && p !== prompt));
+  S.lastPrompt = prompt;
+  S.agentChat = [...(S.agentChat || []), { role: 'user', text: prompt, at: Date.now() }];
   S.agentRunning = true;
   S.planApproved = false;
+  if (followUp && Array.isArray(S.agentSteps) && S.agentSteps.length) {
+    S.agentSteps = [...S.agentSteps, { kind: 'user', text: 'Follow-up: ' + prompt, prompt: prompt }].slice(-80);
+  } else {
+    S.agentSteps = [];
+  }
+  try { saveAgentSession(); } catch (_) {}
   // record run start for backend persistence
   const runStart = Date.now();
   const runId = 'run_' + runStart.toString(36) + '_' + Math.random().toString(36).slice(2, 6);
@@ -389,9 +431,12 @@ function runAgentWith(prompt, specCtx) {
     };
     try { window.dispatchEvent(new CustomEvent('cs:spec-applied', { detail: specCtx })); } catch(_) {}
   }
+  try {
+    if (window.TabBus) window.TabBus.broadcast('agent:run', { prompt: prompt, followUp: followUp });
+  } catch (_) {}
   // hook for live updates
   Engine.Agent.run(prompt, step => {
-    S.agentSteps = [...S.agentSteps, step];
+    S.agentSteps = [...S.agentSteps, step].slice(-80);
     // when the planner publishes the file plan, feed it into the build pipeline
     if (step && step.kind === 'plan-result' && Array.isArray(step.files)) {
       try { planBuild(step.files); } catch (_) {}
@@ -405,16 +450,28 @@ function runAgentWith(prompt, specCtx) {
     // Final sync so the Build tab reflects exactly what the run produced
     try { syncBuildFromFS(); } catch (_) {}
     S.agentRunning = false;
-    // Auto-redirect to IDE so the user can see the generated files
-    // and pick a pipeline to scaffold the rest of the artifacts.
+    if (Engine.FS.read('/index.html')) S.agentBuilt = true;
+    const last = S.agentSteps[S.agentSteps.length - 1];
+    if (last && (last.kind === 'done' || last.kind === 'error')) {
+      S.agentChat = [...(S.agentChat || []), { role: 'assistant', text: last.text || last.kind, at: Date.now() }].slice(-40);
+    }
+    try { saveAgentSession(); } catch (_) {}
     try {
-      S.screen = 'ide';
-      // Auto-switch to Live Preview if /index.html exists, otherwise show workflow
-      S.idePanel = Engine.FS.read('/index.html') ? 'preview' : (S.idePanel || 'workflow');
-      if (S.idePanel === 'preview'){
-        toast('Files created — Live Preview is ready', '#34d399');
+      if (window.TabBus) window.TabBus.broadcast('workspace:changed', {
+        files: Engine.FS.count(),
+        followUp: followUp,
+        prompt: prompt
+      });
+    } catch (_) {}
+    // Stay on Agent so the user can keep prompting the same app.
+    try {
+      S.screen = 'agent';
+      if (Engine.FS.read('/index.html')) {
+        toast(followUp
+          ? 'App updated — send another prompt or Open IDE'
+          : 'Files created — send a follow-up or Open IDE', '#34d399');
       } else {
-        toast('Files created — pick a Pipeline to build all artifacts', '#22d3ee');
+        toast('Run finished — send another prompt to continue', '#22d3ee');
       }
     } catch (_) {}
     renderAll();
@@ -438,6 +495,9 @@ function runAgentWith(prompt, specCtx) {
     } catch (_) {}
   });
 }
+window.runAgent = runAgent;
+window.runAgentWith = runAgentWith;
+window.genApp = genApp;
 
 function approvePlan() {
   if (S.planApproved) { toast('Plan already approved', '#f59e0b'); return; }
@@ -572,6 +632,7 @@ function deploy() {
 
 function createProjectFromTemplate(name, templateId) {
   const meta = Engine.Proj.create(name, templateId);
+  resetAgentSession();
   toast('Scaffolded “' + meta.name + '” (' + meta.fileCount + ' files)', '#22d3ee');
   S.screen = 'ide';
   // open first file
@@ -593,6 +654,7 @@ function createProjectFromTemplate(name, templateId) {
 function openProject(id) {
   const meta = Engine.Proj.switchTo(id);
   if (!meta) return;
+  resetAgentSession();
   toast('Opened “' + meta.name + '”', '#22d3ee');
   S.screen = 'ide';
   const files = Object.keys(Engine.FS._data).filter(p => Engine.FS.isFile(p));
@@ -801,9 +863,9 @@ function renderAgent() {
       ${time ? `<span style="font-size:11px;color:#6b7488;flex:none">${time}</span>` : ''}
     </div>`;
 
-  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent' };
-  const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket','error':'alert' };
-  const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c','error':'#f87171' };
+  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','user':'You' };
+  const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket','error':'alert','user':'user' };
+  const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c','error':'#f87171','user':'#fbbf24' };
 
   let activityRows;
   if (steps.length === 0) {
@@ -960,18 +1022,19 @@ function renderAgent() {
     <div style="flex:1;min-width:0;overflow:auto;padding:22px 24px 36px">
       <div style="display:flex;align-items:flex-start;gap:13px;margin-bottom:18px">
         <div style="width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#6d5dfc,#a855f7);display:flex;align-items:center;justify-content:center;color:#fff;flex:none"><span style="display:inline-flex;width:21px;height:21px;align-items:center;justify-content:center">${I.sparkle}</span></div>
-        <div style="flex:1"><div style="font-size:20px;font-weight:700">Agent Workspace</div><div style="font-size:13px;color:#8b93a7;margin-top:2px">${S.agentRunning ? 'Agent is mutating the workspace…' : 'Run the agent to plan, write, and validate files.'}</div></div>
+        <div style="flex:1"><div style="font-size:20px;font-weight:700">Agent Workspace</div><div style="font-size:13px;color:#8b93a7;margin-top:2px">${S.agentRunning ? 'Agent is mutating the workspace…' : (S.agentBuilt ? 'Ask follow-ups — each prompt edits the same app.' : 'Run the agent to plan, write, and validate files.')}</div></div>
         <div style="display:flex;align-items:center;gap:12px">
           <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#8b93a7;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:6px 10px;cursor:pointer">Auto <span style="display:inline-flex;width:12px;height:12px;align-items:center;justify-content:center">${I.chev}</span></span>
           <span style="display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#e6e9f2">Stream <span id="streamToggle" style="width:34px;height:19px;border-radius:11px;background:${S.stream?'#34d399':'rgba(255,255,255,.16)'};position:relative;display:inline-block;cursor:pointer;transition:.15s"><span style="position:absolute;top:2px;left:${S.stream?'17px':'2px'};width:15px;height:15px;border-radius:50%;background:#fff;transition:.15s"></span></span></span>
         </div>
       </div>
 
+      ${(S.agentRuns && S.agentRuns.length) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${S.agentRuns.slice(-6).map((p, i) => `<span style="font-size:11px;color:#c7cddb;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:4px 8px;border-radius:999px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p)}">${i === S.agentRuns.slice(-6).length - 1 ? 'Latest: ' : ''}${esc(p.length > 48 ? p.slice(0, 48) + '…' : p)}</span>`).join('')}</div>` : ''}
       <div style="border:1px solid rgba(109,93,252,.4);border-radius:13px;background:rgba(124,91,214,.05);padding:6px 6px 6px 18px;display:flex;align-items:center;gap:12px;margin-bottom:14px;box-shadow:0 0 0 3px rgba(109,93,252,.08)">
-        <input id="agentPromptInput" value="${esc(S.agentPrompt)}" placeholder="Describe what you want to build…" style="flex:1;background:transparent;border:none;outline:none;color:#e6e9f2;font:400 14px Inter,sans-serif;padding:13px 0">
+        <input id="agentPromptInput" value="${esc(S.agentPrompt)}" placeholder="${S.agentBuilt ? 'Ask a follow-up — change, fix, or add to this app…' : 'Describe what you want to build…'}" style="flex:1;background:transparent;border:none;outline:none;color:#e6e9f2;font:400 14px Inter,sans-serif;padding:13px 0">
         <span style="display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center;color:#7b859c;cursor:pointer">${I.clip}</span>
         <span style="display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center;color:#7b859c;cursor:pointer">${I.at}</span>
-        <button id="runAgentBtn" style="display:flex;align-items:center;gap:8px;padding:11px 18px;border:none;border-radius:10px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 13.5px Inter;cursor:pointer"><span style="display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center">${I.play}</span>Run <span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center">${I.chev}</span></button>
+        <button id="runAgentBtn" style="display:flex;align-items:center;gap:8px;padding:11px 18px;border:none;border-radius:10px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 13.5px Inter;cursor:pointer"><span style="display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center">${I.play}</span>${S.agentBuilt ? 'Send' : 'Run'} <span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center">${I.chev}</span></button>
       </div>
       <div style="display:flex;gap:11px;margin-bottom:20px">
         <button id="stopBtn" style="display:flex;align-items:center;gap:8px;padding:9px 15px;border:1px solid ${S.agentStopped?'rgba(52,211,153,.4)':'rgba(239,68,68,.4)'};border-radius:9px;background:${S.agentStopped?'rgba(52,211,153,.08)':'rgba(239,68,68,.08)'};color:${S.agentStopped?'#34d399':'#f87171'};font:600 12.5px Inter;cursor:pointer"><span style="display:inline-flex;width:13px;height:13px;align-items:center;justify-content:center">${S.agentStopped?I.play:I.stop}</span>${S.agentStopped?'Resume':'Stop'}</button>
@@ -983,7 +1046,7 @@ function renderAgent() {
           <div style="display:flex;align-items:center;gap:10px"><span style="font-size:13px;font-weight:600">Activity Stream</span><span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:${liveColor}"><span style="width:6px;height:6px;border-radius:50%;background:${liveColor};${S.agentRunning&&!S.agentStopped?'animation:csPulse 1.6s infinite':''}"></span>${liveLabel}</span></div>
           <div style="font-size:12px;color:#7b859c">${steps.length} step${steps.length===1?'':'s'}</div>
         </div>
-        <div style="padding:6px 6px;max-height:300px;overflow:auto">${activityRows}</div>
+        <div style="padding:6px 6px;max-height:360px;overflow:auto">${activityRows}</div>
       </div>
 
       <div style="font-size:13px;font-weight:600;margin-bottom:12px">Specialist Agents</div>
@@ -1008,7 +1071,7 @@ function bindAgent() {
   if (a('stopBtn')) a('stopBtn').onclick = stopRun;
   if (a('streamToggle')) a('streamToggle').onclick = () => { S.stream = !S.stream; renderAll(); };
   const inp = a('agentPromptInput');
-  if (inp) { inp.oninput = e => S.agentPrompt = e.target.value; inp.onkeydown = e => { if (e.key === 'Enter') runAgent(); }; }
+  if (inp) { inp.oninput = e => S.agentPrompt = e.target.value; inp.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runAgent(); } }; }
   if (a('tempRange')) a('tempRange').oninput = e => { S.temp = parseFloat(e.target.value); renderAll(); };
   if (a('maxTokRange')) a('maxTokRange').oninput = e => { S.maxTok = parseInt(e.target.value); renderAll(); };
   if (a('agentChip')) a('agentChip').onclick = cycleAgent;
@@ -1303,7 +1366,9 @@ function renderIDE() {
     previewHTML = `<div style="padding:24px;color:#6b7488;text-align:center;font-size:13px">No /index.html — preview unavailable</div>`;
   }
 
-  return `<div style="height:100%;display:flex;min-height:0;background:#0a0e17">
+  const ideFollowPh = S.agentBuilt ? 'Ask a follow-up to fix or change this app…' : 'Describe what you want to build…';
+  return `<div style="height:100%;display:flex;flex-direction:column;min-height:0;background:#0a0e17">
+  <div style="flex:1;display:flex;min-height:0">
     <div style="width:224px;flex:none;border-right:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;min-height:0">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px 8px"><span style="font-size:10.5px;font-weight:700;letter-spacing:.08em;color:#7b859c">FILES</span><span style="font-size:10.5px;color:#7b859c">${allFiles.length}</span></div>
       <div style="flex:1;overflow:auto;padding:0 6px">${fileRows}</div>
@@ -1351,7 +1416,14 @@ function renderIDE() {
       </div>
       <div style="flex:1;overflow:hidden;display:flex">${previewHTML}</div>
     </div>
-  </div>`;
+  </div>
+  <div style="flex:none;border-top:1px solid rgba(255,255,255,.08);padding:8px 12px;display:flex;align-items:center;gap:10px;background:#0b0f1a">
+    <span style="display:inline-flex;width:16px;height:16px;color:#a78bfa">${I.sparkle}</span>
+    <input id="ideFollowUpInput" value="${esc(S.ideFollowUp || '')}" placeholder="${esc(ideFollowPh)}" style="flex:1;background:transparent;border:none;outline:none;color:#e6e9f2;font:400 13px Inter,sans-serif">
+    <button id="ideFollowUpBtn" style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:none;border-radius:8px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 12px Inter;cursor:pointer">${S.agentRunning ? 'Running…' : 'Send'}</button>
+    <button id="ideOpenAgentBtn" style="padding:8px 12px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 12px Inter;cursor:pointer">Agent</button>
+  </div>
+</div>`;
 }
 
 function buildFileTree() {
@@ -1446,6 +1518,30 @@ function bindIDE() {
   const op = document.getElementById('openPreviewIde'); if (op) op.onclick = runPreview;
   const rpv = document.getElementById('runPreviewIde'); if (rpv) rpv.onclick = runPreview;
   const nf = document.getElementById('newFileBtn'); if (nf) nf.onclick = newFileDialog;
+  const ideFollow = document.getElementById('ideFollowUpInput');
+  if (ideFollow) {
+    ideFollow.oninput = e => { S.ideFollowUp = e.target.value; };
+    ideFollow.onkeydown = e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const p = (S.ideFollowUp || '').trim();
+        if (!p) { toast('Type a follow-up first', '#f59e0b'); return; }
+        S.agentPrompt = p;
+        S.ideFollowUp = '';
+        runAgent();
+      }
+    };
+  }
+  const ideSend = document.getElementById('ideFollowUpBtn');
+  if (ideSend) ideSend.onclick = () => {
+    const p = (S.ideFollowUp || '').trim();
+    if (!p) { toast('Type a follow-up first', '#f59e0b'); return; }
+    S.agentPrompt = p;
+    S.ideFollowUp = '';
+    runAgent();
+  };
+  const ideAgent = document.getElementById('ideOpenAgentBtn');
+  if (ideAgent) ideAgent.onclick = () => { S.screen = 'agent'; renderAll(); };
 }
 
 function newFileDialog() {
@@ -3536,7 +3632,12 @@ function bindPhase8(screen) {
 
 function bindTopNav() {
   document.querySelectorAll('#topNavInner button[data-screen]').forEach(b => {
-    b.onclick = () => { S.screen = b.dataset.screen; if (window.TabBus) { window.TabBus.broadcast('tab:clicked', { from: S.screen, to: b.dataset.screen, source: 'topnav' }); } renderAll(); };
+    b.onclick = () => {
+      const from = S.screen;
+      S.screen = b.dataset.screen;
+      if (window.TabBus) { window.TabBus.broadcast('tab:clicked', { from: from, to: b.dataset.screen, source: 'topnav' }); }
+      renderAll();
+    };
   });
   const mc = document.getElementById('modelChip');
   if (mc) mc.onclick = () => { cycleAgent(); };
@@ -3552,7 +3653,12 @@ function bindTopNav() {
 
 function bindRail() {
   document.querySelectorAll('#railInner button[data-screen]').forEach(b => {
-    b.onclick = () => { S.screen = b.dataset.screen; if (window.TabBus) { window.TabBus.broadcast('tab:clicked', { from: S.screen, to: b.dataset.screen, source: 'rail' }); } renderAll(); };
+    b.onclick = () => {
+      const from = S.screen;
+      S.screen = b.dataset.screen;
+      if (window.TabBus) { window.TabBus.broadcast('tab:clicked', { from: from, to: b.dataset.screen, source: 'rail' }); }
+      renderAll();
+    };
   });
 }
 
@@ -3588,9 +3694,20 @@ document.addEventListener('DOMContentLoaded', () => {
   S.agent = S.agent || 'Sovereign-1.5';
   S.theme = S.theme || 'dark';
   S.agentSteps = S.agentSteps || [];
+  S.agentRuns = S.agentRuns || [];
+  S.agentChat = S.agentChat || [];
   S.ideFile = S.ideFile || null;
   S.ideBuffer = S.ideBuffer || '';
   S.ideDirty = false;
+  try {
+    const sess = loadAgentSession();
+    if (sess) {
+      if (Array.isArray(sess.agentRuns) && sess.agentRuns.length) S.agentRuns = sess.agentRuns;
+      if (Array.isArray(sess.agentChat) && sess.agentChat.length) S.agentChat = sess.agentChat;
+      if (sess.agentBuilt) S.agentBuilt = true;
+      if (sess.lastPrompt && !S.lastPrompt) S.lastPrompt = sess.lastPrompt;
+    }
+  } catch (_) {}
 
   // Seed an initial project if workspace is empty
   if (Engine.FS.count() === 0) {

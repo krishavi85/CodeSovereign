@@ -135,6 +135,11 @@ module.exports = async function (t) {
   t.ok('Live Preview no longer fake-binds the iframe once', !appSrc.includes("dataset.bound !== '1'"));
   t.ok('preview epoch invalidates stale srcdoc', appSrc.includes('_previewEpoch'));
   t.ok('IDE chrome does not pretend a Vite 5173 server is running', !/http:\/\/localhost:5173/.test(appSrc));
+  t.ok('shared UI state is published as window.S', appSrc.includes('window.S = S'));
+  t.ok('Agent stay on the Agent screen after a run so follow-ups are possible', /S\.screen = 'agent'/.test(appSrc) && appSrc.includes('send a follow-up'));
+  t.ok('Agent prompt invites follow-ups on the same app', appSrc.includes('Ask a follow-up'));
+  t.ok('IDE has a follow-up composer on the same project', appSrc.includes('ideFollowUpInput'));
+  t.ok('Agent session persists across screens', appSrc.includes('cs.agent.session.v1'));
 
   const { win, store } = load();
   const LLM = win.Engine.LLM;
@@ -262,4 +267,63 @@ module.exports = async function (t) {
   t.ok('final index.html is not Simple Notepad', !/Simple Notepad/i.test(win.Engine.FS.read('/index.html') || ''));
   t.ok('final app has an app shell', /app-shell|sidebar/i.test(win.Engine.FS.read('/index.html') || ''));
   t.ok('engine source no longer falls back to the local synthesizer', !fs.readFileSync(path.join(__dirname, '..', 'dist', 'engine.llm.js'), 'utf8').includes('falling back to local synthesizer'));
+
+  t.ok('follow-up helper is exported', typeof LLM.buildFollowUpPrompt === 'function' && typeof LLM.isFollowUp === 'function');
+  t.ok('start over is treated as a restart, not a follow-up', LLM.looksLikeRestart('start over from scratch with a new app') === true);
+  t.ok('make the sidebar purple is not a restart', LLM.looksLikeRestart('make the sidebar purple') === false);
+
+  win.S = { agentRuns: ['create an advanced notepad app'], agentBuilt: true, agentChat: [
+    { role: 'user', text: 'create an advanced notepad app' }
+  ] };
+  t.ok('prior agent run counts as a follow-up', LLM.isFollowUp('make the sidebar purple') === true);
+  t.ok('explicit restart is not a follow-up even with history', LLM.isFollowUp('start over from scratch') === false);
+
+  const follow = LLM.buildFollowUpPrompt(
+    'make the sidebar purple',
+    RICH.files,
+    [{ severity: 'warning', file: '/index.html', message: '<img> missing alt attribute' }],
+    [{ role: 'user', text: 'create an advanced notepad app' }]
+  );
+  t.ok('follow-up prompt includes the latest request', /sidebar purple/.test(follow));
+  t.ok('follow-up prompt includes current workspace HTML', /Nova Notes/.test(follow));
+  t.ok('follow-up prompt includes conversation history', /advanced notepad/.test(follow));
+  t.ok('follow-up prompt tells the model not to switch products', /EXISTING app/.test(follow));
+
+  const followRefine = LLM.buildRefinePrompt('make the sidebar purple', RICH.files, [], { score: 40, reasons: ['CSS is too thin'] }, { followUp: true });
+  t.ok('follow-up refine keeps the same product', /THIS same app/.test(followRefine));
+
+  const PURPLE = {
+    summary: 'Nova Notes with a purple sidebar',
+    files: [
+      { path: '/index.html', content: RICH_HTML.replace('class="sidebar"', 'class="sidebar" style="background:#6d28d9"') },
+      { path: '/styles/app.css', content: RICH_CSS + '\n.sidebar{background:#6d28d9}\n' },
+      { path: '/scripts/app.js', content: RICH_JS }
+    ]
+  };
+
+  let followCalls = 0;
+  let followBodies = [];
+  win.fetch = async function (url, opts) {
+    if (!/chat\/completions/.test(String(url))) {
+      return { ok: false, status: 404, text: async () => '' };
+    }
+    followCalls++;
+    const body = JSON.parse(opts.body);
+    followBodies.push(body);
+    return chatReply(PURPLE);
+  };
+  const followSteps = await win.Engine.Agent.run('make the sidebar purple');
+  t.ok('follow-up run talks to the LLM', followCalls >= 1);
+  t.ok('follow-up activity says it is editing the current app', followSteps.some(function (s) {
+    return /Follow-up on the current app/i.test(s.text || '');
+  }));
+  const firstUser = ((followBodies[0] && followBodies[0].messages) || []).map(function (m) { return m.content; }).join('\n');
+  t.ok('follow-up LLM sees the current Nova Notes files', /Nova Notes/.test(firstUser));
+  t.ok('follow-up LLM sees the new task', /sidebar purple/.test(firstUser));
+  t.ok('follow-up system prompt is edit-mode', /EXISTING app/.test(((followBodies[0].messages || []).find(function (m) { return m.role === 'system'; }) || {}).content || ''));
+  t.ok('follow-up keeps Nova Notes instead of rebuilding a new product', /Nova Notes/i.test(win.Engine.FS.read('/index.html') || ''));
+  t.ok('follow-up applies the requested sidebar change', /#6d28d9/.test(win.Engine.FS.read('/styles/app.css') || '') || /#6d28d9/.test(win.Engine.FS.read('/index.html') || ''));
+
+  win.S = { agentRuns: [], agentBuilt: false, agentChat: [] };
+  t.ok('first prompt with no history is not a follow-up', LLM.isFollowUp('create a notepad app') === false);
 };
