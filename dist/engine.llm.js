@@ -873,10 +873,12 @@
     return { quality: judged, p1: p1.length, issues: obs.issues || [], capture: obs.capture || null };
   }
 
-  function formatRag(intent, repo, deps, observation) {
+  function formatRag(intent, repo, deps, observation, opts) {
     intent = intent || classifyIntent("");
+    opts = opts || {};
+    const followUp = !!opts.followUp;
     const lines = [];
-    const fresh = intent.mode === "generate";
+    const fresh = !followUp && (intent.mode === "generate" || intent.mode === "repo");
     const hasObs = !!(observation && ((observation.issues && observation.issues.length) || observation.capture));
     lines.push("AI BRAIN ROUTE: mode=" + intent.mode + " engines=" + (intent.engines || []).join(",") + " (" + intent.reason + ").");
     if (fresh && !hasObs) {
@@ -1275,8 +1277,8 @@
           extraUser = buildFollowUpPrompt(prompt, existing, existingIssues, conversationHistory(prompt));
         }
         extraUser = extraUser
-          ? (extraUser + "\n\n" + formatRag(intent, followUp ? engines.repo : null, followUp || intent.mode === "deps" ? engines.deps : null, null))
-          : formatRag(intent, followUp ? engines.repo : null, followUp || intent.mode === "deps" ? engines.deps : null, null);
+          ? (extraUser + "\n\n" + formatRag(intent, followUp ? engines.repo : null, followUp || intent.mode === "deps" ? engines.deps : null, null, { followUp: followUp }))
+          : formatRag(intent, followUp ? engines.repo : null, followUp || intent.mode === "deps" ? engines.deps : null, null, { followUp: followUp });
         for (let round = 1; round <= MAX_ROUNDS; round++) {
           steps.push({
             kind: "plan",
@@ -1331,7 +1333,7 @@
             return steps;
           }
           extraUser = buildRefinePrompt(prompt, files, judged.issues, quality, { followUp: followUp, capture: observation.capture }) +
-            "\n\n" + formatRag(intent, followUp ? scanRepo() : null, engines.deps, observation);
+            "\n\n" + formatRag(intent, followUp ? scanRepo() : null, engines.deps, observation, { followUp: followUp });
         }
         if (!wrote) {
           steps.push({

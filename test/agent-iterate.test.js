@@ -214,6 +214,14 @@ module.exports = async function (t) {
   t.ok('generate RAG tells the model this is a new app', /NEW APP/.test(genRag));
   t.ok('generate RAG does not ask the model to patch leftovers', !/Decide, then patch/.test(genRag));
   t.ok('generate RAG does not list leftover workspace paths as the product', !/Repository scan:/.test(genRag));
+  const repoRag = LLM.formatRag(LLM.classifyIntent('use https://github.com/foo/bar as the starter'), LLM.scanRepo(), LLM.scanDeps(), null);
+  t.ok('first repo RAG tells the model this is a new app', /NEW APP/.test(repoRag));
+  t.ok('first repo RAG does not ask the model to patch leftovers', !/Decide, then patch/.test(repoRag));
+  t.ok('first repo RAG does not list leftover workspace paths as the product', !/Repository scan:/.test(repoRag));
+  t.ok('first repo RAG still cites the GitHub/HF URL', /github\.com\/foo\/bar/.test(repoRag));
+  const followRepoRag = LLM.formatRag(LLM.classifyIntent('use https://github.com/foo/bar as the starter'), LLM.scanRepo(), LLM.scanDeps(), null, { followUp: true });
+  t.ok('follow-up repo RAG patches the existing app', /EXISTING app/.test(followRepoRag));
+  t.ok('follow-up repo RAG is not a greenfield rebuild', !/NEW APP/.test(followRepoRag));
 
   const prose = 'Sure, here is the file:\n```html\n<html lang="en"><body>Hi</body></html>\n```\nHope this helps.';
   t.equal('stripFence drops surrounding model prose', LLM.stripFence(prose, '/index.html').trim(), '<html lang="en"><body>Hi</body></html>');

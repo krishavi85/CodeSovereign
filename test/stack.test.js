@@ -141,6 +141,11 @@ module.exports = async function (t) {
   t.ok('supabase RLS is enabled', /enable row level security/.test(sbSql));
   t.ok('supabase profiles are not world-readable', !/using \(true\)/i.test(sbSql));
   t.ok('supabase profiles policy is own-row', /auth\.uid\(\) = id/.test(sbSql));
+  t.ok('supabase profiles.id is the auth user', /references auth\.users/.test(sbSql));
+  t.ok('supabase profiles.id has no random default', !/default gen_random_uuid\(\)/.test(sbSql));
+  t.ok('supabase inserts a profile on signup', /handle_new_user/.test(sbSql) && /on_auth_user_created/.test(sbSql));
+  const sbClient = win.Engine.FS.read('/src/lib/supabaseClient.js') || '';
+  t.ok('supabase client upserts with auth user id', /id:\s*user\.id/.test(sbClient));
 
   const plan = S.Verify.testcontainersPlan();
   t.ok('testcontainers plan has services', plan.services.length >= 1);
