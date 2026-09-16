@@ -116,6 +116,21 @@ module.exports = async function (t) {
   t.ok('TODO inside a string is not rewritten', /"TODO: wire API"/.test(todoSrc));
   t.ok('TODO comment is rewritten', !/\/\/ TODO: finish this/.test(todoSrc));
 
+  E.FS.write('/scripts/todo-throw.js', '// TODO: later\nfunction fail(){ throw new Error("not implemented yet"); }\n');
+  E.UnresolvedInspector.applyWorkaround({ faultClass: 'file.todo', issue: { file: '/scripts/todo-throw.js' } });
+  const throwSrc = E.FS.read('/scripts/todo-throw.js') || '';
+  t.ok('TODO comment next to a throw is rewritten', !/\/\/ TODO: later/.test(throwSrc));
+  t.ok('file.todo does not void unrelated not-implemented throws', /throw new Error\("not implemented yet"\)/.test(throwSrc));
+
+  const mdPatched = E.MockDetect.patchFile(
+    '/scripts/todo-throw.js',
+    '// TODO: later\nfunction fail(){ throw new Error("not implemented yet"); }\n',
+    [{ kind: 'todo-marker' }]
+  );
+  t.ok('patchFile todo-marker rewrites the comment', !/\/\/ TODO: later/.test(mdPatched));
+  t.ok('patchFile todo-marker does not void unrelated throws', /throw new Error\("not implemented yet"\)/.test(mdPatched));
+  t.ok('coming-soon copy is left alone for a todo-only patch', /not implemented yet/.test(mdPatched));
+
   E.FS.write('/scripts/timeouts.js', 'const timeout = 5;\nconst wait = 5000;\nconst timeoutMs = 5000;\n');
   E.UnresolvedInspector.applyWorkaround({ faultClass: 'rt.timeout', issue: { file: '/scripts/timeouts.js' } });
   const toSrc = E.FS.read('/scripts/timeouts.js') || '';

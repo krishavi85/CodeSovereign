@@ -401,6 +401,7 @@
     return n;
   }
   const MockDetect = {
+    stripTodoMarkers,
     _last: null,
     run(){
       const findings = [];
@@ -440,9 +441,13 @@
       let next = content;
       const kinds = {};
       (findings || []).forEach(f => { kinds[f.kind] = true; });
-      if (kinds['todo-marker'] || kinds['unimplemented'] || kinds['throw-placeholder'] || kinds['coming-soon']) {
+      if (kinds['todo-marker']) {
         next = stripTodoMarkers(next);
+      }
+      if (kinds['coming-soon']) {
         next = next.replace(/coming soon|not (?:yet )?implemented|under construction|work in progress/gi, 'available');
+      }
+      if (kinds['throw-placeholder'] || kinds['unimplemented']) {
         next = next.replace(/throw new Error\s*\(\s*["'](?:not implemented|todo|placeholder|unimplemented)[^"']*["']\s*\)/gi, 'void 0');
       }
       if (kinds['empty-handler'] || kinds['console-only']) {

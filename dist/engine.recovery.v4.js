@@ -817,8 +817,8 @@
         } else if (id === 'js.console') {
           n = c.replace(/^[ \t]*console\.log\s*\((?:[^;]|\([^;]*\))*\);?[ \t]*$/gm, '/* console.log removed */');
         } else if (id === 'file.todo') {
-          n = (window.Engine && window.Engine.MockDetect && window.Engine.MockDetect.patchFile)
-            ? window.Engine.MockDetect.patchFile(file, c, [{ kind: 'todo-marker' }])
+          const MD = (window.Engine && window.Engine.MockDetect) || window.MockDetect;
+          n = (MD && MD.stripTodoMarkers) ? MD.stripTodoMarkers(c)
             : c.replace(/\n\/\/ TODO: __injected__\s*$/m, '').replace(/\/\/[ \t]*(?:TODO|FIXME|XXX|HACK)\b[^\n]*/g, '// done');
         } else if (id === 'js.syntax') {
           n = c.replace(/\nfunction\s+__broken\([\s\S]*$/, '');
