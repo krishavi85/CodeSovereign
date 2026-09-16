@@ -173,7 +173,7 @@
   function buildRequest(provider, cfg, systemPrompt, userPrompt) {
     const url = provider.baseUrl.replace(/\/+$/, "") + (provider.chatPath || "/v1/chat/completions");
     const headers = { "Content-Type": "application/json" };
-    if (cfg.apiKey) {
+    if (cfg.apiKey && !isLocalEndpoint(provider, cfg)) {
       if (provider.keyHeader === "Authorization") {
         headers["Authorization"] = (provider.keyPrefix || "Bearer ") + cfg.apiKey;
       } else {

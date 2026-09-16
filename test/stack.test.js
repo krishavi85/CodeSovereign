@@ -149,6 +149,21 @@ module.exports = async function (t) {
   const cfg = win.Engine.LLM.getConfig();
   t.equal('applyToLLM selected localai', cfg.providerId, 'localai');
   t.ok('localai needs no API key', win.Engine.LLM.providers.find((p) => p.id === 'localai').local === true);
+  t.equal('local gateway stores empty apiKey', win.Engine.LLM.getConfig().apiKey, '');
+
+  win.Engine.LLM.setConfig({ providerId: 'openai', apiKey: 'sk-secret', enabled: true, model: 'gpt-4o-mini', baseUrl: '' });
+  S.Router.setGateway('localai');
+  t.equal('switching to localai clears cloud apiKey', win.Engine.LLM.getConfig().apiKey, '');
+  t.equal('switching to localai sets provider', win.Engine.LLM.getConfig().providerId, 'localai');
+  S.Router.setGateway('cloud');
+  t.equal('cloud restore providerId', win.Engine.LLM.getConfig().providerId, 'openai');
+  t.equal('cloud restore apiKey', win.Engine.LLM.getConfig().apiKey, 'sk-secret');
+  S.Router.setGateway('llamacpp');
+  t.equal('llamacpp also clears apiKey', win.Engine.LLM.getConfig().apiKey, '');
+  S.reset();
+  t.equal('reset gateway is cloud', S.Router.get().gateway, 'cloud');
+  t.equal('reset restores cloud provider', win.Engine.LLM.getConfig().providerId, 'openai');
+  t.equal('reset restores cloud apiKey', win.Engine.LLM.getConfig().apiKey, 'sk-secret');
 
   S.Execution.set('aider');
   t.equal('execution backend is aider', S.Execution.current(), 'aider');
@@ -163,7 +178,10 @@ module.exports = async function (t) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'dist', 'index.html'), 'utf8');
   t.ok('index.html loads engine.stack.js', /engine\.stack\.js/.test(html));
   t.ok('index.html loads app.stack.js', /app\.stack\.js/.test(html));
-  t.ok('CSP allows localhost model gateways', /127\.0\.0\.1:\*/.test(html));
+  t.ok('CSP allows LocalAI on 8080', /http:\/\/127\.0\.0\.1:8080/.test(html) && /http:\/\/localhost:8080/.test(html));
+  t.ok('CSP allows llama.cpp on 8081', /http:\/\/127\.0\.0\.1:8081/.test(html) && /http:\/\/localhost:8081/.test(html));
+  t.ok('CSP does not wildcard every loopback port', !/127\.0\.0\.1:\*/.test(html) && !/localhost:\*/.test(html));
+  t.ok('CSP does not allow loopback websockets', !/ws:\/\/127\.0\.0\.1/.test(html) && !/ws:\/\/localhost/.test(html));
 
   const extras = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.stack.js'), 'utf8');
   t.ok('UI injector does not add nav pages', !/S\.screen\s*=\s*['"]stack['"]/.test(extras));
@@ -171,7 +189,8 @@ module.exports = async function (t) {
   t.ok('injects into Agent', /renderAgent/.test(extras));
   t.ok('injects into Factory', /renderFactory/.test(extras));
   t.ok('injects into Pipelines', /renderPipelines/.test(extras));
-  t.ok('injects into Recovery', /renderRecovery/.test(extras));
+  t.ok('marketplace injector does not rewrite #main.innerHTML', !/main\.innerHTML\s*=/.test(extras));
+  t.ok('marketplace injector uses insertAdjacentHTML', /insertAdjacentHTML/.test(extras));
 
   // UI injector: stack card lands on Settings without a new page.
   const uiStore = {};

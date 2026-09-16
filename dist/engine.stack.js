@@ -168,12 +168,37 @@
     },
     applyToLLM() {
       const LLM = window.Engine && window.Engine.LLM;
-      if (!LLM || !LLM.setConfig) return { ok: false, reason: 'LLM missing' };
+      if (!LLM || !LLM.setConfig || !LLM.getConfig) return { ok: false, reason: 'LLM missing' };
       const r = state.router;
-      if (r.gateway === 'localai') {
-        LLM.setConfig({ providerId: 'localai', baseUrl: r.localaiUrl, model: 'qwen2.5-coder', enabled: true });
-      } else if (r.gateway === 'llamacpp') {
-        LLM.setConfig({ providerId: 'llamacpp', baseUrl: r.llamaUrl, model: 'qwen2.5-coder-7b-instruct', enabled: true });
+      const cur = LLM.getConfig() || {};
+      const isLocalProv = cur.providerId === 'localai' || cur.providerId === 'llamacpp';
+      if (r.gateway === 'localai' || r.gateway === 'llamacpp') {
+        if (!isLocalProv) {
+          state.router.cloudSnapshot = {
+            providerId: cur.providerId || '',
+            model: cur.model || '',
+            apiKey: cur.apiKey || '',
+            baseUrl: cur.baseUrl || '',
+            enabled: !!cur.enabled
+          };
+          persist();
+        }
+        LLM.setConfig({
+          providerId: r.gateway === 'localai' ? 'localai' : 'llamacpp',
+          baseUrl: r.gateway === 'localai' ? r.localaiUrl : r.llamaUrl,
+          model: r.gateway === 'localai' ? 'qwen2.5-coder' : 'qwen2.5-coder-7b-instruct',
+          enabled: true,
+          apiKey: ''
+        });
+      } else if (isLocalProv) {
+        const snap = state.router.cloudSnapshot || { providerId: 'minimax', model: '', apiKey: '', baseUrl: '', enabled: false };
+        LLM.setConfig({
+          providerId: snap.providerId || 'minimax',
+          model: snap.model || '',
+          apiKey: snap.apiKey || '',
+          baseUrl: snap.baseUrl || '',
+          enabled: !!snap.enabled
+        });
       }
       return { ok: true, gateway: r.gateway };
     },
@@ -780,13 +805,15 @@
     links: function () { return CATALOG.map(function (e) { return e.link; }); },
     reset: function () {
       Object.keys(DEFAULT_STATE.enabled).forEach(function (k) { state.enabled[k] = true; });
-      state.router = Object.assign({}, DEFAULT_STATE.router);
+      const snap = state.router && state.router.cloudSnapshot;
+      state.router = Object.assign({}, DEFAULT_STATE.router, { cloudSnapshot: snap });
       state.execution = 'native';
       state.vector = 'qdrant';
       state.backend = 'supabase';
       persist();
       Temporal.reset();
       Memory.reset();
+      Router.applyToLLM();
       return { ok: true };
     }
   };

@@ -265,11 +265,11 @@
       + '</div>';
   }
 
-  function marketplaceBanner(html) {
+  function marketplaceBannerHtml() {
     const S = Stack();
-    if (!S) return html;
+    if (!S) return '';
     const engines = S.catalog();
-    const banner = '<div class="card" style="padding:16px" id="stackMarketplaceBanner">'
+    return '<div class="card" style="padding:16px" id="stackMarketplaceBanner">'
       + '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px">'
       + '<div><div class="cs-h3">Open-source engines</div>'
       + '<div class="cs-muted" style="margin-top:4px">Install a stack engine into this workspace. All ' + engines.length + ' Building Stack repositories are listed below and under category <b>engine</b>.</div></div></div>'
@@ -284,11 +284,6 @@
           + '</div></div>';
       }).join('')
       + '</div></div>';
-    const inner = html.indexOf('<div class="screen-inner"');
-    if (inner < 0) return banner + html;
-    const gt = html.indexOf('>', inner);
-    if (gt < 0) return banner + html;
-    return html.slice(0, gt + 1) + banner + html.slice(gt + 1);
   }
 
   // ---- inject into existing screens ----
@@ -336,9 +331,10 @@
       const t = setInterval(function () {
         n++;
         const main = document.getElementById('main');
-        if (main && main.innerHTML.indexOf('Template Marketplace') >= 0) {
-          if (main.innerHTML.indexOf('stackMarketplaceBanner') < 0) {
-            main.innerHTML = marketplaceBanner(main.innerHTML);
+        if (main && main.querySelector && main.querySelector('.screen-inner') && /Template Marketplace/.test(main.textContent || '')) {
+          if (!document.getElementById('stackMarketplaceBanner')) {
+            const inner = main.querySelector('.screen-inner');
+            if (inner && inner.insertAdjacentHTML) inner.insertAdjacentHTML('afterbegin', marketplaceBannerHtml());
           }
           bindStack(main);
           clearInterval(t);
