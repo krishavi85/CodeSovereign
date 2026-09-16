@@ -183,6 +183,8 @@
       return !!(p && p.local);
     }
 
+    let lastLocality = null;
+
     function mergeModelOptions(p, currentModel) {
       const seen = {};
       const opts = [];
@@ -241,6 +243,7 @@
         }
       }
       if (keyHint && p) keyHint.textContent = p.notes || "";
+      lastLocality = local;
     }
 
     if (providerEl) {
@@ -251,14 +254,14 @@
       baseUrlEl.oninput = function () {
         const p = currentProvider();
         if (!p || p.id !== "openai_compat") return;
-        const cfg = llm.getConfig();
         const local = formIsLocal();
         if (keyLabel) keyLabel.textContent = local ? "API token (optional)" : "API Key";
-        if (keyEl) {
-          keyEl.placeholder = local ? "paste local server token if required" : "paste key here";
-          // Typing a loopback URL must not keep the visible cloud key as localToken.
-          keyEl.value = local ? (cfg.localToken || "") : (cfg.apiKey || "");
-        }
+        if (keyEl) keyEl.placeholder = local ? "paste local server token if required" : "paste key here";
+        // Only swap the key when loopback vs remote actually flips — not on every URL keystroke.
+        if (local === lastLocality) return;
+        lastLocality = local;
+        const cfg = llm.getConfig();
+        if (keyEl) keyEl.value = local ? (cfg.localToken || "") : (cfg.apiKey || "");
       };
     }
     if (modelEl) {

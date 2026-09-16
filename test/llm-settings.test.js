@@ -83,7 +83,7 @@ module.exports = async function (t) {
   t.ok('formIsLocal uses engine locality not leftover URL', extrasSrc.includes('isLocalEndpoint'));
   t.ok('named cloud providers drop leftover loopback baseUrl', extrasSrc.includes('Named cloud providers do not keep a leftover loopback baseUrl'));
   t.ok('401 hint is only shown when the engine set one', extrasSrc.includes('if (r.hint)') && !/r\.status === 401/.test(extrasSrc));
-  t.ok('openai_compat URL edits swap the key from the matching store', extrasSrc.includes('must not keep the visible cloud key as localToken'));
+  t.ok('openai_compat URL edits swap the key only when locality flips', extrasSrc.includes('Only swap the key when loopback vs remote actually flips'));
   t.ok('card sits before Integrations', html.indexOf('AI Provider') < html.indexOf('Integrations'));
   t.ok(
     'card sits after earlier cards, not at the top of the stack',
