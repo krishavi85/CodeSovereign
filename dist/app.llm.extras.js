@@ -45,14 +45,35 @@
       `<option value="${p.id}" ${p.id === selected ? "selected" : ""}>${esc(p.label)}</option>`
     ).join("");
   }
-  function modelOptionsFor(p, currentModel) {
-    if (!p) return "";
-    if (Array.isArray(p.modelOptions) && p.modelOptions.length) {
-      return p.modelOptions.map(m =>
-        `<option value="${esc(m)}" ${m === currentModel ? "selected" : ""}>${esc(m)}</option>`
-      ).join("");
+  function knownModelIds(llm, p, currentModel) {
+    const seen = {};
+    const opts = [];
+    function add(m) {
+      const v = String(m || "").trim();
+      if (!v || seen[v]) return;
+      seen[v] = true;
+      opts.push(v);
     }
-    return "";
+    (p && p.modelOptions || []).forEach(add);
+    try {
+      const cfg = llm && llm.getConfig && llm.getConfig() || {};
+      if (llm && llm.cachedModels) {
+        (llm.cachedModels(p && p.id, cfg.baseUrl || (p && p.baseUrl) || "") || []).forEach(add);
+      }
+    } catch (_) {}
+    try {
+      ((llm && llm.Gguf && llm.Gguf.list && llm.Gguf.list()) || []).forEach(function (g) {
+        add(g.name);
+        add(String(g.name).replace(/\.gguf$/i, ""));
+      });
+    } catch (_) {}
+    add(currentModel);
+    return opts;
+  }
+  function modelOptionsFor(llm, p, currentModel) {
+    return knownModelIds(llm, p, currentModel).map(function (m) {
+      return `<option value="${esc(m)}" ${m === currentModel ? "selected" : ""}>${esc(m)}</option>`;
+    }).join("");
   }
 
   // ---------- AI Provider card (Settings) ----------
@@ -74,7 +95,7 @@
 
     const p = llm.resolveProvider(cfg);
     const isLocal = llm.isLocalEndpoint ? llm.isLocalEndpoint(p, cfg) : !!(p && p.local);
-    const modelSel = modelOptionsFor(p, cfg.model);
+    const modelSel = modelOptionsFor(llm, p, cfg.model);
     const ggufs = (llm.Gguf && llm.Gguf.list && llm.Gguf.list()) || [];
     const ggufRows = ggufs.length
       ? ggufs.map(function (g) {
@@ -105,8 +126,9 @@
           </div>
           <div>
             <div style="font:600 11px Inter;letter-spacing:.05em;color:#7b859c;text-transform:uppercase;margin-bottom:5px">Model</div>
-            <select id="llmModel" style="width:100%;padding:9px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter">${modelSel}</select>
-            <input id="llmModelCustom" placeholder="Custom model id or GGUF name" value="${esc(cfg.model)}" style="display:${modelSel && !isLocal ? "none" : "block"};width:100%;margin-top:6px;padding:8px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter"/>
+            <select id="llmModel" style="width:100%;padding:9px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter">${modelSel || '<option value="">(type any loaded model id)</option>'}</select>
+            <input id="llmModelCustom" placeholder="Any LM Studio / GGUF / custom model id" value="${esc(cfg.model)}" style="display:block;width:100%;margin-top:6px;padding:8px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter"/>
+            <div style="font-size:11px;color:var(--muted);margin-top:5px">Type any id the local server has loaded. Refresh models pulls /v1/models and keeps this list.</div>
           </div>
         </div>
 
@@ -186,23 +208,7 @@
     let lastLocality = null;
 
     function mergeModelOptions(p, currentModel) {
-      const seen = {};
-      const opts = [];
-      function add(m) {
-        const v = String(m || "").trim();
-        if (!v || seen[v]) return;
-        seen[v] = true;
-        opts.push(v);
-      }
-      (p && p.modelOptions || []).forEach(add);
-      ((llm.Gguf && llm.Gguf.list && llm.Gguf.list()) || []).forEach(function (g) {
-        add(g.name);
-        add(String(g.name).replace(/\.gguf$/i, ""));
-      });
-      add(currentModel);
-      return opts.map(function (m) {
-        return `<option value="${esc(m)}" ${m === currentModel ? "selected" : ""}>${esc(m)}</option>`;
-      }).join("");
+      return modelOptionsFor(llm, p, currentModel);
     }
 
     function refreshModelList(opts) {
@@ -228,10 +234,10 @@
       const local = formIsLocal();
       const optsHtml = mergeModelOptions(p, (modelCustomEl && modelCustomEl.value) || cfg.model || "");
       if (modelEl) {
-        modelEl.innerHTML = optsHtml || '<option value="">(type a model id)</option>';
-        modelEl.style.display = optsHtml ? "" : "none";
+        modelEl.innerHTML = optsHtml || '<option value="">(type any loaded model id)</option>';
+        modelEl.style.display = "";
       }
-      if (modelCustomEl) modelCustomEl.style.display = "";
+      if (modelCustomEl) modelCustomEl.style.display = "block";
       if (baseUrlRow) baseUrlRow.style.display = (local || (providerEl && providerEl.value === "openai_compat")) ? "block" : "none";
       if (keyRow) keyRow.style.display = "block";
       if (keyLabel) keyLabel.textContent = local ? "API token (optional)" : "API Key";
@@ -305,7 +311,15 @@
 
     if (saveBtn) {
       saveBtn.onclick = () => {
-        const next = llm.setConfig(collect());
+        const data = collect();
+        const next = llm.setConfig(data);
+        try {
+          if (llm.rememberModels && data.model) {
+            const p = currentProvider();
+            const prev = (llm.cachedModels && llm.cachedModels(data.providerId, data.baseUrl || (p && p.baseUrl) || "")) || [];
+            llm.rememberModels(prev.concat([data.model]), data.providerId, data.baseUrl || (p && p.baseUrl) || "");
+          }
+        } catch (_) {}
         paintStatus(llm.status());
         try { window.csToast && window.csToast("AI provider saved", "#34d399"); } catch (_) {}
         // also refresh top-nav pill
@@ -336,30 +350,46 @@
         }
       };
     }
+    async function pullRemoteModels(silent) {
+      if (!llm.listModels) return;
+      const p = currentProvider();
+      const local = formIsLocal();
+      if (!local && !(p && p.id === "openai_compat")) return;
+      try {
+        const r = await llm.listModels();
+        const ids = (r && r.models) || [];
+        try {
+          const current = (modelCustomEl && modelCustomEl.value.trim()) || (llm.getConfig().model) || "";
+          if (current && llm.rememberModels) {
+            const merged = (r.cached || ids).concat([current]);
+            llm.rememberModels(merged, p && p.id, (baseUrlEl && baseUrlEl.value) || (p && p.baseUrl) || "");
+          }
+        } catch (_) {}
+        refreshModelList();
+        if (!silent && testOut) {
+          testOut.style.display = "block";
+          testOut.style.color = r.ok ? "var(--good)" : "var(--err)";
+          testOut.textContent = r.ok ? ("Models: " + (ids.join(", ") || "(none loaded — type any id below)")) : (r.error || ("HTTP " + r.status));
+        }
+        if (!silent) {
+          try { window.csToast && window.csToast(r.ok ? ("Found " + ids.length + " local model(s)") : "Could not list models", r.ok ? "#34d399" : "#f59e0b"); } catch (_) {}
+        }
+        return r;
+      } catch (e) {
+        if (!silent && testOut) { testOut.style.display = "block"; testOut.style.color = "var(--err)"; testOut.textContent = String(e && e.message || e); }
+      }
+    }
+
     if (refreshBtn) {
       refreshBtn.onclick = async () => {
         llm.setConfig(collect());
         if (testOut) { testOut.style.display = "block"; testOut.textContent = "Listing /v1/models …"; }
-        try {
-          const r = await llm.listModels();
-          const ids = (r && r.models) || [];
-          ids.forEach(function (id) {
-            if (modelEl && !Array.from(modelEl.options).some(function (o) { return o.value === id; })) {
-              const opt = document.createElement("option");
-              opt.value = id; opt.textContent = id;
-              modelEl.appendChild(opt);
-            }
-          });
-          if (ids[0] && modelCustomEl && !modelCustomEl.value) modelCustomEl.value = ids[0];
-          if (testOut) {
-            testOut.style.color = r.ok ? "var(--good)" : "var(--err)";
-            testOut.textContent = r.ok ? ("Models: " + (ids.join(", ") || "(none loaded)")) : (r.error || ("HTTP " + r.status));
-          }
-          try { window.csToast && window.csToast(r.ok ? ("Found " + ids.length + " local model(s)") : "Could not list models", r.ok ? "#34d399" : "#f59e0b"); } catch (_) {}
-        } catch (e) {
-          if (testOut) { testOut.style.color = "var(--err)"; testOut.textContent = String(e && e.message || e); }
-        }
+        await pullRemoteModels(false);
       };
+    }
+    // Local servers: pull currently loaded models so the dropdown is not stuck at 1–2 GGUF names.
+    if (formIsLocal() || (providerEl && providerEl.value === "openai_compat")) {
+      pullRemoteModels(true);
     }
     if (ggufFile) {
       ggufFile.onchange = function () {

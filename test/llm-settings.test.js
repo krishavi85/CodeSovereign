@@ -175,4 +175,10 @@ module.exports = async function (t) {
   t.ok('LM Studio card shows optional API token field', /API token \(optional\)/.test(localHtml));
   t.ok('LM Studio key row is visible', /id="llmKeyRow"[^>]*display:block/.test(localHtml));
   t.ok('LM Studio card does not prefill the leftover cloud key', !/sk-secret/.test(localHtml));
+  t.ok('custom model id field is always visible', /id="llmModelCustom"[^>]*display:block/.test(localHtml));
+  t.ok('LM Studio card tells the user any loaded model id works', /any id the local server has loaded/i.test(localHtml));
+  t.ok('dropdown includes the currently selected local model', /tinylama-1\.1B-Q5_K_M/.test(localHtml));
+  t.ok('extras merges cached /v1/models into the dropdown', extrasSrc.includes('cachedModels') && extrasSrc.includes('knownModelIds'));
+  t.ok('Settings auto-pulls /v1/models for local providers', extrasSrc.includes('pullRemoteModels') && extrasSrc.includes('Listing /v1/models'));
+  t.ok('typed model id is remembered on Save', extrasSrc.includes('rememberModels') && extrasSrc.includes('prev.concat'));
 };

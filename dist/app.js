@@ -801,9 +801,9 @@ function renderAgent() {
       ${time ? `<span style="font-size:11px;color:#6b7488;flex:none">${time}</span>` : ''}
     </div>`;
 
-  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer' };
-  const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket' };
-  const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c' };
+  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent' };
+  const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket','error':'alert' };
+  const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c','error':'#f87171' };
 
   let activityRows;
   if (steps.length === 0) {
@@ -819,7 +819,7 @@ function renderAgent() {
                    s.kind === 'plan-result' ? s.text :
                    s.kind === 'write' ? 'Wrote ' + s.path :
                    s.kind === 'validate' ? s.text :
-                   s.kind === 'validate-result' ? (s.issues ? s.issues.length + ' issue(s) found' : 'Validation complete') :
+                   s.kind === 'validate-result' ? ((s.quality ? ('Quality ' + s.quality.score + (s.quality.pass ? ' pass' : ' — refining') + ' · ') : '') + (s.issues ? s.issues.length + ' issue(s) found' : 'Validation complete')) :
                    s.kind === 'done' ? s.text : s.text;
       const file = s.kind === 'write' ? s.path : null;
       const time = i < steps.length - 1 ? fmtTimeAgo(Date.now() - (steps.length - i) * 1000) : 'now';
@@ -1246,7 +1246,7 @@ function renderIDE() {
   const problemsBody = `<div style="flex:1;overflow:auto;padding:10px 16px">${issues.length === 0 ? '<div style="font-size:12px;color:#34d399;padding:12px">✓ No issues found</div>' : issues.map(p => {
     const color = p.severity==='error' ? '#f87171' : p.severity==='security' ? '#ef4444' : p.severity==='a11y' ? '#f59e0b' : '#8b93a7';
     const icon = p.severity==='error' ? I.alert : p.severity==='security' ? I.shield : p.severity==='a11y' ? I.eye : I.alert;
-    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:${color};width:14px;height:14px;flex:none;display:inline-flex;align-items:center;justify-content:center">${icon}</span><span style="flex:1">${esc(p.msg)}</span><span style="font:400 11px 'JetBrains Mono',monospace;color:#6b7488">${esc(p.file)}</span></div>`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:${color};width:14px;height:14px;flex:none;display:inline-flex;align-items:center;justify-content:center">${icon}</span><span style="flex:1">${esc(p.message || p.msg || '')}</span><span style="font:400 11px 'JetBrains Mono',monospace;color:#6b7488">${esc(p.file)}</span></div>`;
   }).join('')}</div>`;
 
   // Git panel — shows file list with status
@@ -1262,7 +1262,7 @@ function renderIDE() {
           <div style="display:flex;align-items:center;gap:8px">
             <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#34d399;box-shadow:0 0 6px #34d399;animation:csPulse 1.6s infinite"></span>
             <span style="font-size:11px;font-weight:600;color:#34d399;letter-spacing:.05em">LIVE</span>
-            <span style="font-size:11.5px;color:#8b93a7">running on <span style="color:#a9b0ff;font-family:'JetBrains Mono',monospace">http://localhost:5173</span></span>
+            <span style="font-size:11.5px;color:#8b93a7">workspace preview <span style="color:#a9b0ff;font-family:'JetBrains Mono',monospace">preview://index.html</span></span>
           </div>
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-size:10.5px;color:#7b859c">${Engine.FS.count()} files \xc2\xb7 ${(Engine.FS.read('/index.html')||'').length} bytes</span>
@@ -1292,9 +1292,12 @@ function renderIDE() {
   let previewHTML;
   if (html) {
     previewHTML = `<div style="height:100%;background:#fff;overflow:auto"><iframe data-idepreview style="width:100%;height:100%;border:0;background:#fff" sandbox="allow-scripts"></iframe></div>`;
+    S._previewEpoch = (S._previewEpoch || 0) + 1;
+    const previewEpoch = S._previewEpoch;
     setTimeout(() => {
+      if (previewEpoch !== S._previewEpoch) return;
       const f = document.querySelector('[data-idepreview]');
-      if (f && f.dataset.bound !== '1') { f.srcdoc = html; f.dataset.bound = '1'; }
+      if (f) f.srcdoc = html;
     }, 0);
   } else {
     previewHTML = `<div style="padding:24px;color:#6b7488;text-align:center;font-size:13px">No /index.html — preview unavailable</div>`;
@@ -1342,7 +1345,7 @@ function renderIDE() {
       </div>
       <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">
         <span style="width:15px;height:15px;display:inline-flex;color:#6b7488;cursor:pointer">${I.back}</span>
-        <div style="flex:1;display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:7px;padding:5px 10px;font-size:11.5px;color:#8b93a7">http://localhost:5173 — ${S.ideFile||'preview'}</div>
+        <div style="flex:1;display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:7px;padding:5px 10px;font-size:11.5px;color:#8b93a7">preview://workspace — ${S.ideFile||'preview'}</div>
         <span id="refreshPreviewIde" style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer">${I.refresh}</span>
         <span id="openPreviewIde" style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer">${I.ext}</span>
       </div>
@@ -1432,9 +1435,13 @@ function bindIDE() {
   const rpp = document.getElementById('refreshPreviewPanel'); if (rpp) rpp.onclick = () => { renderAll(); };
   const opp = document.getElementById('openPreviewPanel'); if (opp) opp.onclick = () => { const h = Engine.Preview.build(); if (h) { const w = window.open('', '_blank'); if (w) { w.document.open(); w.document.write(h); w.document.close(); } } };
   // Inject srcdoc into the Live Preview panel iframe after render
+  const panelEpoch = S._previewEpoch;
   setTimeout(() => {
+    if (panelEpoch !== S._previewEpoch) return;
     const f = document.querySelector('[data-idepreviewpanel]');
-    if (f && f.dataset.bound !== '1') { const h = Engine.Preview.build(); if (h) { f.srcdoc = h; f.dataset.bound = '1'; } }
+    if (!f) return;
+    const h = Engine.Preview.build();
+    if (h) f.srcdoc = h;
   }, 0);
   const op = document.getElementById('openPreviewIde'); if (op) op.onclick = runPreview;
   const rpv = document.getElementById('runPreviewIde'); if (rpv) rpv.onclick = runPreview;
