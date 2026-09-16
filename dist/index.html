@@ -171,7 +171,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
       <button id="previewRefresh" class="cs-icon-btn" style="width:28px;height:28px" title="Refresh">↻</button>
       <button id="previewClose" class="cs-icon-btn" style="width:28px;height:28px" title="Close">✕</button>
     </div>
-    <iframe id="previewFrame" sandbox="allow-scripts" style="flex:1;border:0;background:#fff"></iframe>
+    <iframe id="previewFrame" sandbox="allow-scripts" csp="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'" style="flex:1;border:0;background:#fff"></iframe>
   </div>
 </div>
 

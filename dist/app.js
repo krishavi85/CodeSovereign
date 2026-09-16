@@ -657,7 +657,10 @@ function runPreview() {
   const frame = document.getElementById('previewFrame');
   const title = document.getElementById('previewTitle');
   const modal = document.getElementById('previewModal');
-  if (frame) frame.srcdoc = html;
+  if (frame) {
+    if (Engine.Preview.applyFrame) Engine.Preview.applyFrame(frame, html);
+    else frame.srcdoc = html;
+  }
   if (title) {
     const proj = Engine.Proj.current();
     title.textContent = (proj ? proj.name : 'preview') + ' — preview';
@@ -1403,7 +1406,7 @@ function renderIDE() {
             <span id="openPreviewPanel" title="Open preview in new tab" style="width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05);color:#8b93a7;cursor:pointer"><span style="width:13px;height:13px;display:inline-flex">${I.ext}</span></span>
           </div>
         </div>
-        <div style="flex:1;min-height:0;background:#fff"><iframe data-idepreviewpanel sandbox="allow-scripts" style="width:100%;height:100%;border:0;background:#fff"></iframe></div>
+        <div style="flex:1;min-height:0;background:#fff"><iframe data-idepreviewpanel sandbox="allow-scripts" csp="${esc(Engine.Preview.iframeCsp || '')}" style="width:100%;height:100%;border:0;background:#fff"></iframe></div>
       </div>
     </div>`;
   } else {
@@ -1424,13 +1427,16 @@ function renderIDE() {
   const html = Engine.Preview.build();
   let previewHTML;
   if (html) {
-    previewHTML = `<div style="height:100%;background:#fff;overflow:auto"><iframe data-idepreview style="width:100%;height:100%;border:0;background:#fff" sandbox="allow-scripts"></iframe></div>`;
+    previewHTML = `<div style="height:100%;background:#fff;overflow:auto"><iframe data-idepreview style="width:100%;height:100%;border:0;background:#fff" sandbox="allow-scripts" csp="${esc(Engine.Preview.iframeCsp || '')}"></iframe></div>`;
     S._previewEpoch = (S._previewEpoch || 0) + 1;
     const previewEpoch = S._previewEpoch;
     setTimeout(() => {
       if (previewEpoch !== S._previewEpoch) return;
       const f = document.querySelector('[data-idepreview]');
-      if (f) f.srcdoc = html;
+      if (f) {
+        if (Engine.Preview.applyFrame) Engine.Preview.applyFrame(f, html);
+        else f.srcdoc = html;
+      }
     }, 0);
   } else {
     previewHTML = `<div style="padding:24px;color:#6b7488;text-align:center;font-size:13px">No /index.html — preview unavailable</div>`;
@@ -1723,7 +1729,10 @@ function bindIDE() {
     const f = document.querySelector('[data-idepreviewpanel]');
     if (!f) return;
     const h = Engine.Preview.build();
-    if (h) f.srcdoc = h;
+    if (h) {
+      if (Engine.Preview.applyFrame) Engine.Preview.applyFrame(f, h);
+      else f.srcdoc = h;
+    }
   }, 0);
   const op = document.getElementById('openPreviewIde'); if (op) op.onclick = runPreview;
   const rpv = document.getElementById('runPreviewIde'); if (rpv) rpv.onclick = runPreview;

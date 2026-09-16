@@ -2191,20 +2191,28 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
     } catch (_) {}
     return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
   }
+  const PREVIEW_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'";
+  function withDocumentStartCsp(html){
+    html = html == null ? '' : String(html);
+    const meta = '<meta http-equiv="Content-Security-Policy" content="' + PREVIEW_CSP + '">';
+    const detachOpener = "<script>try{if(window.opener)window.opener=null;}catch(e){}</script>";
+    const lead = meta + detachOpener;
+    const dt = html.match(/^(\s*<!DOCTYPE[^>]*>)/i);
+    if (dt) return dt[1] + lead + html.slice(dt[1].length);
+    return lead + html;
+  }
   const Preview = {
     _lastCapture: null,
+    iframeCsp: PREVIEW_CSP,
+    applyFrame(frame, html){
+      if (!frame) return;
+      try { frame.setAttribute('csp', PREVIEW_CSP); } catch (_) {}
+      frame.srcdoc = html == null ? '' : String(html);
+    },
     build(){
       const htmlPath = '/index.html';
       if (!FS.exists(htmlPath)) return null;
-      let html = FS.read(htmlPath) || '';
-      const previewCsp = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'\">";
-      const detachOpener = "<script>try{if(window.opener)window.opener=null;}catch(e){}</script>";
-      const headOpen = /<head(\s[^>]*)?>/i;
-      if (headOpen.test(html)) {
-        html = html.replace(headOpen, function (m) { return m + previewCsp + detachOpener; });
-      } else {
-        html = previewCsp + detachOpener + html;
-      }
+      let html = withDocumentStartCsp(FS.read(htmlPath) || '');
       // inline <link rel="stylesheet" href="..."> for local css
       html = html.replace(/<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>/g, (m, href) => {
         if (FS.exists(href)) return '<style>' + (FS.read(href) || '') + '</style>';
@@ -2305,7 +2313,7 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
         + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\';">'
         + '<style>html,body{margin:0;height:100%;background:#0b0d12}iframe{border:0;width:100%;height:100%;display:block}</style>'
         + '</head><body>'
-        + '<iframe sandbox="allow-scripts" srcdoc="' + srcdoc + '"></iframe>'
+        + '<iframe sandbox="allow-scripts" csp="' + PREVIEW_CSP + '" srcdoc="' + srcdoc + '"></iframe>'
         + '</body></html>';
     },
     openTab(html){
