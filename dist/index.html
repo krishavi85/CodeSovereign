@@ -109,6 +109,9 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 .tree-row.active{background:rgba(109,93,252,.16);color:#a9b0ff}
 .tree-row .ext{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted);min-width:36px}
 .tree-row.dir{font-weight:600;color:#9aa3b8}
+.tab-ghost{position:absolute;color:rgba(167,139,250,.55);font:400 13px/1.62 'JetBrains Mono',monospace;pointer-events:none;white-space:pre;z-index:2}
+.tab-portal{position:absolute;right:12px;bottom:12px;z-index:3;max-width:280px;padding:10px 12px;border-radius:10px;background:#141a2b;border:1px solid rgba(167,139,250,.35);box-shadow:0 12px 30px rgba(0,0,0,.45);color:#c7cddb;font:500 12px Inter,sans-serif}
+.tab-hint{display:inline-flex;align-items:center;gap:8px;margin-left:auto;color:#7b859c;font:500 11px Inter,sans-serif;min-width:0}
 
 /* ============ TYPE SCALE (text-too-large fix) ============ */
 .cs-h1{font-size:20px;margin:0;font-weight:700;line-height:1.25}
@@ -193,6 +196,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="app.plugins.js"></script>
 <script src="app.plugins.extras.js"></script>
 <script src="engine.llm.js"></script>
+<script src="engine.tab.js"></script>
 <script src="engine.stack.js"></script>
 <script src="app.llm.extras.js"></script>
 <script src="app.bus.js"></script>

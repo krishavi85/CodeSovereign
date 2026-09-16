@@ -1457,9 +1457,11 @@ function renderIDE() {
         <span id="saveFileBtn2" style="width:16px;height:16px;display:inline-flex;color:#6b7488;margin:0 6px;cursor:pointer">${I.save}</span>
         <span style="width:16px;height:16px;display:inline-flex;color:#6b7488;margin:0 6px;cursor:pointer">${I.dots}</span>
       </div>
-      <div style="display:flex;align-items:center;gap:7px;padding:6px 16px;font-size:11.5px;color:#7b859c;flex:none;border-bottom:1px solid rgba(255,255,255,.04)"><span>${S.ideFile ? esc(S.ideFile) : 'no file'}</span>${S.ideDirty?'<span style="color:#f59e0b">· unsaved</span>':''}</div>
+      <div style="display:flex;align-items:center;gap:7px;padding:6px 16px;font-size:11.5px;color:#7b859c;flex:none;border-bottom:1px solid rgba(255,255,255,.04)"><span>${S.ideFile ? esc(S.ideFile) : 'no file'}</span>${S.ideDirty?'<span style="color:#f59e0b">· unsaved</span>':''}<span class="tab-hint" id="tabHint">Tab · Agent Tab</span></div>
       <div style="flex:1;display:flex;min-height:0;position:relative;overflow:hidden;background:#0a0e17">
-        <textarea id="ideEditor" spellcheck="false" style="flex:1;background:#0a0e17;color:#c9d1e0;border:0;outline:0;padding:8px 16px;font:400 13px/1.62 'JetBrains Mono',monospace;resize:none;width:100%;height:100%">${esc(S.ideBuffer || '')}</textarea>
+        <textarea id="ideEditor" spellcheck="false" style="flex:1;background:#0a0e17;color:#c9d1e0;border:0;outline:0;padding:8px 16px;font:400 13px/1.62 'JetBrains Mono',monospace;resize:none;width:100%;height:100%;position:relative;z-index:1">${esc(S.ideBuffer || '')}</textarea>
+        <div id="tabGhost" class="tab-ghost" hidden></div>
+        <div id="tabPortal" class="tab-portal" hidden></div>
       </div>
       <div style="height:250px;flex:none;border-top:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;background:#0b0f1a">
         <div style="display:flex;align-items:center;gap:22px;padding:0 16px;height:36px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">${idePanels}<div style="flex:1"></div><span style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer">${I.expand}</span></div>
@@ -1545,6 +1547,143 @@ function renderTreeRows(node, depth) {
   return html;
 }
 
+function tabCaretPixel(editor, pos) {
+  const div = document.createElement('div');
+  const st = window.getComputedStyle(editor);
+  ['font', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'padding', 'border', 'boxSizing', 'whiteSpace', 'wordWrap', 'width'].forEach(function (p) {
+    try { div.style[p] = st[p]; } catch (_) {}
+  });
+  div.style.position = 'absolute';
+  div.style.visibility = 'hidden';
+  div.style.whiteSpace = 'pre-wrap';
+  div.style.overflow = 'hidden';
+  div.style.width = editor.clientWidth + 'px';
+  div.textContent = editor.value.slice(0, pos);
+  const marker = document.createElement('span');
+  marker.textContent = '|';
+  div.appendChild(marker);
+  document.body.appendChild(div);
+  const x = marker.offsetLeft - editor.scrollLeft;
+  const y = marker.offsetTop - editor.scrollTop;
+  div.remove();
+  return { x: x, y: y };
+}
+
+function paintAgentTab(editor, sug) {
+  const ghost = document.getElementById('tabGhost');
+  const portal = document.getElementById('tabPortal');
+  const hint = document.getElementById('tabHint');
+  S._tabSug = sug || null;
+  const preview = sug && sug.text ? String(sug.text).split('\n')[0].slice(0, 64) : '';
+  if (hint) {
+    hint.textContent = sug
+      ? ('Tab · ' + (sug.label || sug.kind) + (preview ? ('  ' + preview) : ''))
+      : 'Tab · Agent Tab';
+  }
+  if (ghost) {
+    if (sug && sug.text && editor) {
+      const xy = tabCaretPixel(editor, editor.selectionStart || 0);
+      ghost.hidden = false;
+      ghost.style.left = (16 + xy.x) + 'px';
+      ghost.style.top = (8 + xy.y) + 'px';
+      ghost.textContent = sug.text;
+    } else {
+      ghost.hidden = true;
+      ghost.textContent = '';
+    }
+  }
+  if (portal) {
+    const Tab = window.Engine && window.Engine.Tab;
+    if (sug && Tab && Tab.isPortal(sug)) {
+      portal.hidden = false;
+      portal.innerHTML = '<div style="font:600 11px Inter;color:#a78bfa;margin-bottom:4px">Next edit</div>'
+        + '<div style="color:#e6e9f2;margin-bottom:8px">' + esc(sug.next.reason || sug.next.path) + '</div>'
+        + '<div style="font:500 11px JetBrains Mono,monospace;color:#8b93a7;margin-bottom:8px">' + esc(sug.next.path) + '</div>'
+        + '<button id="tabJumpBtn" class="btn ghost" type="button" style="padding:4px 10px;font-size:11px">Tab · jump</button>';
+      const btn = document.getElementById('tabJumpBtn');
+      if (btn) btn.onclick = function (ev) { ev.preventDefault(); acceptTabPortal(); };
+    } else {
+      portal.hidden = true;
+      portal.innerHTML = '';
+    }
+  }
+}
+
+function refreshAgentTab(editor) {
+  const Tab = window.Engine && window.Engine.Tab;
+  if (!Tab || !editor) return;
+  const sug = Tab.suggest({
+    path: S.ideFile,
+    content: editor.value,
+    cursor: editor.selectionStart,
+    selectionStart: editor.selectionStart,
+    selectionEnd: editor.selectionEnd
+  });
+  paintAgentTab(editor, sug);
+}
+
+function acceptAgentTab(editor) {
+  const Tab = window.Engine && window.Engine.Tab;
+  const sug = S._tabSug;
+  if (!Tab || !sug || !editor) return false;
+  if (sug.text) {
+    const next = Tab.apply(sug, editor.value);
+    editor.value = next.content;
+    S.ideBuffer = next.content;
+    S.ideDirty = true;
+    editor.selectionStart = editor.selectionEnd = next.cursor;
+    Tab.recordEdit({ path: S.ideFile, line: (next.content.split('\n')[Math.max(0, next.content.slice(0, next.cursor).split('\n').length - 1)] || ''), cursor: next.cursor });
+    sug.text = '';
+  }
+  if (Tab.isPortal(sug)) {
+    paintAgentTab(editor, sug);
+    return true;
+  }
+  refreshAgentTab(editor);
+  return true;
+}
+
+function acceptTabPortal() {
+  const Tab = window.Engine && window.Engine.Tab;
+  const sug = S._tabSug;
+  if (!Tab || !sug || !Tab.isPortal(sug)) return;
+  Tab.applyRelated(sug);
+  const dest = sug.next && sug.next.path;
+  S._tabSug = null;
+  if (dest) openFile(dest);
+}
+
+function bindAgentTab(editor) {
+  const Tab = window.Engine && window.Engine.Tab;
+  if (!Tab || !editor) return;
+  let t = 0;
+  const bump = function () {
+    clearTimeout(t);
+    t = setTimeout(function () { refreshAgentTab(editor); }, 80);
+  };
+  editor.addEventListener('input', function () {
+    const infoLine = (editor.value.split('\n')[Math.max(0, editor.value.slice(0, editor.selectionStart).split('\n').length - 1)] || '');
+    Tab.recordEdit({ path: S.ideFile, line: infoLine, cursor: editor.selectionStart });
+    bump();
+  });
+  editor.addEventListener('keyup', bump);
+  editor.addEventListener('click', bump);
+  editor.addEventListener('scroll', function () { if (S._tabSug) paintAgentTab(editor, S._tabSug); });
+  editor.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && S._tabSug) {
+      e.preventDefault();
+      paintAgentTab(editor, null);
+      return;
+    }
+    if (e.key === 'Tab' && !e.shiftKey && S._tabSug) {
+      e.preventDefault();
+      if (Tab.isPortal(S._tabSug) && !S._tabSug.text) acceptTabPortal();
+      else acceptAgentTab(editor);
+    }
+  });
+  bump();
+}
+
 function bindIDE() {
   try { bindPipelineModal(); } catch (_) {}
   const openP = document.getElementById('openPipelineModal');
@@ -1569,6 +1708,7 @@ function bindIDE() {
   const editor = document.getElementById('ideEditor');
   if (editor) {
     editor.oninput = e => { S.ideBuffer = e.target.value; S.ideDirty = true; /* re-render would lose focus; mark only */ const ind = document.querySelector('[id="screenRoot"]'); };
+    bindAgentTab(editor);
   }
   const sf = document.getElementById('saveFileBtn'); if (sf) sf.onclick = saveFile;
   const sf2 = document.getElementById('saveFileBtn2'); if (sf2) sf2.onclick = saveFile;

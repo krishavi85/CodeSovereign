@@ -334,6 +334,7 @@ module.exports = async function (t) {
 
   const html = fs.readFileSync(path.join(__dirname, '..', 'dist', 'index.html'), 'utf8');
   t.ok('index.html loads engine.stack.js', /engine\.stack\.js/.test(html));
+  t.ok('index.html loads engine.tab.js', /engine\.tab\.js/.test(html));
   t.ok('index.html loads app.stack.js', /app\.stack\.js/.test(html));
   t.ok('index.html loads the desktop layer', /desktop\/desktop-app\.js/.test(html));
   const deskSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'desktop', 'desktop-app.js'), 'utf8');
