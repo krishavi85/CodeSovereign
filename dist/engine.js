@@ -2298,15 +2298,25 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
       this._lastCapture = cap;
       return cap;
     },
+    tabShell(html){
+      const srcdoc = xmlEsc(html == null ? '' : String(html));
+      return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Preview</title>'
+        + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\';">'
+        + '<style>html,body{margin:0;height:100%;background:#0b0d12}iframe{border:0;width:100%;height:100%;display:block}</style>'
+        + '</head><body>'
+        + '<iframe sandbox="allow-scripts" srcdoc="' + srcdoc + '"></iframe>'
+        + '</body></html>';
+    },
     openTab(html){
       html = html == null ? this.build() : String(html);
       if (!html) return { ok: false, reason: 'no-html' };
       try {
-        const blob = new Blob([html], { type: 'text/html' });
+        const blob = new Blob([this.tabShell(html)], { type: 'text/html' });
         const url = URL.createObjectURL(blob);
         window.open(url, '_blank', 'noopener,noreferrer');
-        setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 30000);
-        return { ok: true, detached: true };
+        const tid = setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 30000);
+        if (tid && typeof tid.unref === 'function') tid.unref();
+        return { ok: true, detached: true, sandboxed: true };
       } catch (e) {
         return { ok: false, error: String(e && e.message || e) };
       }
