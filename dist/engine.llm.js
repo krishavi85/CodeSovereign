@@ -640,7 +640,7 @@
       "Apply this latest request as an edit: " + String(latest || ""),
       histBlk ? ("Conversation so far:\n" + histBlk) : "",
       "Validator issues to consider:\n" + (issueBlk || "(none)"),
-      "Current workspace files — return the FULL updated contents of every file that should remain:\n" + fileBlk,
+      "Selected files for this request (not the whole repository). Only return files you change — unlisted files stay as they are.\n" + fileBlk,
       "Preserve distinctive UI. No 'Simple Notepad'. No leftover music-app copy. No starter-template dashboard unless that is the current app."
     ].filter(Boolean).join("\n\n");
   }
@@ -715,6 +715,10 @@
     return names;
   }
 
+  function looksLikeExplore(prompt) {
+    return /\b(where (?:is|are)|find (?:the )?(?:file|function|class|caller|callers|implementation|reference|references)|who (?:calls|imports|uses)|how does|how is|architecture|project structure|directory tree|search for|\bgrep\b|locate|show me (?:the )?(?:file|code|implementation)|trace (?:the )?(?:dep|import|call)|what files)\b/i.test(String(prompt || ""));
+  }
+
   // Router selects engines. Running GitHub/HF fetch + npm install on every
   // "make the button purple" prompt would add noise, not intelligence.
   function classifyIntent(prompt) {
@@ -730,6 +734,9 @@
       const engines = ["repo", "runtime"];
       if (/\b(npm i(?:nstall)?\b|yarn add|pip install)\b/i.test(p)) engines.splice(1, 0, "deps");
       return { mode: "repo", engines: engines, reason: "external-source", remotes: remotes };
+    }
+    if (looksLikeExplore(p) && (isFollowUp(p) || hasPriorTurns(p))) {
+      return { mode: "explore", engines: ["repo", "runtime"], reason: "architecture-or-search", remotes: remotes };
     }
     if (/\b(fix|repair|bug|broken|crash|workaround|placeholder|hard-?coded secret|timeout after)\b/i.test(p)) {
       const prior = isFollowUp(p) || hasPriorTurns(p);
@@ -769,6 +776,388 @@
       }
     } catch (_) {}
     return { fileCount: files.length, languages: langs, paths: paths.slice(0, 40), aider: aider, memory: memory };
+  }
+
+  const EXPLORE_SKIP = /^\/\.codesovereign\/|\/node_modules\/|^\/\.git\//;
+  const EXPLORE_STOP = {
+    the: 1, a: 1, an: 1, and: 1, or: 1, to: 1, of: 1, in: 1, on: 1, for: 1, with: 1, from: 1,
+    this: 1, that: 1, these: 1, those: 1, your: 1, my: 1, our: 1, their: 1, it: 1, its: 1,
+    is: 1, are: 1, was: 1, were: 1, be: 1, been: 1, being: 1, do: 1, does: 1, did: 1, make: 1,
+    create: 1, add: 1, build: 1, fix: 1, repair: 1, please: 1, just: 1, new: 1, old: 1,
+    app: 1, application: 1, project: 1, file: 1, files: 1, code: 1, function: 1, class: 1,
+    how: 1, what: 1, where: 1, who: 1, when: 1, why: 1, which: 1, can: 1, you: 1, me: 1,
+    we: 1, they: 1, not: 1, no: 1, yes: 1, like: 1, about: 1, into: 1, over: 1, after: 1,
+    before: 1, than: 1, then: 1, also: 1, using: 1, use: 1, used: 1, based: 1, should: 1,
+    would: 1, could: 1, must: 1, need: 1, needs: 1, want: 1, wanted: 1, same: 1, keep: 1
+  };
+  const EXPLORE_RANK = { path: 0, glob: 1, symbol: 2, search: 3, ref: 4, dep: 5, entrypoint: 6 };
+
+  function workspaceIndex() {
+    const FS = window.Engine && window.Engine.FS;
+    const files = [];
+    if (!FS || !FS._data) return files;
+    Object.keys(FS._data).forEach(function (p) {
+      if (!FS.isFile(p) || EXPLORE_SKIP.test(p)) return;
+      const content = FS.read(p) || "";
+      if (content.length > 250000) return;
+      files.push({ path: p, content: content, bytes: content.length });
+    });
+    return files;
+  }
+
+  function escapeRe(s) {
+    return String(s || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function globToRe(pat) {
+    let s = String(pat || "").replace(/\\/g, "/");
+    const anchored = s.charAt(0) === "/";
+    s = s.replace(/[.+^${}()|[\]\\]/g, "\\$&")
+      .replace(/\*\*/g, "\u0000")
+      .replace(/\*/g, "[^/]*")
+      .replace(/\?/g, "[^/]")
+      .replace(/\u0000/g, ".*");
+    return new RegExp("^" + (anchored ? "" : ".*/?") + s + "$", "i");
+  }
+
+  function listDir(dir) {
+    dir = String(dir == null ? "/" : dir).replace(/\\/g, "/");
+    if (!dir || dir === ".") dir = "/";
+    if (dir.charAt(0) !== "/") dir = "/" + dir;
+    if (dir.length > 1 && dir.slice(-1) === "/") dir = dir.slice(0, -1);
+    const prefix = dir === "/" ? "/" : dir + "/";
+    const kids = {};
+    workspaceIndex().forEach(function (f) {
+      const p = f.path;
+      if (dir === "/") {
+        const rest = p.replace(/^\//, "");
+        const name = rest.split("/")[0];
+        kids["/" + name] = { path: "/" + name, name: name, type: rest.indexOf("/") >= 0 ? "dir" : "file" };
+        return;
+      }
+      if (p === dir) {
+        kids[p] = { path: p, name: p.split("/").pop(), type: "file" };
+        return;
+      }
+      if (p.indexOf(prefix) !== 0) return;
+      const rest = p.slice(prefix.length);
+      const name = rest.split("/")[0];
+      kids[prefix + name] = { path: prefix + name, name: name, type: rest.indexOf("/") >= 0 ? "dir" : "file" };
+    });
+    return Object.keys(kids).sort().map(function (k) { return kids[k]; });
+  }
+
+  function glob(pattern) {
+    const re = globToRe(pattern);
+    return workspaceIndex().map(function (f) { return f.path; }).filter(function (p) { return re.test(p); });
+  }
+
+  function grep(query, opts) {
+    opts = opts || {};
+    const maxHits = opts.maxHits || 40;
+    const maxPerFile = opts.maxPerFile || 8;
+    let re;
+    try {
+      if (opts.regex) re = new RegExp(query, opts.i === false ? "g" : "gi");
+      else {
+        const body = opts.word ? ("\\b" + escapeRe(query) + "\\b") : escapeRe(query);
+        re = new RegExp(body, opts.i === false ? "g" : "gi");
+      }
+    } catch (_) {
+      return { hits: [], error: "invalid-pattern", query: String(query || "") };
+    }
+    const hits = [];
+    const files = opts.glob ? glob(opts.glob).reduce(function (m, p) { m[p] = true; return m; }, {}) : null;
+    workspaceIndex().forEach(function (f) {
+      if (files && !files[f.path]) return;
+      const lines = String(f.content || "").split(/\r?\n/);
+      let n = 0;
+      for (let i = 0; i < lines.length && hits.length < maxHits; i++) {
+        re.lastIndex = 0;
+        if (!re.test(lines[i])) continue;
+        hits.push({ path: f.path, line: i + 1, text: lines[i].slice(0, 220) });
+        n++;
+        if (n >= maxPerFile) break;
+      }
+    });
+    return { hits: hits, count: hits.length, query: String(query || "") };
+  }
+
+  function readFile(path, opts) {
+    opts = opts || {};
+    const FS = window.Engine && window.Engine.FS;
+    if (!FS || !path || !FS.isFile(path) || EXPLORE_SKIP.test(path)) return null;
+    let content = FS.read(path) || "";
+    const bytes = content.length;
+    const max = opts.max || 8000;
+    const truncated = bytes > max;
+    if (truncated) content = content.slice(0, max) + "\n/* … truncated (" + bytes + " bytes) */";
+    return { path: path, content: content, bytes: bytes, truncated: truncated };
+  }
+
+  function projectStructure(maxEntries) {
+    const paths = workspaceIndex().map(function (f) { return f.path; }).sort();
+    const dirs = {};
+    paths.forEach(function (p) {
+      const parts = p.split("/").filter(Boolean);
+      parts.slice(0, -1).forEach(function (_, i) {
+        dirs["/" + parts.slice(0, i + 1).join("/")] = true;
+      });
+    });
+    return {
+      fileCount: paths.length,
+      dirs: Object.keys(dirs).sort(),
+      paths: paths.slice(0, maxEntries || 80)
+    };
+  }
+
+  function findSymbol(name) {
+    const hits = [];
+    if (!name) return hits;
+    const AST = window.Engine && window.Engine.AST;
+    const reFn = new RegExp("(?:function\\s+|class\\s+|(?:const|let|var)\\s+|export\\s+(?:default\\s+)?(?:async\\s+)?(?:function\\s+|class\\s+)?)\\s*" + escapeRe(name) + "\\b");
+    workspaceIndex().forEach(function (f) {
+      if (AST && AST.parse && /\.(js|mjs|cjs)$/.test(f.path)) {
+        try {
+          const parsed = AST.parse(f.content, f.path);
+          if (parsed && parsed.ok) {
+            let found = false;
+            ["functions", "classes", "exports"].forEach(function (k) {
+              (parsed[k] || []).forEach(function (n) {
+                if (n === name) {
+                  hits.push({ path: f.path, kind: k === "functions" ? "function" : (k === "classes" ? "class" : "export"), name: name });
+                  found = true;
+                }
+              });
+            });
+            if (found) return;
+          }
+        } catch (_) {}
+      }
+      if (reFn.test(f.content)) hits.push({ path: f.path, kind: "match", name: name });
+    });
+    return hits;
+  }
+
+  function findRefs(name) {
+    if (!name) return [];
+    const AST = window.Engine && window.Engine.AST;
+    const out = [];
+    const seen = {};
+    function push(h) {
+      const k = h.path + ":" + (h.line || 0) + ":" + (h.text || h.kind || "");
+      if (seen[k]) return;
+      seen[k] = true;
+      out.push(h);
+    }
+    grep(name, { word: true, maxHits: 30 }).hits.forEach(push);
+    if (AST && AST.parse) {
+      workspaceIndex().forEach(function (f) {
+        if (!/\.(js|mjs|cjs)$/.test(f.path)) return;
+        try {
+          const parsed = AST.parse(f.content, f.path);
+          if (!parsed || !parsed.ok) return;
+          (parsed.calls || []).forEach(function (c) {
+            if (c === name || c.slice(-(name.length + 1)) === "." + name) {
+              push({ path: f.path, kind: "call", text: c, name: name });
+            }
+          });
+        } catch (_) {}
+      });
+    }
+    return out.slice(0, 40);
+  }
+
+  function traceDeps(path) {
+    const file = readFile(path, { max: 20000 });
+    const imports = file ? extractExternalImports(file.content) : [];
+    const rel = [];
+    if (file) {
+      String(file.content).replace(/(?:from|import|require\()\s*['"](\.[^'"]+)['"]/g, function (_, spec) {
+        rel.push(spec);
+        return _;
+      });
+    }
+    const importers = [];
+    const needle = String(path || "").split("/").pop() || "";
+    if (needle) {
+      grep(needle, { maxHits: 20 }).hits.forEach(function (h) {
+        if (h.path !== path) importers.push(h.path);
+      });
+    }
+    const uniq = [];
+    importers.forEach(function (p) { if (uniq.indexOf(p) < 0) uniq.push(p); });
+    return { path: path, packages: imports, relative: rel, importers: uniq.slice(0, 16) };
+  }
+
+  function unique(arr) {
+    const seen = {};
+    const out = [];
+    (arr || []).forEach(function (x) {
+      if (!x || seen[x]) return;
+      seen[x] = true;
+      out.push(x);
+    });
+    return out;
+  }
+
+  function queryTokens(prompt) {
+    const p = String(prompt || "");
+    const quoted = [];
+    p.replace(/"([^"]{1,120})"|'([^']{1,120})'|`([^`]{1,120})`/g, function (_, a, b, c) {
+      const s = a || b || c;
+      if (s) quoted.push(s);
+      return _;
+    });
+    const paths = [];
+    p.replace(/(^|[\s"'`(])(\/[\w./-]+\.\w{1,10})/g, function (_, _s, path) {
+      paths.push(path);
+      return _;
+    });
+    const globs = [];
+    p.replace(/\b([\w./-]*\*[\w./-]*)\b/g, function (m) {
+      globs.push(m);
+      return m;
+    });
+    const idents = [];
+    p.replace(/\b([A-Za-z_][\w]{2,})\b/g, function (m) {
+      if (EXPLORE_STOP[m.toLowerCase()]) return m;
+      idents.push(m);
+      return m;
+    });
+    return { quoted: unique(quoted), paths: unique(paths), globs: unique(globs), idents: unique(idents).slice(0, 12) };
+  }
+
+  function relevantContext(prompt, opts) {
+    opts = opts || {};
+    const followUp = !!opts.followUp;
+    const includeContents = opts.includeContents != null ? !!opts.includeContents : followUp;
+    const tokens = queryTokens(prompt);
+    const structure = projectStructure(80);
+    const locate = [];
+    const hits = [];
+    const symbols = [];
+    const refs = [];
+    const deps = [];
+    const selected = {};
+
+    function take(path, reason) {
+      if (!path || EXPLORE_SKIP.test(path)) return;
+      const rank = EXPLORE_RANK[reason] != null ? EXPLORE_RANK[reason] : 9;
+      if (selected[path] && selected[path].rank <= rank) return;
+      const f = readFile(path, { max: 4500 });
+      if (!f) return;
+      selected[path] = {
+        path: path,
+        content: includeContents ? f.content : "",
+        bytes: f.bytes,
+        reason: reason,
+        rank: rank
+      };
+    }
+
+    if (!includeContents) {
+      return {
+        structure: structure,
+        tokens: tokens,
+        locate: [],
+        hits: [],
+        symbols: [],
+        refs: [],
+        deps: [],
+        files: [],
+        skippedDump: true
+      };
+    }
+
+    tokens.paths.forEach(function (p) { locate.push(p); take(p, "path"); });
+    tokens.globs.forEach(function (g) {
+      glob(g).forEach(function (p) { locate.push(p); take(p, "glob"); });
+    });
+    tokens.quoted.forEach(function (q) {
+      grep(q, { regex: false }).hits.forEach(function (h) { hits.push(h); take(h.path, "search"); });
+    });
+    tokens.idents.forEach(function (id) {
+      findSymbol(id).forEach(function (s) { symbols.push(s); take(s.path, "symbol"); });
+      findRefs(id).slice(0, 16).forEach(function (h) { refs.push(h); take(h.path, "ref"); });
+      grep(id, { word: true, maxHits: 16 }).hits.forEach(function (h) { hits.push(h); take(h.path, "search"); });
+    });
+    tokens.paths.forEach(function (p) {
+      const t = traceDeps(p);
+      deps.push(t);
+      (t.importers || []).forEach(function (ip) { take(ip, "dep"); });
+    });
+
+    if (!Object.keys(selected).length) {
+      ["/index.html", "/package.json", "/scripts/app.js", "/styles/app.css"].forEach(function (p) {
+        take(p, "entrypoint");
+      });
+    }
+
+    let arch = "";
+    try {
+      const Sov = window.Engine && window.Engine.Sovereign;
+      if (Sov && Sov.read) {
+        const md = Sov.read("architecture.md");
+        if (typeof md === "string" && md) arch = md.slice(0, 1500);
+      }
+    } catch (_) {}
+
+    const files = Object.keys(selected).map(function (k) { return selected[k]; })
+      .sort(function (a, b) { return a.rank - b.rank; })
+      .slice(0, 6)
+      .map(function (f) {
+        return { path: f.path, content: f.content, bytes: f.bytes, reason: f.reason };
+      });
+
+    return {
+      structure: structure,
+      tokens: tokens,
+      locate: unique(locate).slice(0, 24),
+      hits: hits.slice(0, 40),
+      symbols: symbols.slice(0, 20),
+      refs: refs.slice(0, 20),
+      deps: deps.slice(0, 8),
+      files: files,
+      architecture: arch,
+      skippedDump: false
+    };
+  }
+
+  function formatExplore(ctx) {
+    if (!ctx || ctx.skippedDump) return "";
+    const lines = [];
+    lines.push("REPO EXPLORE (selected files only — do not assume you have the whole repository).");
+    if (ctx.structure) {
+      lines.push("Project structure (" + ctx.structure.fileCount + " files):\n- " + (ctx.structure.paths || []).slice(0, 40).join("\n- "));
+    }
+    if (ctx.architecture) lines.push("Architecture notes:\n" + ctx.architecture);
+    if (ctx.locate && ctx.locate.length) lines.push("Locate:\n- " + ctx.locate.join("\n- "));
+    if (ctx.hits && ctx.hits.length) {
+      lines.push("Search matches:\n" + ctx.hits.slice(0, 20).map(function (h) {
+        return "- " + h.path + ":" + h.line + "  " + String(h.text || "").trim();
+      }).join("\n"));
+    }
+    if (ctx.symbols && ctx.symbols.length) {
+      lines.push("Implementations:\n" + ctx.symbols.slice(0, 12).map(function (s) {
+        return "- " + s.name + " (" + s.kind + ") in " + s.path;
+      }).join("\n"));
+    }
+    if (ctx.refs && ctx.refs.length) {
+      lines.push("Callers / references:\n" + ctx.refs.slice(0, 12).map(function (h) {
+        return "- " + h.path + (h.line ? (":" + h.line) : "") + (h.text ? ("  " + String(h.text).trim()) : "");
+      }).join("\n"));
+    }
+    if (ctx.deps && ctx.deps.length) {
+      lines.push("Dependency trace:\n" + ctx.deps.map(function (d) {
+        return "- " + d.path + " imports " + (d.packages || []).join(", ") +
+          (d.importers && d.importers.length ? ("; imported by " + d.importers.join(", ")) : "");
+      }).join("\n"));
+    }
+    if (ctx.files && ctx.files.length) {
+      lines.push("Why these files: " + ctx.files.map(function (f) { return f.path + " (" + f.reason + ")"; }).join(", "));
+    }
+    return lines.join("\n\n");
   }
 
   function scanDeps() {
@@ -1268,17 +1657,29 @@
           text: "Brain: " + intent.mode + " via " + intent.engines.join(" + ") + " (" + intent.reason + ")"
         });
         onStep && onStep(steps[steps.length - 1]);
+        const includeContents = followUp || intent.mode === "edit" || intent.mode === "repair" || intent.mode === "explore" || intent.mode === "deps";
+        const explore = relevantContext(prompt, { followUp: followUp, includeContents: includeContents });
+        steps.push({
+          kind: "explore",
+          text: explore.skippedDump
+            ? "Repo explore: not dumping leftover starter files (new app)"
+            : ("Repo explore: scanned " + ((explore.structure && explore.structure.fileCount) || 0) +
+              " files, " + ((explore.hits && explore.hits.length) || 0) + " matches, " +
+              ((explore.files && explore.files.length) || 0) + " files in context")
+        });
+        onStep && onStep(steps[steps.length - 1]);
         const engines = runSelectedEngines(intent, steps, onStep);
         if (followUp) {
-          const existing = snapshotWorkspace();
-          const existingIssues = existing.length
-            ? issuesForFiles(existing, window.Engine.Validator.runAll())
+          const selected = (explore.files && explore.files.length) ? explore.files : snapshotWorkspace().slice(0, 6);
+          const existingIssues = selected.length
+            ? issuesForFiles(selected, window.Engine.Validator.runAll())
             : [];
-          extraUser = buildFollowUpPrompt(prompt, existing, existingIssues, conversationHistory(prompt));
+          extraUser = buildFollowUpPrompt(prompt, selected, existingIssues, conversationHistory(prompt));
         }
+        const exploreBlk = formatExplore(explore);
         extraUser = extraUser
-          ? (extraUser + "\n\n" + formatRag(intent, followUp ? engines.repo : null, followUp || intent.mode === "deps" ? engines.deps : null, null, { followUp: followUp }))
-          : formatRag(intent, followUp ? engines.repo : null, followUp || intent.mode === "deps" ? engines.deps : null, null, { followUp: followUp });
+          ? (extraUser + (exploreBlk ? "\n\n" + exploreBlk : "") + "\n\n" + formatRag(intent, null, followUp || intent.mode === "deps" ? engines.deps : null, null, { followUp: followUp }))
+          : ((exploreBlk ? exploreBlk + "\n\n" : "") + formatRag(intent, null, followUp || intent.mode === "deps" ? engines.deps : null, null, { followUp: followUp }));
         for (let round = 1; round <= MAX_ROUNDS; round++) {
           steps.push({
             kind: "plan",
@@ -1389,8 +1790,33 @@
     patchIssues,
     smartLoop,
     classifyIntent,
+    looksLikeExplore,
     scanRepo,
     scanDeps,
+    listDir,
+    glob,
+    grep,
+    readFile,
+    projectStructure,
+    findSymbol,
+    findRefs,
+    traceDeps,
+    queryTokens,
+    relevantContext,
+    formatExplore,
+    RepoExplore: {
+      listDir: listDir,
+      glob: glob,
+      grep: grep,
+      readFile: readFile,
+      structure: projectStructure,
+      findSymbol: findSymbol,
+      findRefs: findRefs,
+      traceDeps: traceDeps,
+      queryTokens: queryTokens,
+      relevantContext: relevantContext,
+      formatExplore: formatExplore
+    },
     observeRuntime,
     evaluateBuild,
     formatRag,
