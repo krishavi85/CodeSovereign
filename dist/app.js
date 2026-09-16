@@ -871,12 +871,13 @@ function renderAgent() {
   if (steps.length === 0) {
     activityRows = `<div style="padding:24px;text-align:center;color:#7b859c;font-size:13px">No activity yet — type a prompt and click <b style="color:#a78bfa">Run</b>.</div>`;
   } else {
-    activityRows = steps.map((s, i) => {
+    const shown = steps.slice().reverse();
+    activityRows = shown.map((s, i) => {
       const name = specialistMap[s.kind] || 'Agent';
       const ik = specialistIcon[s.kind] || 'sparkle';
       const color = specialistColor[s.kind] || '#a78bfa';
-      const st = s.kind === 'done' ? 'Done' : (S.agentRunning ? 'Working' : 'Logged');
-      const stC = s.kind === 'done' ? '#34d399' : '#a78bfa';
+      const st = s.kind === 'done' ? 'Done' : (s.kind === 'user' ? 'You' : (S.agentRunning && i === 0 ? 'Working' : 'Logged'));
+      const stC = s.kind === 'done' ? '#34d399' : s.kind === 'user' ? '#fbbf24' : '#a78bfa';
       const desc = s.kind === 'plan' ? s.text :
                    s.kind === 'plan-result' ? s.text :
                    s.kind === 'write' ? 'Wrote ' + s.path :
@@ -884,7 +885,7 @@ function renderAgent() {
                    s.kind === 'validate-result' ? ((s.quality ? ('Quality ' + s.quality.score + (s.quality.pass ? ' pass' : ' — refining') + ' · ') : '') + (s.issues ? s.issues.length + ' issue(s) found' : 'Validation complete')) :
                    s.kind === 'done' ? s.text : s.text;
       const file = s.kind === 'write' ? s.path : null;
-      const time = i < steps.length - 1 ? fmtTimeAgo(Date.now() - (steps.length - i) * 1000) : 'now';
+      const time = i === 0 ? 'now' : fmtTimeAgo(Date.now() - i * 1000);
       return aRow(name, ik, color, st, stC, desc, time, file);
     }).join('');
   }
@@ -3078,6 +3079,10 @@ function bindRecovery(){
   document.querySelectorAll('[data-sovfile]').forEach(function(el){
     el.onclick = function(){ openSovereignFile(el.dataset.sovfile); };
   });
+  try {
+    const host = document.getElementById('crossTabHost');
+    if (host && window.renderCrossTabCard) host.innerHTML = window.renderCrossTabCard();
+  } catch (_) {}
   // Only auto-scan on entry if no recent scan exists (fixes render loop / flicker)
   try {
     var _fresh = (S && S.lastScan && S.lastScan.at) ? (Date.now() - S.lastScan.at) : Infinity;

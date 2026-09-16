@@ -140,6 +140,8 @@ module.exports = async function (t) {
   t.ok('Agent prompt invites follow-ups on the same app', appSrc.includes('Ask a follow-up'));
   t.ok('IDE has a follow-up composer on the same project', appSrc.includes('ideFollowUpInput'));
   t.ok('Agent session persists across screens', appSrc.includes('cs.agent.session.v1'));
+  t.ok('Recovery fills the Cross-Tab card after render (inline scripts in innerHTML never run)', /crossTabHost[\s\S]{0,400}renderCrossTabCard/.test(appSrc) || /getElementById\('crossTabHost'\)/.test(appSrc) && appSrc.includes('bindRecovery'));
+  t.ok('bindRecovery paints Cross-Tab Communication', /function bindRecovery[\s\S]*renderCrossTabCard/.test(appSrc));
 
   const { win, store } = load();
   const LLM = win.Engine.LLM;
