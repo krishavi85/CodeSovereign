@@ -2613,7 +2613,11 @@ function renderRecovery(){
       <div class="card" style="padding:20px;margin-top:18px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <h3 class="cs-h3">Mock &amp; Placeholder Detector</h3>
-          <span style="font-size:12px;color:var(--muted)">setTimeout-as-data, fake arrays, hardcoded numbers, TODO / FIXME</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span style="font-size:12px;color:var(--muted)">empty handlers, fake async, TODOs, hardcoded secrets</span>
+            <button class="btn" onclick="runMockDetectorScan()">Scan</button>
+            <button class="btn btn-primary" onclick="runMockDetectorFix()">Fix placeholders</button>
+          </div>
         </div>
         ${renderRecoveryMockDetector()}
       </div>
@@ -2878,6 +2882,7 @@ function renderRecoveryV4Cards(){
       <button class="btn btn-primary" onclick="runV4FullBenchmark()">Run V4 Full Benchmark</button>
       <button class="btn" onclick="runV4SelfCheck()">Engine Self-Check</button>
       <button class="btn" onclick="runV4UnresolvedInspector()">Inspect Unresolved</button>
+      <button class="btn btn-primary" onclick="runV4UnresolvedFix()">Fix unresolved</button>
       <button class="btn" onclick="runV4IssueV4Certificate()">Issue V4 Certificate</button>
     </div>
     <div id="v4-actions-out" style="margin-top:14px"></div>
@@ -3076,23 +3081,62 @@ function runV4UnresolvedInspector(){
   if (!out) return;
   try {
     const UI = window.UnresolvedInspector || window.Engine.UnresolvedInspector;
-    const samples = [
-      { message: "DB connection refused", faultClass: "db.connect", package: "pg" },
-      { message: "Missing alt attribute", faultClass: "html.alt" },
-      { message: "Timeout after 5s", faultClass: "rt.timeout" },
-      { message: "Hard-coded secret", faultClass: "sec.secret" }
-    ];
-    const insps = UI.inspectAll(samples);
-    const sorted = UI.byPriority(insps);
+    const report = UI.inspectWorkspace ? UI.inspectWorkspace() : { inspected: UI.inspectAll(UI.collect ? UI.collect() : []), count: 0 };
+    const sorted = report.inspected || UI.byPriority(report.inspected || []);
+    let capture = null;
+    try { capture = window.Engine.Preview && window.Engine.Preview.capture(); } catch(_){}
+    if (!sorted.length) {
+      out.innerHTML = `
+        <div style="padding:14px;border:1px solid #34d39955;border-radius:8px">
+          <div style="font-weight:700;color:#34d399;margin-bottom:8px">Unresolved Inspector — workspace is clean</div>
+          <div style="font-size:12px;color:var(--muted)">No validator, mock, secret, timeout, or DB findings. Auto-workarounds are ready for db.connect, rt.timeout, sec.secret, and html.alt when they appear.</div>
+          ${capture && capture.dataUrl ? '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid #ffffff14"/>' : ''}
+        </div>`;
+      toast("No unresolved issues", "#34d399");
+      return;
+    }
     out.innerHTML = `
       <div style="padding:14px;border:1px solid #fbbf2433;border-radius:8px">
-        <div style="font-weight:700;color:#fbbf24;margin-bottom:8px">Unresolved Inspector - Triage by Priority</div>
+        <div style="font-weight:700;color:#fbbf24;margin-bottom:8px">Unresolved Inspector - Triage by Priority (${sorted.length} live finding${sorted.length === 1 ? '' : 's'})</div>
         <div style="font-size:12px">
-          ${sorted.map(i => "<div style=\"padding:6px 0;border-bottom:1px solid #ffffff10\"><span style=\"color:" + (i.priority === 1 ? "#ef4444" : i.priority === 2 ? "#f59e0b" : "#34d399") + ";font-weight:600\">P" + i.priority + "</span> <span style=\"color:#fbbf24\">" + esc(i.category) + "</span> " + esc(i.severity) + " - " + esc(i.issue.message) + "<br><span style=\"color:var(--muted);font-size:11px\">Next: " + esc(i.nextStep) + " - Workaround: " + esc(i.workaround) + "</span></div>").join("")}
+          ${sorted.map(i => "<div style=\"padding:6px 0;border-bottom:1px solid #ffffff10\"><span style=\"color:" + (i.priority === 1 ? "#ef4444" : i.priority === 2 ? "#f59e0b" : "#34d399") + ";font-weight:600\">P" + i.priority + "</span> <span style=\"color:#fbbf24\">" + esc(i.category) + "</span> " + esc(i.severity) + " - " + esc((i.issue && i.issue.message) || "") + (i.issue && i.issue.file ? " <span style=\"color:var(--muted)\">(" + esc(i.issue.file) + ")</span>" : "") + "<br><span style=\"color:var(--muted);font-size:11px\">Next: " + esc(i.nextStep) + " — Workaround: " + esc(i.workaround) + (i.canAutoFix ? " — auto-fix ready" : "") + "</span></div>").join("")}
         </div>
+        ${capture && capture.dataUrl ? '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid #ffffff14"/>' : ''}
       </div>`;
     toast("Inspected " + sorted.length + " unresolved issues", "#fbbf24");
   } catch(e){ out.textContent = "error: " + e.message; toast("Inspector error: " + e.message, "#ef4444"); }
+}
+
+async function runV4UnresolvedFix(){
+  const out = document.getElementById("v4-actions-out");
+  if (!out) return;
+  out.textContent = "inspect → plan → patch → preview…";
+  try {
+    const LLM = window.Engine && window.Engine.LLM;
+    let result;
+    if (LLM && typeof LLM.smartLoop === "function") {
+      result = await LLM.smartLoop({ kind: "unresolved" });
+    } else {
+      const UI = window.UnresolvedInspector || window.Engine.UnresolvedInspector;
+      const auto = UI.autoFixAll();
+      const capture = window.Engine.Preview && window.Engine.Preview.capture && window.Engine.Preview.capture();
+      result = { patched: auto.patched, remaining: auto.remaining, capture: capture, steps: [{ kind: "patch", text: "Applied " + auto.patched.length + " workaround(s)" }], llm: { skipped: true } };
+    }
+    const remaining = result.remaining || [];
+    const insps = (window.UnresolvedInspector || window.Engine.UnresolvedInspector).inspectAll(remaining);
+    out.innerHTML = `
+      <div style="padding:14px;border:1px solid #34d39933;border-radius:8px">
+        <div style="font-weight:700;color:#34d399;margin-bottom:8px">Unresolved fix loop</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${(result.steps || []).map(s => esc(s.kind) + ": " + esc(s.text)).join(" → ")}</div>
+        <div style="font-size:12px">Patched ${((result.patched && result.patched.length) || 0)} · remaining ${remaining.length}${result.llm && result.llm.skipped ? " · LLM skipped" : ""}</div>
+        ${insps.length ? insps.map(i => "<div style=\"padding:6px 0;border-bottom:1px solid #ffffff10\"><span style=\"color:" + (i.priority === 1 ? "#ef4444" : "#f59e0b") + ";font-weight:600\">P" + i.priority + "</span> " + esc((i.issue && i.issue.message) || "") + " — " + esc(i.workaround) + "</div>").join("") : "<div style=\"color:#34d399;margin-top:8px\">All unresolved findings patched.</div>"}
+        ${result.capture && result.capture.dataUrl ? '<img alt="Live preview snapshot" src="' + result.capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid #ffffff14"/>' : ''}
+      </div>`;
+    toast("Unresolved fix: " + ((result.patched && result.patched.length) || 0) + " patched, " + remaining.length + " left", remaining.length ? "#f59e0b" : "#34d399");
+    S.lastScan = null;
+    if (typeof runValidatorScan === "function") runValidatorScan();
+    if (typeof renderAll === "function") setTimeout(renderAll, 80);
+  } catch(e){ out.textContent = "error: " + e.message; toast("Unresolved fix error: " + e.message, "#ef4444"); }
 }
 
 function runV4IssueV4Certificate(){
@@ -4176,23 +4220,26 @@ function renderRecoveryMockDetector(){
   try {
     if (!window.Engine || !window.Engine.MockDetect) return '<div style="color:var(--muted);font-size:13px">Mock detector not loaded</div>';
     var findings = window.Engine.MockDetect.run() || [];
+    var capture = null;
+    try { capture = window.Engine.Preview && window.Engine.Preview.lastCapture && window.Engine.Preview.lastCapture(); } catch (_) {}
     if (!findings.length) {
       return '<div style="display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--good);border-radius:8px;background:rgba(52,211,153,.06)">'
         + '<span style="color:var(--good)">' + I.checkc + '</span>'
         + '<div><div style="font-weight:600;font-size:13px;color:var(--good)">No mocks or placeholders detected</div>'
-        + '<div style="font-size:11.5px;color:var(--muted)">No setTimeout-as-data, fake arrays, hardcoded numbers or TODO/FIXME placeholders</div></div>'
-        + '</div>';
+        + '<div style="font-size:11.5px;color:var(--muted)">Empty handlers, fake async, TODOs, and hardcoded secrets are scanned on every Recovery visit. Use Fix placeholders after a scan that finds them.</div></div>'
+        + '</div>'
+        + (capture && capture.dataUrl ? '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid var(--line)"/>' : '');
     }
     var html = '<div style="font:600 12px Inter;color:var(--warn);margin-bottom:8px">' + findings.length + ' mock / placeholder finding' + (findings.length === 1 ? '' : 's') + '</div>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">';
-    findings.forEach(function(f){
+    findings.slice(0, 24).forEach(function(f){
       var kindLabel = (f.kind || 'mock').replace(/-/g, ' ');
       html += '<div style="padding:12px;border:1px solid var(--warn);border-radius:8px;background:rgba(245,158,11,.05)">';
       html +=   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
       html +=     '<span style="font:600 10.5px Inter;padding:2px 8px;background:var(--warn);color:#0a0e1a;border-radius:9px;text-transform:uppercase">' + esc(kindLabel) + '</span>';
       html +=     '<span style="font:600 11px Inter;color:var(--muted);margin-left:auto">x' + (f.count || 1) + '</span>';
       html +=   '</div>';
-      html +=   '<div style="font:600 12px Inter;margin-bottom:4px">' + esc(f.file || '') + '</div>';
+      html +=   '<div style="font:600 12px Inter;margin-bottom:4px">' + esc(f.file || '') + (f.line ? ':' + f.line : '') + '</div>';
       html +=   '<div style="font-size:11.5px;color:var(--muted);line-height:1.45">' + esc(f.why || '') + '</div>';
       if (f.sample) {
         html += '<div style="margin-top:6px;padding:6px 8px;background:var(--bg-2);border:1px solid var(--line);border-radius:4px;font:500 11px/1.4 monospace;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.sample) + '</div>';
@@ -4200,9 +4247,46 @@ function renderRecoveryMockDetector(){
       html += '</div>';
     });
     html += '</div>';
+    if (capture && capture.dataUrl) {
+      html += '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:12px;max-width:100%;border-radius:8px;border:1px solid var(--line)"/>';
+    }
     return html;
   } catch (e) {
     return '<div style="color:var(--err);font-size:13px">mock-detect error: ' + esc(String(e && e.message || e)) + '</div>';
+  }
+}
+
+function runMockDetectorScan(){
+  try {
+    if (window.Engine && window.Engine.Preview && window.Engine.Preview.capture) window.Engine.Preview.capture();
+    if (window.Engine && window.Engine.MockDetect) window.Engine.MockDetect.run();
+    toast('Mock detector scanned the current workspace', '#22d3ee');
+    if (typeof renderAll === 'function') renderAll();
+  } catch (e) {
+    toast('Mock scan failed: ' + (e && e.message || e), '#ef4444');
+  }
+}
+
+async function runMockDetectorFix(){
+  try {
+    toast('Fixing placeholders (inspect → patch → preview)…', '#7c5cff');
+    const LLM = window.Engine && window.Engine.LLM;
+    let result;
+    if (LLM && typeof LLM.smartLoop === 'function') {
+      result = await LLM.smartLoop({ kind: 'mocks' });
+    } else if (window.Engine.MockDetect && window.Engine.MockDetect.fix) {
+      result = window.Engine.MockDetect.fix();
+    } else {
+      toast('Mock detector not loaded', '#ef4444'); return;
+    }
+    const left = (result.remaining && (result.remaining.length || result.remaining.total)) || 0;
+    const n = (result.patched && result.patched.length) || 0;
+    toast('Placeholder fix: ' + n + ' file(s) patched, ' + (typeof left === 'number' ? left : 0) + ' left', left ? '#f59e0b' : '#34d399');
+    S.lastScan = null;
+    if (typeof runValidatorScan === 'function') runValidatorScan();
+    if (typeof renderAll === 'function') renderAll();
+  } catch (e) {
+    toast('Placeholder fix failed: ' + (e && e.message || e), '#ef4444');
   }
 }
 
@@ -4726,33 +4810,34 @@ function runFaultInjectionBenchmark(){
   try {
     if (!window.Engine || !window.Engine.FaultInjector) { toast('FaultInjector not loaded', '#ef4444'); return; }
     var FI = window.Engine.FaultInjector;
-    var faults = Object.keys(FI.FAULTS || {});
-    var summary = { injected: 0, detected: 0, repaired: 0, results: [] };
-    toast('V3 Benchmark: injecting ' + faults.length + ' faults', '#7c5cff');
-    faults.forEach(function(name){
-      var baselineCount = window.Engine.Validator.runAll().length;
-      FI.captureBaseline();
-      var inj = FI.inject(name, FI.pickTarget ? FI.pickTarget(name) : null);
-      if (!inj || !inj.ok) {
+    toast('V3 Benchmark: injecting ' + Object.keys(FI.FAULTS || {}).length + ' faults', '#7c5cff');
+    var summary = FI.runBenchmark ? FI.runBenchmark({ llm: false }) : null;
+    if (!summary) {
+      var faults = Object.keys(FI.FAULTS || {});
+      summary = { injected: 0, detected: 0, repaired: 0, results: [] };
+      faults.forEach(function(name){
+        var baselineCount = window.Engine.Validator.runAll().length;
+        FI.captureBaseline();
+        var inj = FI.inject(name, FI.pickTarget ? FI.pickTarget(name) : null);
+        if (!inj || !inj.ok) {
+          FI.restoreBaseline();
+          summary.results.push({ fault: name, detected: false, repaired: false, skipped: true, reason: inj && inj.error });
+          return;
+        }
+        summary.injected++;
+        var afterInject = window.Engine.Validator.runAll().length;
+        var run = window.Engine.Recovery.run();
+        var afterRepair = window.Engine.Validator.runAll().length;
         FI.restoreBaseline();
-        summary.results.push({ fault: name, detected: false, repaired: false, skipped: true, reason: inj && inj.error });
-        return;
-      }
-      summary.injected++;
-      var afterInject = window.Engine.Validator.runAll().length;
-      var run = window.Engine.Recovery.run();
-      var afterRepair = window.Engine.Validator.runAll().length;
-      FI.restoreBaseline();
-      var detected = afterInject > baselineCount;
-      var repaired = afterRepair < afterInject || (run && (run.repairedCount || 0) > 0);
-      if (detected) summary.detected++;
-      if (repaired) summary.repaired++;
-      summary.results.push({ fault: name, detected: detected, repaired: repaired, file: inj.file });
-    });
-    if (FI.recordBenchmark) FI.recordBenchmark(summary);
-    if (window.Engine.Benchmark) {
-      window.Engine.Benchmark.recordFaults(summary.injected, summary.detected);
+        var detected = afterInject > baselineCount;
+        var repaired = afterRepair < afterInject || (run && (run.repairedCount || 0) > 0);
+        if (detected) summary.detected++;
+        if (repaired) summary.repaired++;
+        summary.results.push({ fault: name, detected: detected, repaired: repaired, file: inj.file });
+      });
+      if (FI.recordBenchmark) FI.recordBenchmark(summary);
     }
+    try { if (window.Engine.Preview && window.Engine.Preview.capture) window.Engine.Preview.capture(); } catch (_) {}
     var detRate = summary.injected ? Math.round((summary.detected / summary.injected) * 100) : 0;
     var repRate = summary.injected ? Math.round((summary.repaired / summary.injected) * 100) : 0;
     toast('V3 Benchmark done: ' + summary.injected + ' injected, ' + detRate + '% detected, ' + repRate + '% repaired', detRate === 100 && repRate === 100 ? '#34d399' : '#f59e0b');

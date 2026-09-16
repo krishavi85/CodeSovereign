@@ -657,15 +657,120 @@
     const lead = opts.followUp
       ? "The current version is NOT good enough. Improve THIS same app to production quality. Do not switch products."
       : "The current version is NOT good enough. Rebuild the entire app to production quality.";
+    const previewBlk = formatCapture(opts.capture);
     return [
       lead,
       "Original request:\n" + String(original || ""),
       "Quality score: " + ((quality && quality.score) || 0) + ". Failures:\n- " + ((quality && quality.reasons) || []).join("\n- "),
       "Validator issues:\n" + (issueBlk || "(none)"),
+      previewBlk ? ("Live preview snapshot of the built app (look at the UI, not just source):\n" + previewBlk) : "",
       "Current files:\n" + fileBlk,
       "Replace every file with a polished, distinctive UI: app shell, sidebar or top nav, dark theme, real interactions, empty states, keyboard shortcuts, local persistence.",
       "No 'Simple Notepad'. No starter template. No leftover music-app copy. Return the full file plan again."
-    ].join("\n\n");
+    ].filter(Boolean).join("\n\n");
+  }
+
+  function formatCapture(capture) {
+    if (!capture || !capture.inspect) return "";
+    const i = capture.inspect;
+    const lines = [];
+    lines.push("Title: " + (i.title || "(none)"));
+    if (i.headings && i.headings.length) lines.push("Headings: " + i.headings.map(function (h) { return "H" + h.level + " " + h.text; }).join(" | "));
+    if (i.buttons && i.buttons.length) lines.push("Buttons: " + i.buttons.map(function (b) { return b.text || "button"; }).join(", "));
+    if (i.missingAltCount) lines.push(i.missingAltCount + " image(s) missing alt");
+    if (i.issues && i.issues.length) lines.push("Visible UI problems: " + i.issues.join("; "));
+    if (i.textSample) lines.push("Visible text: " + String(i.textSample).slice(0, 280));
+    return lines.join("\n");
+  }
+
+  function llmAvailable() {
+    try { return !!(status() && status().configured); } catch (_) { return false; }
+  }
+
+  async function patchIssues(issues, capture) {
+    if (!llmAvailable()) return { ok: false, skipped: true, reason: "llm-disabled" };
+    const list = issues || [];
+    if (!list.length) return { ok: true, skipped: true, files: [] };
+    const files = snapshotWorkspace();
+    const issueBlk = list.slice(0, 24).map(function (i) {
+      const msg = i.message || (i.issue && i.issue.message) || i.why || "";
+      const file = i.file || (i.issue && i.issue.file) || "";
+      return "- [" + (i.severity || "info") + "] " + file + ": " + msg;
+    }).join("\n");
+    const fileBlk = files.slice(0, 10).map(function (f) {
+      return "FILE: " + f.path + "\n```\n" + String(f.content || "").slice(0, 3500) + "\n```";
+    }).join("\n\n");
+    const previewBlk = formatCapture(capture);
+    const prompt = [
+      "Fix these issues in the existing app. Return a JSON file plan with the patched files.",
+      "Issues:\n" + issueBlk,
+      previewBlk ? ("Live preview snapshot:\n" + previewBlk) : "",
+      "Current files:\n" + fileBlk,
+      "Keep the same product. Patch only what is broken. No placeholders, no hardcoded secrets, real alt text, real timeouts."
+    ].filter(Boolean).join("\n\n");
+    const res = await complete(prompt, specContext(), {
+      system: "You patch an existing web app. Reply with JSON {summary, files:[{path,content}]}. Production quality. No markdown outside JSON.",
+      temperature: 0.2,
+      maxTokens: 8192,
+      json: true
+    });
+    const parsed = extractFilesFromText(res.content);
+    if (!parsed || !parsed.files.length) return { ok: false, reason: "no-files" };
+    const FS = window.Engine && window.Engine.FS;
+    parsed.files.forEach(function (f) {
+      if (FS && f.path) FS.write(f.path, stripFence(f.content, f.path));
+    });
+    return { ok: true, files: parsed.files, summary: parsed.summary || "" };
+  }
+
+  async function smartLoop(opts) {
+    opts = opts || {};
+    const steps = [];
+    const UI = (window.Engine && window.Engine.UnresolvedInspector) || window.UnresolvedInspector;
+    const MD = (window.Engine && window.Engine.MockDetect) || window.MockDetect;
+    function push(kind, text, extra) {
+      const s = Object.assign({ kind: kind, text: text }, extra || {});
+      steps.push(s);
+      return s;
+    }
+    push("inspect", "Inspecting workspace (validator + mocks + unresolved)…");
+    let issues = opts.issues;
+    if (!issues) {
+      issues = [];
+      try { if (UI && UI.collect) issues = issues.concat(UI.collect()); } catch (_) {}
+      try { if (MD && MD.run) issues = issues.concat(MD.run()); } catch (_) {}
+    }
+    push("plan", "Planning auto-workarounds for " + issues.length + " finding(s)…");
+    let auto = { patched: [], remaining: issues };
+    try {
+      if (opts.kind === "mocks" && MD && MD.fix) auto = MD.fix();
+      else if (UI && UI.autoFixAll) auto = UI.autoFixAll(UI.inspectAll(issues));
+    } catch (e) {
+      push("error", "Auto-workaround failed: " + (e && e.message || e));
+    }
+    push("patch", "Applied " + ((auto.patched && auto.patched.length) || 0) + " auto-workaround(s)");
+    let capture = null;
+    try { capture = window.Engine.Preview.capture(); } catch (_) {}
+    if (capture) push("screenshot", "Preview snapshot: " + ((capture.inspect && capture.inspect.title) || "untitled") + (capture.issues && capture.issues.length ? " — " + capture.issues.join("; ") : ""), { capture: capture });
+    let remaining = (auto.remaining && auto.remaining.length) ? auto.remaining : (UI && UI.collect ? UI.collect() : []);
+    let llm = { skipped: true };
+    if (remaining.length && llmAvailable() && opts.llm !== false) {
+      push("llm", "LLM refine on remaining issues + preview snapshot…");
+      try {
+        llm = await patchIssues(remaining, capture);
+        if (llm && llm.ok) push("llm-result", "LLM patched " + ((llm.files && llm.files.length) || 0) + " file(s)");
+        else push("llm-result", "LLM skipped or returned no files");
+      } catch (e) {
+        llm = { ok: false, error: e && e.message || String(e) };
+        push("error", "LLM refine failed: " + llm.error);
+      }
+      try { capture = window.Engine.Preview.capture(); } catch (_) {}
+      remaining = UI && UI.collect ? UI.collect() : remaining;
+    }
+    const files = snapshotWorkspace();
+    const quality = scoreBuild(files, (window.Engine && window.Engine.Validator) ? window.Engine.Validator.runAll() : []);
+    push("score", "Quality " + quality.score + (quality.pass ? " (pass)" : " (needs more)"));
+    return { steps: steps, patched: auto.patched || [], remaining: remaining, capture: capture, llm: llm, quality: quality };
   }
 
   async function sequentialGenerate(prompt, specCtx, onChunk) {
@@ -942,6 +1047,24 @@
           });
           const issues = issuesForFiles(files, window.Engine.Validator.runAll());
           quality = scoreBuild(files, issues);
+          let capture = null;
+          try {
+            if (window.Engine.Preview && window.Engine.Preview.capture) capture = window.Engine.Preview.capture();
+          } catch (_) {}
+          if (capture) {
+            const vis = (capture.inspect && capture.inspect.issues) || [];
+            steps.push({
+              kind: "screenshot",
+              text: "Preview snapshot: " + ((capture.inspect && capture.inspect.title) || "untitled") +
+                (vis.length ? " — " + vis.join("; ") : " — UI looks wired"),
+              capture: capture
+            });
+            onStep && onStep(steps[steps.length - 1]);
+            if (vis.length) {
+              quality.reasons = (quality.reasons || []).concat(vis);
+              if (capture.inspect.missingAltCount || /placeholder notepad/i.test(vis.join(" "))) quality.pass = false;
+            }
+          }
           steps.push({ kind: "validate-result", issues: issues, quality: quality });
           onStep && onStep(steps[steps.length - 1]);
           if (quality.pass) {
@@ -949,7 +1072,7 @@
             onStep && onStep(steps[steps.length - 1]);
             return steps;
           }
-          extraUser = buildRefinePrompt(prompt, files, issues, quality, { followUp: followUp });
+          extraUser = buildRefinePrompt(prompt, files, issues, quality, { followUp: followUp, capture: capture });
         }
         if (!wrote) {
           steps.push({
@@ -1000,6 +1123,10 @@
     issuesForFiles,
     buildRefinePrompt,
     buildFollowUpPrompt,
+    formatCapture,
+    llmAvailable,
+    patchIssues,
+    smartLoop,
     isFollowUp,
     looksLikeRestart,
     conversationHistory,

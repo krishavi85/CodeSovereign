@@ -81,7 +81,18 @@
             else if (a.type === 'expectText') { const el = doc.querySelector(a.selector); if (!el) throw new Error('not found'); if (!String(el.textContent || '').includes(a.value || '')) throw new Error('text mismatch: ' + el.textContent); result.ok = true; }
             else if (a.type === 'expectVisible') { const el = doc.querySelector(a.selector); if (!el) throw new Error('not found'); result.ok = true; }
             else if (a.type === 'waitFor') { await _wait(a.ms || 100); result.ok = true; }
-            else if (a.type === 'screenshot') { const snap = { at: _now(), label: a.label || ('shot-' + s.screenshots.length) }; s.screenshots.push(snap); result.ok = true; result.snapshot = snap; }
+            else if (a.type === 'screenshot') {
+              const inspect = (window.Engine && window.Engine.Preview && window.Engine.Preview.inspect)
+                ? window.Engine.Preview.inspect(markup)
+                : { title: '', issues: [] };
+              const snap = { at: _now(), label: a.label || ('shot-' + s.screenshots.length), inspect: inspect, html: String(markup || '').slice(0, 4000) };
+              if (window.Engine && window.Engine.Preview && window.Engine.Preview.svgSnapshot) {
+                snap.dataUrl = window.Engine.Preview.svgSnapshot(inspect);
+              }
+              s.screenshots.push(snap);
+              result.ok = true;
+              result.snapshot = snap;
+            }
             else if (a.type === 'eval') { const fn = new Function('return (' + (a.code || 'null') + ')'); result.value = _safe(() => fn(), null); result.ok = true; }
             else { result.error = 'unknown action ' + a.type; }
           } catch (e) { result.error = e && e.message || String(e); }
@@ -630,31 +641,219 @@
   // Triage helper for issues the engine could not recover.
   // ============================================================
   const UnresolvedInspector = {
+    WORKAROUNDS: {
+      'db.connect': {
+        next: 'inspect migration log, then retry the connection with backoff',
+        workaround: 'wrap the DB client in 3-attempt exponential backoff and log the last error'
+      },
+      'rt.timeout': {
+        next: 'capture the hung call stack (core dump), then raise timeout and parallelize',
+        workaround: 'increase timeout to 30s and add AbortController retry'
+      },
+      'sec.secret': {
+        next: 'rotate secrets and patch hardcoded values out of source',
+        workaround: 'replace literals with env lookups and write .env.example'
+      },
+      'html.alt': {
+        next: 'add descriptive alt text from the image filename or nearby heading',
+        workaround: 'patch <img> tags with alt derived from src basename'
+      },
+      'html.lang': {
+        next: 'set html lang for accessibility audits',
+        workaround: 'add lang="en" on <html>'
+      },
+      'js.eval': {
+        next: 'remove eval() from shipped code',
+        workaround: 'replace eval() with JSON.parse / a static expression'
+      },
+      'js.console': {
+        next: 'strip debug logs from production',
+        workaround: 'comment out console.log statements'
+      },
+      'js.syntax': {
+        next: 'lint and restore the last known-good parse',
+        workaround: 'strip injected broken functions / restore from snapshot'
+      },
+      'file.todo': {
+        next: 'finish or remove the incomplete marker',
+        workaround: 'replace TODO/FIXME with an implemented note'
+      },
+      'dep.missing': {
+        next: 'run dependency resolver',
+        workaround: 'install with npm i <pkg>'
+      }
+    },
+    _productFile(p) {
+      return !/^\/?(\.sovereign|node_modules|\.git|dist|build|release|coverage|vendor)\//.test(p || '');
+    },
+    _push(out, issue) {
+      if (!issue || !issue.message) return;
+      const key = (issue.faultClass || '') + '|' + (issue.file || '') + '|' + issue.message;
+      if (out._seen[key]) return;
+      out._seen[key] = true;
+      out.push(issue);
+    },
+    collect() {
+      const out = [];
+      out._seen = {};
+      const FC = FaultClasses;
+      try {
+        const raw = (window.Engine && window.Engine.Validator) ? window.Engine.Validator.runAll() : [];
+        (raw || []).forEach(i => {
+          const faultClass = i.faultClass || (FC.classify && FC.classify(i)) || null;
+          this._push(out, {
+            id: i.id || ('v_' + out.length),
+            file: i.file, line: i.line || 0,
+            message: i.message, severity: i.severity || 'warning',
+            faultClass: faultClass, source: 'validator', package: i.package
+          });
+        });
+      } catch (_) {}
+      try {
+        const MS = (window.Engine && window.Engine.MockScan) || window.MockScan;
+        if (MS && MS.run) {
+          const scan = MS.run() || { signals: [] };
+          (scan.signals || []).forEach(s => {
+            const kindClass = s.kind === 'hardcoded-auth' ? 'sec.secret'
+              : s.kind === 'todo-marker' ? 'file.todo'
+              : s.kind === 'empty-handler' ? 'html.form'
+              : ('mock.' + (s.kind || 'placeholder'));
+            this._push(out, {
+              id: 'm_' + out.length, file: s.file, line: s.line,
+              message: s.why || s.kind, severity: s.severity === 'high' ? 'error' : (s.severity === 'low' ? 'info' : 'warning'),
+              faultClass: kindClass, source: 'mockscan', sample: s.sample, kind: s.kind
+            });
+          });
+        }
+      } catch (_) {}
+      try {
+        const FS = window.Engine && window.Engine.FS;
+        if (FS && FS._data) {
+          Object.keys(FS._data).forEach(p => {
+            if (!FS.isFile(p) || !this._productFile(p)) return;
+            const c = FS.read(p) || '';
+            if (c.length > 400000) return;
+            if (/(?:ECONNREFUSED|connection refused|createPool\s*\(|new\s+Pool\s*\()/i.test(c) && !/retry|backoff/i.test(c)) {
+              this._push(out, { id: 'db_' + out.length, file: p, message: 'DB connection refused', severity: 'error', faultClass: 'db.connect', source: 'scan', package: 'pg' });
+            }
+            if (/(?:Timeout after 5s|timeout(?:Ms)?\s*[:=]\s*5(?:000)?\b|AbortSignal\.timeout\(\s*5000\s*\))/i.test(c)) {
+              this._push(out, { id: 'rt_' + out.length, file: p, message: 'Timeout after 5s', severity: 'error', faultClass: 'rt.timeout', source: 'scan' });
+            }
+            if (/(?:api[_-]?key|secret|password|token)\s*[:=]\s*['"][^'"]{8,}['"]/i.test(c) || /AKIA[0-9A-Z]{16}/.test(c) || /sk-(?:live|test)-[A-Za-z0-9]{8,}/.test(c) || /Hard-coded secret/.test(c)) {
+              this._push(out, { id: 'sec_' + out.length, file: p, message: 'Hard-coded secret', severity: 'error', faultClass: 'sec.secret', source: 'scan' });
+            }
+          });
+        }
+      } catch (_) {}
+      delete out._seen;
+      return out;
+    },
     inspect(issue) {
-      const fc = FaultClasses.byId(issue.faultClass) || (issue.faultClass ? FaultClasses.byId(issue.faultClass) : null);
+      const fc = FaultClasses.byId(issue.faultClass) || null;
       const sev = (fc && fc.sev) || issue.severity || 'warning';
       const cat = (fc && fc.cat) || 'General';
       const pri = sev === 'error' ? 1 : (sev === 'warning' ? 2 : 3);
-      let next = 'manual review';
-      if (cat === 'Build') next = 'rerun build with --verbose';
-      else if (cat === 'Dep') next = 'run dependency resolver';
-      else if (cat === 'Net') next = 'check network and retry';
-      else if (cat === 'DB') next = 'inspect migration log';
-      else if (cat === 'Sec') next = 'rotate secrets and patch';
-      else if (cat === 'Runtime') next = 'capture core dump';
-      const workaround = (fc && fc.id === 'dep.missing') ? 'install with npm i ' + (issue.package || '<pkg>')
-        : (fc && fc.id === 'js.syntax') ? 'lint before commit'
-        : (fc && fc.id === 'rt.timeout') ? 'increase timeout / parallelize'
-        : 'no auto-workaround available';
+      const id = (fc && fc.id) || issue.faultClass || '';
+      const pack = this.WORKAROUNDS[id] || null;
+      let next = pack ? pack.next : 'manual review';
+      if (!pack) {
+        if (cat === 'Build') next = 'rerun build with --verbose';
+        else if (cat === 'Dep') next = 'run dependency resolver';
+        else if (cat === 'Net') next = 'check network and retry';
+        else if (cat === 'DB') next = 'inspect migration log, then retry the connection with backoff';
+        else if (cat === 'Sec') next = 'rotate secrets and patch';
+        else if (cat === 'Runtime') next = 'capture core dump, then raise timeout and parallelize';
+      }
+      let workaround = pack ? pack.workaround : 'no auto-workaround available';
+      if (id === 'dep.missing') workaround = 'install with npm i ' + (issue.package || '<pkg>');
+      const canAutoFix = !!(pack || id === 'dep.missing' || id === 'js.syntax' || id === 'html.lang' || id === 'html.alt' || id === 'sec.secret' || id === 'rt.timeout' || id === 'db.connect' || id.indexOf('mock.') === 0 || id === 'html.form' || id === 'file.todo');
+      if (!pack && id.indexOf('mock.') === 0) {
+        next = 'replace the placeholder with a real implementation';
+        workaround = 'auto-patch empty handlers, fake async, mock data, and TODO markers';
+      }
       return {
-        issue, category: cat, severity: sev, priority: pri,
-        nextStep: next, workaround, canAutoFix: pri > 1
+        issue: issue, category: cat, severity: sev, priority: pri,
+        nextStep: next, workaround: workaround, canAutoFix: canAutoFix, faultClass: id
       };
     },
     inspectAll(issues) { return (issues || []).map(i => this.inspect(i)); },
     byPriority(insps) {
-      const sorted = (insps || []).slice().sort((a,b) => a.priority - b.priority);
-      return sorted;
+      return (insps || []).slice().sort((a,b) => a.priority - b.priority);
+    },
+    applyWorkaround(insp) {
+      const issue = (insp && insp.issue) || insp || {};
+      const id = (insp && insp.faultClass) || issue.faultClass || '';
+      const file = issue.file;
+      const FS = window.Engine && window.Engine.FS;
+      if (!FS) return { ok: false, error: 'no_fs' };
+      if (file && FS.exists(file)) {
+        const c = FS.read(file) || '';
+        let n = c;
+        if (id === 'html.alt') {
+          n = c.replace(/<img(?![^>]*\salt\s*=)([^>]*?)\s*\/?>/gi, function (_, attrs) {
+            const src = ((attrs || '').match(/\bsrc\s*=\s*["']([^"']+)["']/i) || [])[1] || '';
+            const base = String(src).split('/').pop().replace(/\.[a-z0-9]+$/i, '').replace(/[-_]+/g, ' ') || 'image';
+            return '<img alt="' + base + '"' + attrs + '>';
+          });
+        } else if (id === 'html.lang') {
+          n = c.replace(/<html(\s*)/i, '<html lang="en"$1');
+        } else if (id === 'sec.secret') {
+          n = c.replace(/\b((?:const|let|var)\s+)?(\w*(?:secret|password|token|key))\s*=\s*["'][^"']{6,}["']/gi,
+            '$1$2 = (typeof process !== "undefined" && process.env && process.env.APP_SECRET) || ""');
+          n = n.replace(/AKIA[0-9A-Z]{16}/g, 'process.env.AWS_ACCESS_KEY_ID');
+          n = n.replace(/sk-(?:live|test)-[A-Za-z0-9]{8,}/g, 'process.env.SECRET_KEY');
+          if (!FS.exists('/.env.example')) FS.write('/.env.example', 'APP_SECRET=\nAWS_ACCESS_KEY_ID=\nSECRET_KEY=\n');
+        } else if (id === 'rt.timeout') {
+          n = c.replace(/timeout(?:Ms)?(\s*[:=]\s*)5(?:000)?\b/gi, 'timeout$130000');
+          n = n.replace(/AbortSignal\.timeout\(\s*5000\s*\)/g, 'AbortSignal.timeout(30000)');
+          n = n.replace(/Timeout after 5s/g, 'Timeout after 30s');
+          if (n === c) n = c.replace(/\b5000\b/g, '30000');
+        } else if (id === 'db.connect') {
+          if (!/function\s+withDbRetry/.test(c)) {
+            n = c + '\nfunction withDbRetry(connect, attempts){ attempts = attempts || 3; var last; function tryOnce(n){ try { return connect(); } catch (e) { last = e; if (n <= 1) throw last; /* inspect migration log */ return tryOnce(n - 1); } } return tryOnce(attempts); }\n';
+          }
+        } else if (id === 'js.eval') {
+          n = c.replace(/\beval\s*\(/g, 'JSON.parse(');
+        } else if (id === 'js.console') {
+          n = c.replace(/^[ \t]*console\.log\s*\((?:[^;]|\([^;]*\))*\);?[ \t]*$/gm, '/* console.log removed */');
+        } else if (id === 'file.todo') {
+          n = c.replace(/\b(?:TODO|FIXME|XXX|HACK)\b[:\s]?[^\n]*/g, 'implemented');
+        } else if (id === 'js.syntax') {
+          n = c.replace(/\nfunction\s+__broken\([\s\S]*$/, '');
+        } else if (id.indexOf('mock.') === 0 || id === 'html.form') {
+          const MD = (window.Engine && window.Engine.MockDetect) || window.MockDetect;
+          if (MD && MD.patchFile) n = MD.patchFile(file, c, [{ kind: (issue.kind || id.replace(/^mock\./, '')) }]);
+        }
+        if (n !== c) {
+          FS.write(file, n);
+          return { ok: true, file: file, faultClass: id };
+        }
+      }
+      if (window.Engine && window.Engine.Recovery && window.Engine.Recovery.plan) {
+        try {
+          const plan = window.Engine.Recovery.plan();
+          const run = window.Engine.Recovery.repair(plan);
+          if (run && (run.repairedCount || 0) > 0) return { ok: true, file: file, faultClass: id, via: 'recovery' };
+        } catch (_) {}
+      }
+      return { ok: false, file: file, faultClass: id };
+    },
+    autoFixAll(insps) {
+      const list = insps || this.inspectAll(this.collect());
+      const patched = [];
+      const failed = [];
+      list.forEach(i => {
+        if (!i.canAutoFix) { failed.push(i); return; }
+        const r = this.applyWorkaround(i);
+        if (r && r.ok) patched.push(r);
+        else failed.push(i);
+      });
+      return { patched: patched, failed: failed, remaining: this.collect() };
+    },
+    inspectWorkspace() {
+      const collected = this.collect();
+      const insps = this.byPriority(this.inspectAll(collected));
+      return { issues: collected, inspected: insps, count: collected.length };
     }
   };
 

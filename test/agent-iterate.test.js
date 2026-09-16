@@ -337,4 +337,7 @@ module.exports = async function (t) {
   t.ok('Live Preview injects a nested CSP', preview && /Content-Security-Policy/.test(preview));
   t.ok('preview CSP sets connect-src none so srcdoc cannot call local LLM ports', /connect-src 'none'/.test(preview));
   t.ok('preview HTML does not re-allow loopback model servers', !/127\.0\.0\.1:1234/.test(preview) && !/localhost:8080/.test(preview));
+  const snap = win.Engine.Preview.capture();
+  t.ok('agent preview snapshot captures the built app title', snap && snap.inspect && /Nova Notes/i.test(snap.inspect.title || ''));
+  t.ok('refine prompt can include the snapshot', /Live preview snapshot/.test(LLM.buildRefinePrompt('x', [{ path: '/index.html', content: '<h1>Hi</h1>' }], [], { score: 10, reasons: [] }, { capture: snap })));
 };

@@ -2181,8 +2181,18 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
     }
   };
 
-  // ---------- Preview (single HTML) ----------
+  // ---------- Preview (single HTML + visual snapshot of the built app) ----------
+  function xmlEsc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
+  }
+  function svgDataUrl(svg){
+    try {
+      if (typeof btoa === 'function') return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+    } catch (_) {}
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
   const Preview = {
+    _lastCapture: null,
     build(){
       const htmlPath = '/index.html';
       if (!FS.exists(htmlPath)) return null;
@@ -2204,6 +2214,88 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
         return m;
       });
       return html;
+    },
+    inspect(html){
+      html = html == null ? (this.build() || '') : String(html);
+      const strip = (s) => String(s || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const title = strip((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
+      const headings = [];
+      html.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => {
+        headings.push({ level: Number(n), text: strip(t).slice(0, 80) });
+        return _;
+      });
+      const buttons = [];
+      html.replace(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi, (_, attrs, t) => {
+        buttons.push({ text: strip(t).slice(0, 60), emptyHandler: /on[a-z]+\s*=\s*["']\s*["']/i.test(attrs || '') });
+        return _;
+      });
+      const images = [];
+      html.replace(/<img\b([^>]*)>/gi, (_, attrs) => {
+        const src = ((attrs || '').match(/\bsrc\s*=\s*["']([^"']*)["']/i) || [])[1] || '';
+        const altM = (attrs || '').match(/\balt\s*=\s*["']([^"']*)["']/i);
+        images.push({ src: src, alt: altM ? altM[1] : null, missingAlt: !/\balt\s*=/i.test(attrs || '') });
+        return _;
+      });
+      const missingAlt = images.filter(i => i.missingAlt);
+      const text = strip(html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' '));
+      const issues = [];
+      if (missingAlt.length) issues.push(missingAlt.length + ' image(s) missing alt');
+      if (!title) issues.push('missing document title');
+      if (!headings.length) issues.push('no headings in the preview');
+      if (!buttons.length && !/<a[\s>]/i.test(html) && !/<nav[\s>]/i.test(html)) issues.push('no interactive controls');
+      if (text.length < 40) issues.push('very little visible text');
+      if (/simple notepad|start writing your notes here/i.test(text)) issues.push('placeholder notepad UI visible');
+      return {
+        title: title,
+        headings: headings.slice(0, 12),
+        buttons: buttons.slice(0, 20),
+        images: images.slice(0, 20),
+        missingAltCount: missingAlt.length,
+        textSample: text.slice(0, 420),
+        textLength: text.length,
+        issues: issues
+      };
+    },
+    svgSnapshot(inspect){
+      inspect = inspect || this.inspect();
+      const rows = [];
+      rows.push({ y: 36, size: 18, fill: '#e6e9f2', text: inspect.title || '(untitled app)' });
+      (inspect.headings || []).slice(0, 5).forEach((h, i) => {
+        rows.push({ y: 70 + i * 22, size: 13, fill: '#9aa3b8', text: 'H' + h.level + '  ' + (h.text || '') });
+      });
+      const startY = 70 + Math.min((inspect.headings || []).length, 5) * 22 + 16;
+      (inspect.buttons || []).slice(0, 6).forEach((b, i) => {
+        rows.push({ y: startY + i * 20, size: 12, fill: '#7c6ff5', text: '[ ' + (b.text || 'button') + ' ]' });
+      });
+      const warnY = 360;
+      const warn = (inspect.issues || []).length
+        ? inspect.issues.join(' · ')
+        : 'preview looks wired';
+      const svg = [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400">',
+        '<rect width="640" height="400" fill="#0b0d12"/>',
+        '<rect x="16" y="16" width="608" height="368" rx="14" fill="#141821" stroke="#1f2433"/>',
+        '<text x="32" y="28" font-size="10" fill="#7b859c" font-family="Inter,system-ui,sans-serif">LIVE PREVIEW SNAPSHOT</text>',
+        rows.map(r => '<text x="32" y="' + r.y + '" font-size="' + r.size + '" fill="' + r.fill + '" font-family="Inter,system-ui,sans-serif">' + xmlEsc(String(r.text).slice(0, 70)) + '</text>').join(''),
+        '<text x="32" y="' + warnY + '" font-size="11" fill="' + ((inspect.issues || []).length ? '#f59e0b' : '#34d399') + '" font-family="Inter,system-ui,sans-serif">' + xmlEsc(warn.slice(0, 88)) + '</text>',
+        '</svg>'
+      ].join('');
+      return svgDataUrl(svg);
+    },
+    lastCapture(){ return this._lastCapture; },
+    capture(){
+      const html = this.build();
+      const inspect = this.inspect(html);
+      const cap = {
+        at: Date.now(),
+        method: 'svg',
+        inspect: inspect,
+        dataUrl: this.svgSnapshot(inspect),
+        htmlLength: (html || '').length,
+        issues: inspect.issues || []
+      };
+      this._lastCapture = cap;
+      return cap;
     }
   };
 

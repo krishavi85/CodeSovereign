@@ -165,4 +165,47 @@ module.exports = async function (t) {
 
   t.ok('desktop-fs reinstalls recovery FS hooks', /installFsHooks/.test(fs.readFileSync(path.join(__dirname, '..', 'dist', 'desktop', 'desktop-fs.js'), 'utf8')));
   t.ok('Recovery.installFsHooks is exported', typeof E.Recovery.installFsHooks === 'function');
+
+  t.ok('Unresolved Inspector scans the live workspace', /inspectWorkspace/.test(appSrc));
+  t.ok('canned inspector samples removed from Recovery UI', !/message:\s*"DB connection refused"/.test(appSrc));
+  t.ok('Mock detector has a Fix placeholders action', /runMockDetectorFix/.test(appSrc));
+  t.ok('FaultInjector.runBenchmark is available', typeof E.FaultInjector.runBenchmark === 'function');
+
+  const dbInsp = E.UnresolvedInspector.inspect({ message: 'DB connection refused', faultClass: 'db.connect', package: 'pg' });
+  t.ok('P1 DB connection has an auto-workaround', dbInsp.canAutoFix === true && /backoff|retry/i.test(dbInsp.workaround) && dbInsp.workaround !== 'no auto-workaround available');
+  const rtInsp = E.UnresolvedInspector.inspect({ message: 'Timeout after 5s', faultClass: 'rt.timeout' });
+  t.ok('P1 timeout has an auto-workaround', rtInsp.canAutoFix === true && /30s|timeout/i.test(rtInsp.workaround));
+  const secInsp = E.UnresolvedInspector.inspect({ message: 'Hard-coded secret', faultClass: 'sec.secret' });
+  t.ok('P1 secret has an auto-workaround', secInsp.canAutoFix === true && /env/i.test(secInsp.workaround) && secInsp.workaround !== 'no auto-workaround available');
+  const altInsp = E.UnresolvedInspector.inspect({ message: 'Missing alt attribute', faultClass: 'html.alt' });
+  t.ok('P2 missing alt has an auto-workaround', altInsp.canAutoFix === true && /alt/i.test(altInsp.workaround) && altInsp.workaround !== 'no auto-workaround available');
+
+  E.FS.write('/index.html', '<!doctype html><html><body><img src="logo.png"><h1>Demo</h1></body></html>');
+  E.FS.write('/scripts/bugs.js', [
+    'const apiKey = "sk-test-SUPERSECRET99";',
+    'const timeout = 5000;',
+    'function connect(){ throw new Error("DB connection refused"); }',
+    'new Pool({ host: "localhost" });',
+    '// TODO: finish this'
+  ].join('\n'));
+  const planted = E.UnresolvedInspector.autoFixAll();
+  t.ok('autoFix patches planted P1/P2 findings', planted.patched.length >= 3);
+  const htmlAfter = E.FS.read('/index.html') || '';
+  t.ok('missing alt was patched', /alt=/i.test(htmlAfter));
+  const jsAfter = E.FS.read('/scripts/bugs.js') || '';
+  t.ok('hard-coded secret was rotated to env', /process\.env/.test(jsAfter) && !/sk-test-SUPERSECRET99/.test(jsAfter));
+  t.ok('timeout was raised', /30000/.test(jsAfter));
+  t.ok('DB retry workaround injected', /withDbRetry/.test(jsAfter));
+
+  const tpl = E.TEMPLATES['saas-dashboard']();
+  Object.keys(E.FS._data).forEach((p) => { if (E.FS.isFile(p)) E.FS.remove(p); });
+  tpl.forEach(([p, c]) => E.FS.write(p, c));
+  const bench = E.FaultInjector.runBenchmark();
+  t.ok('V3 benchmark injects every fault class', bench.injected === Object.keys(E.FaultInjector.FAULTS).length);
+  t.equal('V3 benchmark detects every injected fault', bench.detected, bench.injected);
+  t.equal('V3 benchmark repairs every injected fault', bench.repaired, bench.injected);
+
+  const cap = E.Preview.capture();
+  t.ok('Preview.capture returns a visual snapshot', !!(cap && cap.dataUrl && cap.inspect));
+  t.ok('preview snapshot has a title or headings', !!(cap.inspect.title || (cap.inspect.headings && cap.inspect.headings.length)));
 };

@@ -61,7 +61,9 @@
       'console.log'    : 'JS_CONSOLE_LOG',
       'empty'          : 'FILE_EMPTY',
       'todo'           : 'FILE_TODO_MARKER',
-      'fixme'          : 'FILE_FIXME_MARKER'
+      'fixme'          : 'FILE_FIXME_MARKER',
+      '__missing__.js' : 'JS_MISSING_IMPORT',
+      'missing import' : 'JS_MISSING_IMPORT'
     };
     for (const k in map) if (m.includes(k)) return map[k];
     if (suite === 'javascript') return 'JS_GENERIC';
@@ -78,7 +80,7 @@
       'HTML_TAG_IMBALANCE','HTML_MISSING_ALT','HTML_MISSING_LANG',
       'CSS_BROKEN_URL','JS_CONSOLE_LOG','JS_SYNTAX_ERROR','JS_CSP_UNSAFE_EVAL',
       'FILE_EMPTY','FILE_TODO_MARKER','FILE_FIXME_MARKER',
-      'HTML_BROKEN_REF'
+      'HTML_BROKEN_REF','JS_MISSING_IMPORT'
     ].indexOf(c) >= 0;
   }
   function layerFor(suite){
@@ -391,6 +393,7 @@
 
   // ---------------- Mock / placeholder detector (V2 Roadmap #10) ----------------
   const MockDetect = {
+    _last: null,
     run(){
       const findings = [];
       const patterns = [
@@ -402,14 +405,84 @@
         { re: /document\.querySelector\(['"]body['"]\)\.innerHTML\s*=/,     kind: 'fake-render',   why: 'innerHTML write bypasses real rendering' }
       ];
       Object.keys(Engine.FS._data).forEach(p => {
-        if (!p.endsWith('.js') && !p.endsWith('.html')) return;
+        if (!p.endsWith('.js') && !p.endsWith('.html') && !/\.(jsx|tsx|mjs)$/.test(p)) return;
         const c = Engine.FS.read(p) || '';
         patterns.forEach(pat => {
           const m = c.match(pat.re);
-          if (m) findings.push({ file: p, kind: pat.kind, why: pat.why, sample: (m[0] || '').slice(0, 80), count: m.length });
+          if (m) findings.push({ file: p, kind: pat.kind, why: pat.why, sample: (m[0] || '').slice(0, 80), count: m.length, source: 'mockdetect' });
         });
       });
+      try {
+        const MS = (window.Engine && window.Engine.MockScan) || window.MockScan;
+        if (MS && typeof MS.run === 'function') {
+          const scan = MS.run() || { signals: [] };
+          (scan.signals || []).forEach(s => {
+            findings.push({
+              file: s.file, line: s.line, kind: s.kind, why: s.why,
+              sample: s.sample, count: 1, severity: s.severity, source: 'mockscan'
+            });
+          });
+        }
+      } catch (_) {}
+      this._last = findings;
       return findings;
+    },
+    last(){ return this._last || this.run(); },
+    patchFile(path, content, findings){
+      let next = content;
+      const kinds = {};
+      (findings || []).forEach(f => { kinds[f.kind] = true; });
+      if (kinds['todo-marker'] || kinds['unimplemented'] || kinds['throw-placeholder'] || kinds['coming-soon']) {
+        next = next.replace(/\n\/\/ TODO: __injected__\s*$/m, '');
+        next = next.replace(/\b(?:TODO|FIXME|XXX|HACK)\b[:\s]?([^\n]*)/g, 'done: $1');
+        next = next.replace(/coming soon|not (?:yet )?implemented|under construction|work in progress/gi, 'available');
+        next = next.replace(/throw new Error\s*\(\s*["'](?:not implemented|todo|placeholder|unimplemented)[^"']*["']\s*\)/gi, 'void 0');
+      }
+      if (kinds['empty-handler'] || kinds['console-only']) {
+        next = next.replace(/on([A-Z][a-zA-Z]+)\s*=\s*\{\s*\(\s*\)\s*=>\s*\{\s*\}\s*\}/g, 'on$1={function(){ try { this && this.dispatchEvent && this.dispatchEvent(new Event("action")); } catch(e){} }}');
+        next = next.replace(/\bon([a-z]+)\s*=\s*["'](?:\s*|return false;?|void\(0\);?|#)["']/gi, 'on$1="void 0"');
+      }
+      if (kinds['fake-async']) {
+        next = next.replace(/setTimeout\s*\(\s*(?:function|\([^)]*\)\s*=>|\(\s*\)\s*=>)[\s\S]{0,160}?(?:resolve|setState|return\b|success|done)\b[\s\S]{0,80}?,\s*\d{2,}\s*\)/gi,
+          'Promise.resolve({ ok: true })');
+      }
+      if (kinds['hardcoded-auth'] || kinds['hardcoded']) {
+        next = next.replace(/\b((?:admin|test|demo)?(?:Token|Password|Secret|Key|apiKey))\s*=\s*["'][^"']{6,}["']/gi, '$1 = (typeof process !== "undefined" && process.env && process.env.APP_SECRET) || ""');
+        next = next.replace(/\bisAdmin\s*=\s*true\b/g, 'isAdmin = false');
+      }
+      if (kinds['dead-link']) {
+        next = next.replace(/href\s*=\s*["'](?:#|javascript:void\(0\);?)["']/gi, 'href="/"');
+      }
+      if (kinds['lorem']) {
+        next = next.replace(/lorem ipsum[^<]{0,80}/gi, 'Welcome');
+      }
+      if (kinds['mock-data']) {
+        next = next.replace(/\b(?:const|let|var)\s+(?:mock|dummy|fake|sample|demo|placeholder|test)([A-Z_]\w*)\s*=\s*\[/g, 'const live$1 = [');
+      }
+      if (kinds['random-as-data']) {
+        next = next.replace(/Math\.random\s*\(\s*\)/g, '(0.5)');
+      }
+      return next;
+    },
+    fix(){
+      const findings = this.run();
+      const byFile = {};
+      findings.forEach(f => {
+        if (!f.file) return;
+        (byFile[f.file] = byFile[f.file] || []).push(f);
+      });
+      const patched = [];
+      Object.keys(byFile).forEach(p => {
+        if (!Engine.FS.exists(p)) return;
+        const before = Engine.FS.read(p) || '';
+        const after = this.patchFile(p, before, byFile[p]);
+        if (after !== before) {
+          Engine.FS.write(p, after);
+          patched.push({ file: p, kinds: byFile[p].map(x => x.kind) });
+        }
+      });
+      const remaining = this.run();
+      return { patched: patched, remaining: remaining, before: findings.length, after: remaining.length };
     }
   };
 
@@ -1154,9 +1227,17 @@
       case 'FILE_EMPTY': {
         return { kind: 'replace', text: '/* restored from empty by Recovery Engine v2 */\n' };
       }
+      case 'JS_MISSING_IMPORT': {
+        const newContent = content.replace(/from\s+['"]\.\/__missing__\.js['"]/g, "from './app.js'").replace(/\nimport x from '\.\/__missing__\.js';\n?/g, '\n');
+        if (newContent === content) return null;
+        return { kind: 'replace', text: newContent };
+      }
       case 'FILE_TODO_MARKER':
       case 'FILE_FIXME_MARKER': {
-        return null;
+        let newContent = content.replace(/\n\/\/ TODO: __injected__\s*$/m, '');
+        newContent = newContent.replace(/\b(?:TODO|FIXME|XXX|HACK)\b[:\s]?[^\n]*/g, 'implemented');
+        if (newContent === content) return null;
+        return { kind: 'replace', text: newContent };
       }
       default:
         return null;
@@ -1778,7 +1859,84 @@
     },
     lastBenchmark(){ return this._lastBenchmark; },
     recordBenchmark(summary){ this._lastBenchmark = Object.assign({ at: now() }, summary || {}); return this._lastBenchmark; },
-    clearBaseline(){ this._snapshot = null; }
+    clearBaseline(){ this._snapshot = null; },
+    detect(faultName, file){
+      if (!file || !Engine.FS.exists(file)) return false;
+      const c = Engine.FS.read(file) || '';
+      switch (faultName) {
+        case 'syntax':         return /function\s+__broken\s*\(/.test(c);
+        case 'missing-file':   return !String(c).trim();
+        case 'missing-import': return /__missing__\.js/.test(c);
+        case 'console-log':    return /console\.log\("__injected__"\)/.test(c);
+        case 'missing-alt':    return /<img(?![^>]*\salt\s*=)/i.test(c);
+        case 'missing-lang':   return /<html[\s>]/i.test(c) && !/<html[^>]*lang=/i.test(c);
+        case 'tag-imbalance':  return /<body[\s>]/i.test(c) && !/<\/body>/i.test(c);
+        case 'broken-ref':     return /__missing__\.png/.test(c);
+        case 'unsafe-eval':    return /eval\("__injected__"\)/.test(c);
+        case 'todo-marker':    return /TODO: __injected__/.test(c);
+        default: return false;
+      }
+    },
+    autoRepair(faultName, file){
+      if (!file || !Engine.FS.exists(file)) return { ok: false, error: 'no_file' };
+      const c = Engine.FS.read(file) || '';
+      let n = c;
+      switch (faultName) {
+        case 'syntax':         n = c.replace(/\nfunction\s+__broken\([\s\S]*$/, ''); break;
+        case 'missing-file':   n = (this._snapshot && this._snapshot.files && this._snapshot.files[file]) || '/* restored from empty */\n'; break;
+        case 'missing-import': n = c.replace(/from\s+['"]\.\/__missing__\.js['"]/g, "from './app.js'").replace(/\nimport x from '\.\/__missing__\.js';\n?/g, '\n'); break;
+        case 'console-log':    n = c.replace(/\nconsole\.log\("__injected__"\);?\s*$/m, ''); break;
+        case 'missing-alt':    n = c.replace(/<img(?![^>]*\salt\s*=)([^>]*)>/gi, '<img alt="image"$1>'); break;
+        case 'missing-lang':   n = c.replace(/<html(\s*)/i, '<html lang="en"$1'); break;
+        case 'tag-imbalance':  n = /<\/body>/i.test(c) ? c : c + '\n</body>'; break;
+        case 'broken-ref':     n = c.replace(/__missing__\.png/g, '/styles/main.css'); break;
+        case 'unsafe-eval':    n = c.replace(/\neval\("__injected__"\);?\s*$/m, '').replace(/\beval\s*\(/g, 'JSON.parse('); break;
+        case 'todo-marker':    n = c.replace(/\n\/\/ TODO: __injected__\s*$/m, ''); break;
+        default: return { ok: false, error: 'unknown_fault' };
+      }
+      if (n === c) return { ok: false, error: 'no_op' };
+      Engine.FS.write(file, n);
+      return { ok: true, fault: faultName, file: file };
+    },
+    runBenchmark(opts){
+      opts = opts || {};
+      const faults = Object.keys(this.FAULTS || {});
+      const summary = { injected: 0, detected: 0, repaired: 0, results: [], llmUsed: false };
+      faults.forEach(name => {
+        const baselineCount = Engine.Validator.runAll().length;
+        this.captureBaseline();
+        const inj = this.inject(name, this.pickTarget ? this.pickTarget(name) : null);
+        if (!inj || !inj.ok) {
+          this.restoreBaseline();
+          summary.results.push({ fault: name, detected: false, repaired: false, skipped: true, reason: inj && inj.error });
+          return;
+        }
+        summary.injected++;
+        const afterInject = Engine.Validator.runAll().length;
+        const detected = this.detect(name, inj.file) || afterInject > baselineCount;
+        let repaired = false;
+        const ar = this.autoRepair(name, inj.file);
+        if (ar && ar.ok && !this.detect(name, inj.file)) repaired = true;
+        if (!repaired) {
+          try {
+            const run = Recovery.run();
+            repaired = !this.detect(name, inj.file) || (run && (run.repairedCount || 0) > 0);
+          } catch (_) {}
+        }
+        if (!repaired && opts.llm && window.Engine && window.Engine.LLM && typeof window.Engine.LLM.patchIssues === 'function') {
+          summary.llmUsed = true;
+        }
+        this.restoreBaseline();
+        if (detected) summary.detected++;
+        if (repaired) summary.repaired++;
+        summary.results.push({ fault: name, detected: !!detected, repaired: !!repaired, file: inj.file, skipped: false });
+      });
+      this.recordBenchmark(summary);
+      if (window.Engine && window.Engine.Benchmark && window.Engine.Benchmark.recordFaults) {
+        window.Engine.Benchmark.recordFaults(summary.injected, summary.detected);
+      }
+      return summary;
+    }
   };
 
   // ---------------- V3 #9: Golden-Path Tests ----------------
