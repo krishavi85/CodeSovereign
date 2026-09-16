@@ -73,7 +73,7 @@
       : "Not configured \u2014 Agent uses the built-in deterministic synthesizer.";
 
     const p = llm.resolveProvider(cfg);
-    const isLocal = !!(p && p.local) || /127\.0\.0\.1|localhost/i.test(String(cfg.baseUrl || (p && p.baseUrl) || ""));
+    const isLocal = llm.isLocalEndpoint ? llm.isLocalEndpoint(p, cfg) : !!(p && p.local);
     const modelSel = modelOptionsFor(p, cfg.model);
     const ggufs = (llm.Gguf && llm.Gguf.list && llm.Gguf.list()) || [];
     const ggufRows = ggufs.length
@@ -178,9 +178,9 @@
 
     function formIsLocal() {
       const p = currentProvider();
-      if (p && p.local) return true;
-      const url = String((baseUrlEl && baseUrlEl.value) || "").toLowerCase();
-      return /127\.0\.0\.1|localhost/.test(url);
+      const url = baseUrlEl ? baseUrlEl.value : "";
+      if (llm.isLocalEndpoint) return llm.isLocalEndpoint(p, { baseUrl: url });
+      return !!(p && p.local);
     }
 
     function mergeModelOptions(p, currentModel) {
@@ -207,6 +207,22 @@
       const fromProviderChange = !!(opts && opts.fromProviderChange);
       const cfg = llm.getConfig();
       const p = currentProvider();
+      if (fromProviderChange && baseUrlEl) {
+        const known = {
+          "http://127.0.0.1:8080": 1, "http://localhost:8080": 1,
+          "http://127.0.0.1:8081": 1, "http://localhost:8081": 1,
+          "http://127.0.0.1:1234": 1, "http://localhost:1234": 1
+        };
+        const cur = String(baseUrlEl.value || "").replace(/\/+$/, "");
+        const loopback = /127\.0\.0\.1|localhost/i.test(cur);
+        if (p && p.local && p.baseUrl) {
+          // Remap empty, stock local ports, and leftover cloud URLs — keep a custom loopback port.
+          if (!cur || known[cur] || !loopback) baseUrlEl.value = p.baseUrl;
+        } else if (p && p.id !== "openai_compat" && loopback) {
+          // Named cloud provider: drop leftover LM Studio URL before collect() runs.
+          baseUrlEl.value = p.baseUrl || "";
+        }
+      }
       const local = formIsLocal();
       const optsHtml = mergeModelOptions(p, (modelCustomEl && modelCustomEl.value) || cfg.model || "");
       if (modelEl) {
@@ -215,23 +231,12 @@
       }
       if (modelCustomEl) modelCustomEl.style.display = "";
       if (baseUrlRow) baseUrlRow.style.display = (local || (providerEl && providerEl.value === "openai_compat")) ? "block" : "none";
-      if (fromProviderChange && baseUrlEl && local && p && p.baseUrl) {
-        const known = {
-          "http://127.0.0.1:8080": 1, "http://localhost:8080": 1,
-          "http://127.0.0.1:8081": 1, "http://localhost:8081": 1,
-          "http://127.0.0.1:1234": 1, "http://localhost:1234": 1
-        };
-        const cur = String(baseUrlEl.value || "").replace(/\/+$/, "");
-        const loopback = /127\.0\.0\.1|localhost/i.test(cur);
-        // Remap empty, stock local ports, and leftover cloud URLs — keep a custom loopback port.
-        if (!cur || known[cur] || !loopback) baseUrlEl.value = p.baseUrl;
-      }
       if (keyRow) keyRow.style.display = "block";
       if (keyLabel) keyLabel.textContent = local ? "API token (optional)" : "API Key";
       if (keyEl) {
         keyEl.placeholder = local ? "paste local server token if required" : "paste key here";
         if (fromProviderChange) {
-          // Never copy the leftover cloud apiKey into the localhost token field.
+          // Never copy leftover cloud apiKey into localToken, or localToken into apiKey.
           keyEl.value = local ? (cfg.localToken || "") : (cfg.apiKey || "");
         }
       }
@@ -242,6 +247,20 @@
       providerEl.onchange = function () { refreshModelList({ fromProviderChange: true }); };
       refreshModelList();
     }
+    if (baseUrlEl) {
+      baseUrlEl.oninput = function () {
+        const p = currentProvider();
+        if (!p || p.id !== "openai_compat") return;
+        const cfg = llm.getConfig();
+        const local = formIsLocal();
+        if (keyLabel) keyLabel.textContent = local ? "API token (optional)" : "API Key";
+        if (keyEl) {
+          keyEl.placeholder = local ? "paste local server token if required" : "paste key here";
+          // Typing a loopback URL must not keep the visible cloud key as localToken.
+          keyEl.value = local ? (cfg.localToken || "") : (cfg.apiKey || "");
+        }
+      };
+    }
     if (modelEl) {
       modelEl.onchange = function () {
         if (modelCustomEl) modelCustomEl.value = modelEl.value;
@@ -249,15 +268,19 @@
     }
 
     function collect() {
+      const p = currentProvider();
+      const local = formIsLocal();
+      const compat = !!(p && p.id === "openai_compat");
       const custom = modelCustomEl && modelCustomEl.value.trim();
       const selected = modelEl && modelEl.value;
       const data = {
         providerId: providerEl ? providerEl.value : "",
         model: custom || selected || "",
-        baseUrl: baseUrlEl ? baseUrlEl.value.trim() : "",
+        // Named cloud providers do not keep a leftover loopback baseUrl.
+        baseUrl: (local || compat) ? (baseUrlEl ? baseUrlEl.value.trim() : "") : "",
         enabled: !!(enabledEl && enabledEl.checked)
       };
-      if (formIsLocal()) {
+      if (local) {
         if (keyEl) data.localToken = keyEl.value.trim();
       } else if (keyEl) {
         data.apiKey = keyEl.value.trim();
@@ -295,9 +318,7 @@
         try {
           const r = await llm.testConnection();
           let msg = JSON.stringify(r, null, 2);
-          if (!r.ok && r.status === 401) {
-            msg += "\n\n" + (r.hint || "This local server requires a Bearer token. Paste it in the API token field above, then Test again.");
-          }
+          if (r.hint) msg += "\n\n" + r.hint;
           testOut.textContent = msg;
           if (r.ok) {
             testOut.style.color = "var(--good)";

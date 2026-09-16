@@ -144,6 +144,9 @@
 
   function isLocalEndpoint(provider, cfg) {
     if (provider && provider.local) return true;
+    const id = provider && provider.id;
+    // Named cloud providers stay cloud even if cfg.baseUrl still holds a leftover loopback URL.
+    if (id && id !== "openai_compat") return false;
     const url = String((cfg && cfg.baseUrl) || (provider && provider.baseUrl) || "").toLowerCase();
     return /127\.0\.0\.1|localhost/.test(url);
   }

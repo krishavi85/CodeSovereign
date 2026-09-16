@@ -231,6 +231,23 @@ module.exports = async function (t) {
     win.Engine.LLM.applyAuthHeaders({}, win.Engine.LLM.providerById('openai'), { apiKey: 'sk-secret', localToken: 'lms-token' }).Authorization,
     'Bearer sk-secret'
   );
+  t.ok(
+    'named cloud provider is not local because of a leftover loopback URL',
+    !win.Engine.LLM.isLocalEndpoint(win.Engine.LLM.providerById('openai'), { baseUrl: 'http://127.0.0.1:1234', apiKey: 'sk-secret' })
+  );
+  t.equal(
+    'openai with leftover loopback still uses the cloud apiKey',
+    win.Engine.LLM.authToken(win.Engine.LLM.providerById('openai'), { apiKey: 'sk-secret', localToken: 'lms-token', baseUrl: 'http://127.0.0.1:1234' }),
+    'sk-secret'
+  );
+  t.ok(
+    'openai_compat on loopback is local',
+    win.Engine.LLM.isLocalEndpoint(win.Engine.LLM.providerById('openai_compat'), { baseUrl: 'http://127.0.0.1:1234' })
+  );
+  t.ok(
+    'openai_compat on a remote URL is not local',
+    !win.Engine.LLM.isLocalEndpoint(win.Engine.LLM.providerById('openai_compat'), { baseUrl: 'https://api.together.xyz' })
+  );
 
   let lastFetch = null;
   win.fetch = async function (url, opts) {

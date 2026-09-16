@@ -79,7 +79,11 @@ module.exports = async function (t) {
   t.ok('provider change remaps leftover cloud URLs to the local default', extrasSrc.includes('leftover cloud URLs'));
   t.ok('local providers keep the token field visible', extrasSrc.includes('API token (optional)') && extrasSrc.includes('keyRow.style.display = "block"'));
   t.ok('collect saves localToken for local providers', extrasSrc.includes('data.localToken'));
-  t.ok('provider switch does not copy cloud apiKey into local token field', extrasSrc.includes('Never copy the leftover cloud apiKey'));
+  t.ok('provider switch does not copy cloud apiKey into local token field', extrasSrc.includes('Never copy leftover cloud apiKey into localToken'));
+  t.ok('formIsLocal uses engine locality not leftover URL', extrasSrc.includes('isLocalEndpoint'));
+  t.ok('named cloud providers drop leftover loopback baseUrl', extrasSrc.includes('Named cloud providers do not keep a leftover loopback baseUrl'));
+  t.ok('401 hint is only shown when the engine set one', extrasSrc.includes('if (r.hint)') && !/r\.status === 401/.test(extrasSrc));
+  t.ok('openai_compat URL edits swap the key from the matching store', extrasSrc.includes('must not keep the visible cloud key as localToken'));
   t.ok('card sits before Integrations', html.indexOf('AI Provider') < html.indexOf('Integrations'));
   t.ok(
     'card sits after earlier cards, not at the top of the stack',
