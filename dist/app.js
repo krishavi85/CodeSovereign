@@ -1619,7 +1619,7 @@ function paintAgentTab(editor, sug) {
   if (hint) {
     hint.textContent = sug
       ? ('Tab · ' + (sug.label || sug.kind) + (preview ? ('  ' + preview) : ''))
-      : 'Tab · Agent Tab';
+      : 'Tab · Agent Tab · Ctrl+K edit';
   }
   if (ghost) {
     if (sug && sug.text && editor) {
