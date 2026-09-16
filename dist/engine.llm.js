@@ -8,12 +8,14 @@
      supportsJson, headerStyle, keyHeader, keyPrefix
    - Persists config in localStorage under cs.llm.v1
    - Patches Engine.Agent.run so that when an LLM is configured AND
-     reachable, the agent loops generate → validate → critique →
-     rewrite until a quality gate passes (or a round cap). Local
-     models that cannot emit a full JSON plan are asked for files
-     one at a time. When the real LLM is enabled it is NOT replaced
-     by the template synthesizer — a failed call surfaces the error
-     so the user can keep prompting.
+     reachable, the agent operates as THINK → ACT → OBSERVE →
+     DIAGNOSE → ACT AGAIN → VERIFY → DONE (search, edit, test, MCP,
+     browser snapshot, ask the user without stopping). There is no
+     product limit on tool calls; SAFETY_CAP is only a runaway guard.
+     Local models that cannot emit a full JSON plan are asked for
+     files one at a time. When the real LLM is enabled it is NOT
+     replaced by the template synthesizer — a failed call surfaces
+     the error so the user can keep prompting.
 
    - Discovers and persists /v1/models so any model loaded in
      LM Studio (or another OpenAI-compatible server) stays in the
@@ -189,6 +191,7 @@
   }
 
   const MAX_ROUNDS = 4;
+  const SAFETY_CAP = 48;
   const MODELS_KEY = "cs.llm.models.v1";
 
   function modelsCacheKey(providerId, baseUrl) {
@@ -262,9 +265,14 @@
       "You write production-quality, fully working source files. No placeholders, no TODOs, no pseudo-code, no 'Simple Notepad'.",
       "Ship a distinctive, polished UI: app shell, sidebar or top nav, dark theme, design tokens, real empty states, keyboard shortcuts, and local persistence.",
       stance,
-      "Prefer a single JSON object (no prose, no markdown fences) with this shape:",
+      "You operate as THINK → ACT → OBSERVE → DIAGNOSE → ACT AGAIN → VERIFY → DONE.",
+      "There is no product limit on how many tools you may call. Keep acting until the work is verified.",
+      "ask_user records a question and you MUST continue working — do not wait.",
+      "Prefer a single JSON object (no prose, no markdown fences). Either a file plan:",
       '{ "summary": "<one-line summary of what you built>",',
       '  "files": [ { "path": "/index.html", "content": "<full file contents>" }, ... ] }',
+      "or a tool call:",
+      '{ "think": "<brief>", "tool": "grep|list_dir|read_file|write_file|delete_file|run_tests|install_deps|run_command|observe|web_search|browser|mcp|generate_image|ask_user|done", "args": {} }',
       "If you cannot emit valid JSON, emit files as blocks:",
       "FILE: /index.html",
       "```html",
@@ -513,6 +521,25 @@
         throw new Error("LLM response did not contain a valid file plan.");
       }
       return planFromParsed(parsed, res.model, "llm");
+    });
+  }
+
+  function llmDecide(prompt, proj, specCtx, extraUser) {
+    const userPrompt = extraUser
+      ? String(prompt || "").trim() + "\n\n" + String(extraUser)
+      : String(prompt || "").trim();
+    return complete(userPrompt, specCtx).then(function (res) {
+      const files = extractFilesFromText(res.content);
+      const parsed = extractJson(res.content);
+      if (files && files.files && files.files.length) {
+        return { kind: "files", think: parsed && parsed.think, plan: planFromParsed(files, res.model, "llm") };
+      }
+      const Loop = window.Engine && window.Engine.Loop;
+      if (Loop && Loop.parse) {
+        const d = Loop.parse(res.content);
+        if (d && d.kind === "tool") return d;
+      }
+      throw new Error("LLM response did not contain a valid file plan.");
     });
   }
 
@@ -1680,27 +1707,89 @@
         extraUser = extraUser
           ? (extraUser + (exploreBlk ? "\n\n" + exploreBlk : "") + "\n\n" + formatRag(intent, null, followUp || intent.mode === "deps" ? engines.deps : null, null, { followUp: followUp }))
           : ((exploreBlk ? exploreBlk + "\n\n" : "") + formatRag(intent, null, followUp || intent.mode === "deps" ? engines.deps : null, null, { followUp: followUp }));
-        for (let round = 1; round <= MAX_ROUNDS; round++) {
+        const cap = (window.Engine.Loop && window.Engine.Loop.SAFETY_CAP) || SAFETY_CAP;
+        for (let round = 1; round <= cap; round++) {
           steps.push({
             kind: "plan",
             text: round === 1
               ? (followUp
-                  ? "Follow-up on the current app (round 1/" + MAX_ROUNDS + ")…"
-                  : "Calling LLM to build the app (round 1/" + MAX_ROUNDS + ")…")
-              : "Quality too low (score " + quality.score + ") — refining round " + round + "/" + MAX_ROUNDS + "…"
+                  ? "Follow-up on the current app…"
+                  : "Calling LLM to build the app…")
+              : (wrote
+                  ? "Quality too low (score " + quality.score + ") — refining round " + round + "…"
+                  : "Diagnose and act again (tick " + round + ")…")
           });
           onStep && onStep(steps[steps.length - 1]);
-          let plan;
+          let decision;
           try {
-            plan = await generatePlan(prompt, proj, ctx, extraUser, onStep, steps, true);
+            decision = await llmDecide(prompt, proj, ctx, extraUser);
             lastErr = null;
           } catch (err) {
             lastErr = err;
             steps.push({ kind: "error", text: "LLM round " + round + " failed: " + (err && err.message || err) });
             onStep && onStep(steps[steps.length - 1]);
             if (isTransportError(err)) break;
+            if (isPlanParseError(err)) {
+              try {
+                const seqPrompt = extraUser ? (String(prompt) + "\n\n" + extraUser) : prompt;
+                const seqPlan = await sequentialGenerate(seqPrompt, ctx, function (s) {
+                  steps.push(s);
+                  onStep && onStep(s);
+                });
+                decision = { kind: "files", plan: seqPlan };
+                lastErr = null;
+              } catch (err2) {
+                lastErr = err2;
+                if (isTransportError(err2)) break;
+                continue;
+              }
+            } else {
+              continue;
+            }
+          }
+          if (decision && decision.think) {
+            steps.push({ kind: "think", text: String(decision.think).slice(0, 280) });
+            onStep && onStep(steps[steps.length - 1]);
+          }
+          if (decision && decision.kind === "tool") {
+            const tool = String(decision.tool || "");
+            steps.push({ kind: "act", text: "Act: " + tool, tool: tool });
+            onStep && onStep(steps[steps.length - 1]);
+            if (tool === "done") {
+              const observation = observeRuntime([]);
+              const judged = evaluateBuild([], observation, scoreBuild([], observation.issues || []));
+              quality = judged.quality;
+              steps.push({ kind: "evaluate", text: "Brain evaluated: quality " + quality.score + (quality.pass ? " pass" : " — continue from a follow-up") });
+              onStep && onStep(steps[steps.length - 1]);
+              steps.push({ kind: "done", text: "Run complete (LLM, " + round + " act(s), quality " + quality.score + "). Prompt again to keep editing this app." });
+              onStep && onStep(steps[steps.length - 1]);
+              return steps;
+            }
+            let obs = { ok: false, error: "loop engine not loaded" };
+            if (window.Engine.Loop && window.Engine.Loop.exec) {
+              try { obs = await window.Engine.Loop.exec(tool, decision.args || {}); }
+              catch (toolErr) { obs = { ok: false, error: String(toolErr && toolErr.message || toolErr) }; }
+            }
+            if (obs && obs.written && obs.written.length) wrote = true;
+            steps.push({
+              kind: "observe",
+              text: "Observe " + tool + ": " + (obs.ok ? "ok" : (obs.error || "fail")),
+              tool: tool,
+              result: obs
+            });
+            onStep && onStep(steps[steps.length - 1]);
+            const answers = (window.Engine.Loop && window.Engine.Loop.pendingAnswers)
+              ? window.Engine.Loop.pendingAnswers()
+              : [];
+            extraUser = (extraUser ? extraUser + "\n\n" : "") +
+              "OBSERVATION (" + tool + "):\n" + JSON.stringify(obs).slice(0, 3500) +
+              (answers.length ? "\n\nUSER ANSWERS (keep working):\n" + answers.map(function (a) {
+                return "- " + a.question + " → " + a.answer;
+              }).join("\n") : "");
             continue;
           }
+          const plan = decision && decision.plan;
+          if (!plan || !plan.targets || !plan.targets.length) continue;
           steps.push({ kind: "plan-result", text: "Plan: " + plan.summary, files: plan.targets, round: round });
           onStep && onStep(steps[steps.length - 1]);
           await writeTargets(plan.targets, steps, onStep);
@@ -1747,8 +1836,8 @@
         }
         steps.push({
           kind: "done",
-          text: "Run complete (LLM, " + MAX_ROUNDS + " rounds, quality " + quality.score +
-            "). Prompt the Agent again to keep refining — it will iterate from this version."
+          text: "Run complete (LLM, " + cap + " acts, quality " + quality.score +
+            "). Safety cap only — prompt the Agent again to continue. There is no product limit on tool calls."
         });
         onStep && onStep(steps[steps.length - 1]);
         return steps;
@@ -1775,6 +1864,7 @@
     applyAuthHeaders,
     complete,
     llmPlan,
+    llmDecide,
     sequentialGenerate,
     extractJson,
     extractFilesFromText,
@@ -1834,7 +1924,9 @@
     patchAgent,
     STORE_KEY,
     MODELS_KEY,
-    MAX_ROUNDS
+    MAX_ROUNDS,
+    SAFETY_CAP,
+    NO_FIXED_TOOL_LIMIT: true
   };
 
   // Patch as soon as Engine + Agent exist; if not yet, retry.

@@ -111,6 +111,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 .tree-row.dir{font-weight:600;color:#9aa3b8}
 .tab-ghost{position:absolute;color:rgba(167,139,250,.55);font:400 13px/1.62 'JetBrains Mono',monospace;pointer-events:none;white-space:pre;z-index:2}
 .tab-portal{position:absolute;right:12px;bottom:12px;z-index:3;max-width:280px;padding:10px 12px;border-radius:10px;background:#141a2b;border:1px solid rgba(167,139,250,.35);box-shadow:0 12px 30px rgba(0,0,0,.45);color:#c7cddb;font:500 12px Inter,sans-serif}
+.inline-edit{position:absolute;z-index:4;min-width:320px;max-width:520px;padding:8px 10px;border-radius:10px;background:#141a2b;border:1px solid rgba(167,139,250,.45);box-shadow:0 12px 30px rgba(0,0,0,.5);display:flex;align-items:center;gap:8px}
+.inline-edit[hidden]{display:none}
+.inline-k{flex:none;font:700 10px Inter,sans-serif;letter-spacing:.06em;color:#a78bfa;background:rgba(167,139,250,.12);padding:4px 7px;border-radius:6px}
+.inline-edit input{flex:1;background:transparent;border:0;outline:0;color:#e6e9f2;font:400 13px Inter,sans-serif}
 .tab-hint{display:inline-flex;align-items:center;gap:8px;margin-left:auto;color:#7b859c;font:500 11px Inter,sans-serif;min-width:0}
 
 /* ============ TYPE SCALE (text-too-large fix) ============ */
@@ -197,6 +201,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="app.plugins.extras.js"></script>
 <script src="engine.llm.js"></script>
 <script src="engine.tab.js"></script>
+<script src="engine.inline.js"></script>
+<script src="engine.loop.js"></script>
 <script src="engine.stack.js"></script>
 <script src="app.llm.extras.js"></script>
 <script src="app.bus.js"></script>

@@ -327,6 +327,7 @@ module.exports = async function (t) {
   t.ok('second round mentions refining', steps.some(function (s) {
     return /refining round/i.test(s.text || '');
   }));
+  t.ok('agent loop is not hard-capped at 4 rounds', LLM.NO_FIXED_TOOL_LIMIT === true && LLM.SAFETY_CAP > 4);
   t.ok('quality gate eventually passes or finishes with a score', steps.some(function (s) {
     return s.kind === 'done' && /quality/i.test(s.text || '');
   }));

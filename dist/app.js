@@ -103,6 +103,7 @@ const S = {
   agentPrompt: '',
   agentRuns: [],
   agentChat: [],
+  agentQuestions: [],
   agentSteps: [],
   agentBuilt: false,
   lastPrompt: '',
@@ -344,6 +345,7 @@ function saveAgentSession() {
 function resetAgentSession() {
   S.agentRuns = [];
   S.agentChat = [];
+  S.agentQuestions = [];
   S.agentSteps = [];
   S.agentBuilt = false;
   S.lastPrompt = '';
@@ -935,7 +937,7 @@ function renderAgent() {
       ${time ? `<span style="font-size:11px;color:#6b7488;flex:none">${esc(time)}</span>` : ''}
     </div>`;
 
-  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','user':'You','route':'Router','repo':'Repo','deps':'Deps','screenshot':'Observer','evaluate':'Brain','explore':'Explore' };
+  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','user':'You','route':'Router','repo':'Repo','deps':'Deps','screenshot':'Observer','evaluate':'Brain','explore':'Explore','think':'Think','act':'Act','observe':'Observe','diagnose':'Diagnose','ask':'Ask' };
   const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket','error':'alert','user':'user','route':'sparkle','repo':'branch','deps':'clip','screenshot':'eye','evaluate':'flask','explore':'branch' };
   const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c','error':'#f87171','user':'#fbbf24','route':'#a78bfa','repo':'#22d3ee','deps':'#60a5fa','screenshot':'#34d399','evaluate':'#a78bfa','explore':'#22d3ee' };
 
@@ -1114,6 +1116,15 @@ function renderAgent() {
         <button id="openIdeBtn2" style="display:flex;align-items:center;gap:8px;padding:9px 15px;border:1px solid rgba(255,255,255,.11);border-radius:9px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 12.5px Inter;cursor:pointer"><span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center">${I.ide}</span>Open IDE</button>
       </div>
 
+      ${((S.agentQuestions || []).filter(function (q) { return q && !q.answer; }).length) ? `<div style="border:1px solid rgba(167,139,250,.35);border-radius:12px;background:rgba(124,91,214,.08);padding:12px 14px;margin-bottom:16px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#a78bfa;margin-bottom:8px">AGENT QUESTION — keeps working while you answer</div>
+        ${(S.agentQuestions || []).filter(function (q) { return q && !q.answer; }).map(function (q) {
+          return '<div style="margin-bottom:8px"><div style="font-size:13px;color:#e6e9f2;margin-bottom:6px">' + esc(q.question) + '</div>'
+            + '<div style="display:flex;gap:8px"><input data-agentq="' + esc(q.id) + '" placeholder="Answer…" style="flex:1;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px 10px;color:#e6e9f2;font:400 13px Inter">'
+            + '<button data-agentqsend="' + esc(q.id) + '" class="btn" style="padding:8px 12px;font-size:12px">Send</button></div></div>';
+        }).join('')}
+      </div>` : ''}
+
       <div style="border:1px solid rgba(255,255,255,.07);border-radius:13px;background:rgba(13,17,28,.5);margin-bottom:18px">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.06)">
           <div style="display:flex;align-items:center;gap:10px"><span style="font-size:13px;font-weight:600">Activity Stream</span><span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:${liveColor}"><span style="width:6px;height:6px;border-radius:50%;background:${liveColor};${S.agentRunning&&!S.agentStopped?'animation:csPulse 1.6s infinite':''}"></span>${liveLabel}</span></div>
@@ -1136,6 +1147,19 @@ function renderAgent() {
       ${ctxBody}
     </aside>
   </div>`;
+}
+
+function answerAgentQuestion(id, text) {
+  const q = (S.agentQuestions || []).find(function (x) { return x && x.id === id; });
+  if (!q) return;
+  q.answer = String(text || '').trim();
+  if (!q.answer) { toast('Type an answer first', '#f59e0b'); return; }
+  S.agentChat = [...(S.agentChat || []), { role: 'user', text: 'Answer: ' + q.answer, at: Date.now() }];
+  toast('Answer recorded — Agent keeps working', '#34d399');
+  if (!S.agentRunning) {
+    runAgentWith('Answer to: ' + q.question + ' → ' + q.answer);
+  }
+  renderAll();
 }
 
 function bindAgent() {
@@ -1167,6 +1191,13 @@ function bindAgent() {
   });
   const oi = a('openIdeBtn'); if (oi) oi.onclick = () => { S.screen = 'ide'; renderAll(); };
   const oi2 = a('openIdeBtn2'); if (oi2) oi2.onclick = () => { S.screen = 'ide'; renderAll(); };
+  document.querySelectorAll('[data-agentqsend]').forEach(function (el) {
+    el.onclick = function () {
+      const id = el.dataset.agentqsend;
+      const field = document.querySelector('[data-agentq="' + id + '"]');
+      answerAgentQuestion(id, field ? field.value : '');
+    };
+  });
 }
 var files = []; // populated in renderAgent scope via local var, this is fallback
 function _agentFiles() { return Object.keys(Engine.FS._data).filter(p => Engine.FS.isFile(p)); }
@@ -1463,11 +1494,15 @@ function renderIDE() {
         <span id="saveFileBtn2" style="width:16px;height:16px;display:inline-flex;color:#6b7488;margin:0 6px;cursor:pointer">${I.save}</span>
         <span style="width:16px;height:16px;display:inline-flex;color:#6b7488;margin:0 6px;cursor:pointer">${I.dots}</span>
       </div>
-      <div style="display:flex;align-items:center;gap:7px;padding:6px 16px;font-size:11.5px;color:#7b859c;flex:none;border-bottom:1px solid rgba(255,255,255,.04)"><span>${S.ideFile ? esc(S.ideFile) : 'no file'}</span>${S.ideDirty?'<span style="color:#f59e0b">· unsaved</span>':''}<span class="tab-hint" id="tabHint">Tab · Agent Tab</span></div>
+      <div style="display:flex;align-items:center;gap:7px;padding:6px 16px;font-size:11.5px;color:#7b859c;flex:none;border-bottom:1px solid rgba(255,255,255,.04)"><span>${S.ideFile ? esc(S.ideFile) : 'no file'}</span>${S.ideDirty?'<span style="color:#f59e0b">· unsaved</span>':''}<span class="tab-hint" id="tabHint">Tab · Agent Tab · Ctrl+K edit</span></div>
       <div style="flex:1;display:flex;min-height:0;position:relative;overflow:hidden;background:#0a0e17">
         <textarea id="ideEditor" spellcheck="false" style="flex:1;background:#0a0e17;color:#c9d1e0;border:0;outline:0;padding:8px 16px;font:400 13px/1.62 'JetBrains Mono',monospace;resize:none;width:100%;height:100%;position:relative;z-index:1">${esc(S.ideBuffer || '')}</textarea>
         <div id="tabGhost" class="tab-ghost" hidden></div>
         <div id="tabPortal" class="tab-portal" hidden></div>
+        <div id="inlineEdit" class="inline-edit" hidden>
+          <div class="inline-k">Ctrl+K</div>
+          <input id="inlineEditInput" placeholder="Convert this to async…" autocomplete="off">
+        </div>
       </div>
       <div style="height:250px;flex:none;border-top:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;background:#0b0f1a">
         <div style="display:flex;align-items:center;gap:22px;padding:0 16px;height:36px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">${idePanels}<div style="flex:1"></div><span style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer">${I.expand}</span></div>
@@ -1659,6 +1694,106 @@ function acceptTabPortal() {
   if (dest) openFile(dest);
 }
 
+function inlineSelection(editor) {
+  let a = editor.selectionStart || 0;
+  let b = editor.selectionEnd || 0;
+  if (a === b) {
+    const v = editor.value || '';
+    const ls = v.lastIndexOf('\n', Math.max(0, a - 1)) + 1;
+    let le = v.indexOf('\n', a);
+    if (le < 0) le = v.length;
+    return { start: ls, end: le };
+  }
+  return { start: Math.min(a, b), end: Math.max(a, b) };
+}
+
+function paintInlineEdit(editor, show) {
+  const box = document.getElementById('inlineEdit');
+  const input = document.getElementById('inlineEditInput');
+  if (!box) return;
+  if (!show) {
+    box.hidden = true;
+    S._inlineOpen = false;
+    return;
+  }
+  const sel = inlineSelection(editor);
+  S._inlineSel = sel;
+  box.hidden = false;
+  S._inlineOpen = true;
+  if (editor) {
+    const xy = tabCaretPixel(editor, sel.start);
+    box.style.left = Math.max(12, 16 + xy.x) + 'px';
+    box.style.top = Math.max(8, 8 + xy.y + 22) + 'px';
+  }
+  if (input) {
+    input.value = S.inlineInstruction || '';
+    setTimeout(function () { try { input.focus(); } catch (_) {} }, 0);
+  }
+}
+
+async function runInlineEdit(editor) {
+  const Inline = window.Engine && window.Engine.Inline;
+  const input = document.getElementById('inlineEditInput');
+  const instruction = ((input && input.value) || S.inlineInstruction || '').trim();
+  if (!Inline || !editor || !instruction) { toast('Type what to change, then Enter', '#f59e0b'); return; }
+  S.inlineInstruction = instruction;
+  const sel = S._inlineSel || inlineSelection(editor);
+  toast('Editing selection…', '#a78bfa');
+  let result;
+  try {
+    result = await Inline.transform({
+      path: S.ideFile,
+      content: editor.value,
+      selectionStart: sel.start,
+      selectionEnd: sel.end,
+      instruction: instruction
+    });
+  } catch (e) {
+    toast('Inline edit failed: ' + (e && e.message || e), '#ef4444');
+    return;
+  }
+  const next = Inline.apply(result, editor.value);
+  editor.value = next.content;
+  S.ideBuffer = next.content;
+  S.ideDirty = true;
+  editor.selectionStart = editor.selectionEnd = next.cursor;
+  paintInlineEdit(editor, false);
+  toast('Selection updated', '#34d399');
+}
+
+function bindInlineEdit(editor) {
+  if (!editor || editor.dataset.inlineBound === '1') return;
+  editor.dataset.inlineBound = '1';
+  editor.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      paintInlineEdit(editor, true);
+      return;
+    }
+    if (e.key === 'Escape' && S._inlineOpen) {
+      e.preventDefault();
+      paintInlineEdit(editor, false);
+    }
+  });
+  const input = document.getElementById('inlineEditInput');
+  if (input && input.dataset.inlineK !== '1') {
+    input.dataset.inlineK = '1';
+    input.oninput = function (ev) { S.inlineInstruction = ev.target.value; };
+    input.onkeydown = function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        runInlineEdit(editor);
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        paintInlineEdit(editor, false);
+        try { editor.focus(); } catch (_) {}
+      }
+    };
+  }
+}
+
 function bindAgentTab(editor) {
   const Tab = window.Engine && window.Engine.Tab;
   if (!Tab || !editor) return;
@@ -1676,12 +1811,14 @@ function bindAgentTab(editor) {
   editor.addEventListener('click', bump);
   editor.addEventListener('scroll', function () { if (S._tabSug) paintAgentTab(editor, S._tabSug); });
   editor.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) return;
+    if (e.key === 'Escape' && S._inlineOpen) return;
     if (e.key === 'Escape' && S._tabSug) {
       e.preventDefault();
       paintAgentTab(editor, null);
       return;
     }
-    if (e.key === 'Tab' && !e.shiftKey && S._tabSug) {
+    if (e.key === 'Tab' && !e.shiftKey && S._tabSug && !S._inlineOpen) {
       e.preventDefault();
       if (Tab.isPortal(S._tabSug) && !S._tabSug.text) acceptTabPortal();
       else acceptAgentTab(editor);
@@ -1715,6 +1852,7 @@ function bindIDE() {
   if (editor) {
     editor.oninput = e => { S.ideBuffer = e.target.value; S.ideDirty = true; /* re-render would lose focus; mark only */ const ind = document.querySelector('[id="screenRoot"]'); };
     bindAgentTab(editor);
+    bindInlineEdit(editor);
   }
   const sf = document.getElementById('saveFileBtn'); if (sf) sf.onclick = saveFile;
   const sf2 = document.getElementById('saveFileBtn2'); if (sf2) sf2.onclick = saveFile;
