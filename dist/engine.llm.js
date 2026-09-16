@@ -129,6 +129,15 @@
     saveConfig(next);
     return next;
   }
+  // Desktop wraps Engine.LLM.getConfig to inject keychain secrets. Runtime
+  // calls must go through that public getter, not the unwrapped loadConfig.
+  function liveConfig() {
+    try {
+      const pub = window.Engine && window.Engine.LLM && window.Engine.LLM.getConfig;
+      if (typeof pub === "function" && pub !== getConfig) return pub() || loadConfig();
+    } catch (_) {}
+    return loadConfig();
+  }
   function providerById(id) {
     return PROVIDERS.find(p => p.id === id) || null;
   }
@@ -225,7 +234,7 @@
   }
 
   async function listModels() {
-    const cfg = loadConfig();
+    const cfg = liveConfig();
     const provider = resolveProvider(cfg);
     if (!provider.baseUrl) return { ok: false, models: [], error: "No base URL set." };
     const url = provider.baseUrl.replace(/\/+$/, "") + "/v1/models";
@@ -249,7 +258,7 @@
   }
 
   async function complete(prompt, ctx) {
-    const cfg = loadConfig();
+    const cfg = liveConfig();
     const provider = resolveProvider(cfg);
     if (!cfg.enabled) {
       throw new Error("LLM not configured. Set provider + key in Settings.");
@@ -326,7 +335,7 @@
 
   // ----- Connection test -----
   async function testConnection() {
-    const cfg = loadConfig();
+    const cfg = liveConfig();
     const provider = resolveProvider(cfg);
     if (needsApiKey(provider, cfg) && !cfg.apiKey) return { ok: false, error: "No API key set." };
     if (!provider.baseUrl) return { ok: false, error: "No base URL set." };
@@ -363,7 +372,7 @@
   }
 
   function status() {
-    const cfg = loadConfig();
+    const cfg = liveConfig();
     const provider = resolveProvider(cfg);
     const ready = !!cfg.enabled && !!provider.baseUrl && (!needsApiKey(provider, cfg) || !!cfg.apiKey);
     return {
@@ -450,7 +459,7 @@
     const originalPlan = Agent._plan.bind(Agent);
 
     Agent.run = function (prompt, onStep) {
-      const cfg = loadConfig();
+      const cfg = liveConfig();
       const provider = resolveProvider(cfg);
       const useLLM = !!cfg.enabled && !!provider.baseUrl && (!needsApiKey(provider, cfg) || !!cfg.apiKey);
       if (!useLLM) {

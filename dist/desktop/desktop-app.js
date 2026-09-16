@@ -4,7 +4,7 @@
    - native New Project / Open Folder / Open Recent / Save / Export ZIP
    - Engine.Proj is redirected to real folders on disk
    - reopens the last project on launch
-   - migrates the LLM API key into the OS keychain (safeStorage)
+   - migrates the LLM API key and local LM Studio token into the OS keychain (safeStorage)
    No-op in a plain browser.
    ===================================================================== */
 (function () {
@@ -167,40 +167,68 @@
   function migrateLlmKey() {
     if (!Engine.LLM || !Engine.LLM.getConfig) return;
     var _get = Engine.LLM.getConfig, _set = Engine.LLM.setConfig;
-    var cache = null;
+    var keyCache = null;
+    var tokenCache = null;
+
+    function stripStore(field) {
+      try {
+        var raw = JSON.parse(localStorage.getItem('cs.llm.v1') || '{}');
+        delete raw[field];
+        localStorage.setItem('cs.llm.v1', JSON.stringify(raw));
+      } catch (_) {}
+    }
 
     D.creds.get('llm.apiKey').then(function (r) {
       var stored = r && r.value;
       var cfg = _get();
       if (!stored && cfg && cfg.apiKey) {
-        // migrate the plaintext key out of localStorage into the keychain
         D.creds.set('llm.apiKey', cfg.apiKey);
         stored = cfg.apiKey;
       }
-      cache = stored || '';
+      keyCache = stored || '';
       if (stored) {
         _set({ apiKey: stored });
-        try {
-          var raw = JSON.parse(localStorage.getItem('cs.llm.v1') || '{}');
-          delete raw.apiKey; localStorage.setItem('cs.llm.v1', JSON.stringify(raw));
-        } catch (_) {}
+        stripStore('apiKey');
+      }
+    });
+
+    D.creds.get('llm.localToken').then(function (r) {
+      var stored = r && r.value;
+      var cfg = _get();
+      if (!stored && cfg && cfg.localToken) {
+        D.creds.set('llm.localToken', cfg.localToken);
+        stored = cfg.localToken;
+      }
+      tokenCache = stored || '';
+      if (stored) {
+        _set({ localToken: stored });
+        stripStore('localToken');
       }
     });
 
     Engine.LLM.getConfig = function () {
       var c = _get() || {};
-      if (!c.apiKey && cache) c.apiKey = cache;
+      if (!c.apiKey && keyCache) c.apiKey = keyCache;
+      if (!c.localToken && tokenCache) c.localToken = tokenCache;
       return c;
     };
     Engine.LLM.setConfig = function (patch) {
-      if (patch && typeof patch.apiKey === 'string') {
-        cache = patch.apiKey;
+      if (!patch) return _set(patch);
+      var copy = {}; for (var k in patch) copy[k] = patch[k];
+      var strip = false;
+      if (typeof patch.apiKey === 'string') {
+        keyCache = patch.apiKey;
         D.creds.set('llm.apiKey', patch.apiKey);
-        var copy = {}; for (var k in patch) copy[k] = patch[k];
-        delete copy.apiKey;                 // never persist the key to localStorage
-        return _set(copy);
+        delete copy.apiKey;
+        strip = true;
       }
-      return _set(patch);
+      if (typeof patch.localToken === 'string') {
+        tokenCache = patch.localToken;
+        D.creds.set('llm.localToken', patch.localToken);
+        delete copy.localToken;
+        strip = true;
+      }
+      return _set(strip ? copy : patch);
     };
   }
 

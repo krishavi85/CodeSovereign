@@ -276,6 +276,43 @@ module.exports = async function (t) {
   t.ok('401 without token does not leak cloud key', !lastFetch.headers.Authorization || String(lastFetch.headers.Authorization).indexOf('sk-secret') < 0);
   t.ok('401 hint tells the user to paste the LM Studio token', /Bearer token/.test(String(ping401.hint || '')));
 
+  const deskGet = win.Engine.LLM.getConfig;
+  const deskSet = win.Engine.LLM.setConfig;
+  let keyCache = 'sk-secret';
+  let tokenCache = 'lms-token';
+  win.Engine.LLM.getConfig = function () {
+    const c = deskGet() || {};
+    if (!c.apiKey) c.apiKey = keyCache;
+    if (!c.localToken) c.localToken = tokenCache;
+    return c;
+  };
+  win.Engine.LLM.setConfig = function (patch) {
+    const copy = Object.assign({}, patch || {});
+    if (typeof copy.apiKey === 'string') { keyCache = copy.apiKey; delete copy.apiKey; }
+    if (typeof copy.localToken === 'string') { tokenCache = copy.localToken; delete copy.localToken; }
+    return deskSet(copy);
+  };
+  deskSet({
+    providerId: 'lmstudio',
+    enabled: true,
+    model: 'tinylama-1.1B-Q5_K_M',
+    baseUrl: 'http://127.0.0.1:1234'
+  });
+  try {
+    const persisted = JSON.parse(store['cs.llm.v1'] || '{}');
+    delete persisted.apiKey;
+    delete persisted.localToken;
+    store['cs.llm.v1'] = JSON.stringify(persisted);
+  } catch (_) {}
+  t.ok('desktop store has no localToken plaintext', String(store['cs.llm.v1'] || '').indexOf('lms-token') < 0);
+  t.ok('desktop store has no cloud apiKey plaintext', String(store['cs.llm.v1'] || '').indexOf('sk-secret') < 0);
+  lastFetch = null;
+  const deskPing = await win.Engine.LLM.testConnection();
+  t.ok('keychain wrap still sends localToken on Test', deskPing.ok === true && lastFetch.headers.Authorization === 'Bearer lms-token');
+  t.ok('keychain wrap does not send the cloud key to localhost', String(lastFetch.headers.Authorization).indexOf('sk-secret') < 0);
+  win.Engine.LLM.getConfig = deskGet;
+  win.Engine.LLM.setConfig = deskSet;
+
   S.Execution.set('aider');
   t.equal('execution backend is aider', S.Execution.current(), 'aider');
   t.ok('cline agents listed', S.Execution.agents.indexOf('RepairAgent') >= 0);
@@ -289,6 +326,11 @@ module.exports = async function (t) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'dist', 'index.html'), 'utf8');
   t.ok('index.html loads engine.stack.js', /engine\.stack\.js/.test(html));
   t.ok('index.html loads app.stack.js', /app\.stack\.js/.test(html));
+  t.ok('index.html loads the desktop layer', /desktop\/desktop-app\.js/.test(html));
+  const deskSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'desktop', 'desktop-app.js'), 'utf8');
+  const llmSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'engine.llm.js'), 'utf8');
+  t.ok('desktop migrates localToken into the keychain', deskSrc.includes("creds.get('llm.localToken')") && deskSrc.includes("creds.set('llm.localToken'"));
+  t.ok('LLM runtime reads go through the public getConfig wrap', llmSrc.includes('function liveConfig') && /const cfg = liveConfig\(\)/.test(llmSrc));
   t.ok('CSP allows LocalAI on 8080', /http:\/\/127\.0\.0\.1:8080/.test(html) && /http:\/\/localhost:8080/.test(html));
   t.ok('CSP allows llama.cpp on 8081', /http:\/\/127\.0\.0\.1:8081/.test(html) && /http:\/\/localhost:8081/.test(html));
   t.ok('CSP allows LM Studio on 1234', /http:\/\/127\.0\.0\.1:1234/.test(html) && /http:\/\/localhost:1234/.test(html));
