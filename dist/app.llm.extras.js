@@ -360,9 +360,9 @@
         const ids = (r && r.models) || [];
         try {
           const current = (modelCustomEl && modelCustomEl.value.trim()) || (llm.getConfig().model) || "";
-          if (current && llm.rememberModels) {
-            const merged = (r.cached || ids).concat([current]);
-            llm.rememberModels(merged, p && p.id, (baseUrlEl && baseUrlEl.value) || (p && p.baseUrl) || "");
+          if (llm.rememberModels) {
+            const prev = (llm.cachedModels && llm.cachedModels(p && p.id, (baseUrlEl && baseUrlEl.value) || (p && p.baseUrl) || "")) || [];
+            llm.rememberModels(ids.concat(prev, current ? [current] : []), p && p.id, (baseUrlEl && baseUrlEl.value) || (p && p.baseUrl) || "");
           }
         } catch (_) {}
         refreshModelList();

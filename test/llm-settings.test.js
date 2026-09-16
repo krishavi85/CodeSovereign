@@ -181,4 +181,5 @@ module.exports = async function (t) {
   t.ok('extras merges cached /v1/models into the dropdown', extrasSrc.includes('cachedModels') && extrasSrc.includes('knownModelIds'));
   t.ok('Settings auto-pulls /v1/models for local providers', extrasSrc.includes('pullRemoteModels') && extrasSrc.includes('Listing /v1/models'));
   t.ok('typed model id is remembered on Save', extrasSrc.includes('rememberModels') && extrasSrc.includes('prev.concat'));
+  t.ok('refresh merges previous custom ids with /v1/models', extrasSrc.includes('ids.concat(prev'));
 };

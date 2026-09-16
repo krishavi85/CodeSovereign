@@ -162,6 +162,18 @@ module.exports = async function (t) {
   const richScore = LLM.scoreBuild(RICH.files, []);
   t.ok('polished notes UI passes the quality gate', richScore.pass === true && richScore.score >= 55);
 
+  const leftoverErr = [{ severity: 'error', file: '/evil.js', message: 'Use of eval() detected' }];
+  t.ok('leftover workspace errors do not fail a good plan score', LLM.scoreBuild(RICH.files, leftoverErr).pass === true);
+  const thinNoCss = [
+    { path: '/index.html', content: '<html lang="en"><body><h1>Notes</h1><textarea></textarea><script src="/scripts/app.js"></script></body></html>' },
+    { path: '/scripts/app.js', content: 'void 0;' },
+    { path: '/styles/legacy.css', content: RICH_CSS }
+  ];
+  t.ok('leftover themed CSS is ignored when scoring only the written files', LLM.scoreBuild(thinNoCss.slice(0, 2), []).pass === false);
+
+  const prose = 'Sure, here is the file:\n```html\n<html lang="en"><body>Hi</body></html>\n```\nHope this helps.';
+  t.equal('stripFence drops surrounding model prose', LLM.stripFence(prose).trim(), '<html lang="en"><body>Hi</body></html>');
+
   LLM.setConfig({
     providerId: 'lmstudio',
     enabled: true,
@@ -184,12 +196,12 @@ module.exports = async function (t) {
       })
     };
   };
+  LLM.rememberModels(['custom-anything-i-typed'], 'lmstudio', 'http://127.0.0.1:1234');
   const listed = await LLM.listModels();
   t.equal('listModels returns every loaded id', listed.models.length, 3);
   t.ok('listModels persists loaded ids', LLM.cachedModels('lmstudio', 'http://127.0.0.1:1234').indexOf('qwen2.5-coder-7b') >= 0);
+  t.ok('listModels keeps previously typed custom ids', LLM.cachedModels('lmstudio', 'http://127.0.0.1:1234').indexOf('custom-anything-i-typed') >= 0);
   t.ok('model cache is stored under cs.llm.models.v1', !!store['cs.llm.models.v1']);
-  LLM.rememberModels(['qwen2.5-coder-7b', 'custom-anything-i-typed'], 'lmstudio', 'http://127.0.0.1:1234');
-  t.ok('typed custom ids stay in the cache', LLM.cachedModels('lmstudio', 'http://127.0.0.1:1234').indexOf('custom-anything-i-typed') >= 0);
 
   const beforeFail = win.Engine.FS.read('/index.html') || '';
   let posts = 0;
@@ -205,8 +217,12 @@ module.exports = async function (t) {
     return s.kind === 'error' && /synthesizer was not used/i.test(s.text || '');
   }));
   t.ok('failed LLM does not overwrite the workspace with a template notepad', (win.Engine.FS.read('/index.html') || '') === beforeFail);
-  t.ok('failed LLM retried across rounds', posts >= 2);
+  t.equal('failed LLM does not sequential-retry a down server', posts, 1);
+  t.ok('connection errors are not described as a JSON-plan miss', !failSteps.some(function (s) {
+    return /JSON plan failed/i.test(s.text || '');
+  }));
 
+  win.Engine.FS.write('/evil.js', 'eval("x")');
   let chatCalls = 0;
   win.fetch = async function (url, opts) {
     if (!/chat\/completions/.test(String(url))) {

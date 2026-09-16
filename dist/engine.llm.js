@@ -205,21 +205,29 @@
   function saveModelCache(store) {
     try { localStorage.setItem(MODELS_KEY, JSON.stringify(store || {})); } catch (_) {}
   }
+  function uniqueModelIds() {
+    const seen = {};
+    const list = [];
+    for (let i = 0; i < arguments.length; i++) {
+      (arguments[i] || []).forEach(function (id) {
+        const v = String(id || "").trim();
+        if (!v || seen[v]) return;
+        seen[v] = true;
+        list.push(v);
+      });
+    }
+    return list.slice(0, 48);
+  }
   function rememberModels(ids, providerId, baseUrl) {
     const cfg = liveConfig();
     const provider = resolveProvider(cfg);
     const pid = providerId || cfg.providerId || (provider && provider.id) || "";
     const url = (baseUrl != null && baseUrl !== "") ? baseUrl : (provider && provider.baseUrl) || cfg.baseUrl || "";
     const store = loadModelCache();
-    const seen = {};
-    const list = [];
-    (ids || []).forEach(function (id) {
-      const v = String(id || "").trim();
-      if (!v || seen[v]) return;
-      seen[v] = true;
-      list.push(v);
-    });
-    store[modelsCacheKey(pid, url)] = list;
+    const key = modelsCacheKey(pid, url);
+    const prev = Array.isArray(store[key]) ? store[key] : [];
+    const list = uniqueModelIds(ids, prev);
+    store[key] = list;
     saveModelCache(store);
     return list;
   }
@@ -311,7 +319,7 @@
         if (typeof m === "string") return m;
         return m.id || m.name || "";
       }).filter(Boolean);
-      if (res.ok && models.length) rememberModels(models, cfg.providerId, provider.baseUrl);
+      if (res.ok && models.length) rememberModels(models.concat(cachedModels(cfg.providerId, provider.baseUrl)), cfg.providerId, provider.baseUrl);
       return { ok: res.ok, models: models, url: url, status: res.status, cached: cachedModels(cfg.providerId, provider.baseUrl) };
     } catch (e) {
       return { ok: false, models: [], cached: cachedModels(cfg.providerId, provider.baseUrl), error: String(e && e.message || e), url: url };
@@ -380,8 +388,26 @@
 
   function stripFence(body) {
     const trimmed = String(body == null ? "" : body).trim();
-    const m = trimmed.match(/^```(?:[\w-]+)?\s*\n?([\s\S]*?)\n?```$/);
-    return m ? m[1] : trimmed;
+    if (!trimmed) return "";
+    const fenced = trimmed.match(/```(?:[\w-]+)?[ \t]*\n([\s\S]*?)\n```/);
+    if (fenced) return fenced[1];
+    const loose = trimmed.match(/```(?:[\w-]+)?\s*([\s\S]*?)```/);
+    if (loose) return loose[1].replace(/^\n/, "").replace(/\n$/, "");
+    const html = trimmed.match(/((?:<!DOCTYPE[\s\S]*?<\/html>|<html[\s\S]*?<\/html>))/i);
+    if (html) return html[1];
+    return trimmed;
+  }
+
+  function isTransportError(err) {
+    const msg = String(err && err.message || err || "");
+    return /^HTTP \d+/.test(msg)
+      || /ECONNREFUSED|ENOTFOUND|ECONNRESET|ETIMEDOUT|Failed to fetch|NetworkError|network blocked/i.test(msg)
+      || /LLM not configured|no baseUrl/i.test(msg);
+  }
+
+  function isPlanParseError(err) {
+    const msg = String(err && err.message || err || "");
+    return /did not contain a valid file plan|no usable files/i.test(msg);
   }
 
   function pushFile(files, path, content) {
@@ -461,7 +487,11 @@
 
   function scoreBuild(files, issues) {
     files = files || [];
-    issues = issues || [];
+    const fileSet = {};
+    files.forEach(function (f) { if (f && f.path) fileSet[f.path] = true; });
+    issues = (issues || []).filter(function (i) {
+      return !i || !i.file || fileSet[i.file];
+    });
     const html = files.find(function (f) { return /\/index\.html$/i.test(f.path); });
     const css = files.filter(function (f) { return /\.css$/i.test(f.path); });
     const js = files.filter(function (f) { return /\.js$/i.test(f.path); });
@@ -725,7 +755,7 @@
     try {
       return await llmPlan(prompt, proj, ctx, extraUser);
     } catch (err) {
-      if (!allowSequential) throw err;
+      if (!allowSequential || isTransportError(err) || !isPlanParseError(err)) throw err;
       steps.push({ kind: "plan", text: "JSON plan failed (" + (err && err.message || err) + ") — generating files one at a time…" });
       onStep && onStep(steps[steps.length - 1]);
       const seqPrompt = extraUser ? (String(prompt) + "\n\n" + extraUser) : prompt;
@@ -780,6 +810,7 @@
             lastErr = err;
             steps.push({ kind: "error", text: "LLM round " + round + " failed: " + (err && err.message || err) });
             onStep && onStep(steps[steps.length - 1]);
+            if (isTransportError(err)) break;
             continue;
           }
           steps.push({ kind: "plan-result", text: "Plan: " + plan.summary, files: plan.targets, round: round });
@@ -789,7 +820,9 @@
           steps.push({ kind: "validate", text: "Running validators…" });
           onStep && onStep(steps[steps.length - 1]);
           const issues = window.Engine.Validator.runAll();
-          const files = snapshotWorkspace();
+          const files = (plan.targets || []).map(function (t) {
+            return { path: t.path, content: t.content };
+          });
           quality = scoreBuild(files, issues);
           steps.push({ kind: "validate-result", issues: issues, quality: quality });
           onStep && onStep(steps[steps.length - 1]);
@@ -842,6 +875,9 @@
     sequentialGenerate,
     extractJson,
     extractFilesFromText,
+    stripFence,
+    isTransportError,
+    isPlanParseError,
     scoreBuild,
     buildRefinePrompt,
     snapshotWorkspace,
