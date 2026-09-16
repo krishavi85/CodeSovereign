@@ -2291,6 +2291,8 @@ function bindFactory(){
    Shows real issues, real file paths, real severity counts
    ============================================================ */
 function renderRecovery(){
+  // Drop a scan that no longer matches the workspace (e.g. after Clear workspace).
+  if (S.lastScan && S.lastScan.fileCount !== Engine.FS.count()) S.lastScan = null;
   // Run the real validator to get live results, including suite classification
   if (!S.lastScan) {
     var _ri = Engine.Validator.runAll();
@@ -3030,8 +3032,8 @@ function renderSettings(){
           </div>
         </div>
         <div style="margin-top:18px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn ghost" onclick="Engine.FS.clearAll();toast('Workspace cleared');renderAll()">Clear workspace</button>
-          <button class="btn ghost" onclick="if(confirm('Reset everything?')){Engine.FS.clearAll();Engine.Proj.list().forEach(p=>Engine.Proj.delete(p.id));location.reload()}">Reset all data</button>
+          <button class="btn ghost" onclick="Engine.FS.clearAll();S.lastScan=null;toast('Workspace cleared');renderAll()">Clear workspace</button>
+          <button class="btn ghost" onclick="if(confirm('Reset everything?')){Engine.FS.clearAll();S.lastScan=null;Engine.Proj.list().forEach(p=>Engine.Proj.delete(p.id));location.reload()}">Reset all data</button>
         </div>
       </div>
 
@@ -4541,6 +4543,7 @@ function runFaultInjectionBenchmark(){
     var summary = { injected: 0, detected: 0, repaired: 0, results: [] };
     toast('V3 Benchmark: injecting ' + faults.length + ' faults', '#7c5cff');
     faults.forEach(function(name){
+      var baselineCount = window.Engine.Validator.runAll().length;
       FI.captureBaseline();
       var inj = FI.inject(name, FI.pickTarget ? FI.pickTarget(name) : null);
       if (!inj || !inj.ok) {
@@ -4549,12 +4552,12 @@ function runFaultInjectionBenchmark(){
         return;
       }
       summary.injected++;
-      var before = window.Engine.Validator.runAll().length;
+      var afterInject = window.Engine.Validator.runAll().length;
       var run = window.Engine.Recovery.run();
       var afterRepair = window.Engine.Validator.runAll().length;
       FI.restoreBaseline();
-      var detected = before > 0;
-      var repaired = afterRepair < before || (run && (run.repairedCount || 0) > 0);
+      var detected = afterInject > baselineCount;
+      var repaired = afterRepair < afterInject || (run && (run.repairedCount || 0) > 0);
       if (detected) summary.detected++;
       if (repaired) summary.repaired++;
       summary.results.push({ fault: name, detected: detected, repaired: repaired, file: inj.file });

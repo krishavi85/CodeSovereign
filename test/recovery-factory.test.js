@@ -150,4 +150,6 @@ module.exports = async function (t) {
   t.ok('stale NOOP exists in history', E.Recovery.history().some((r) => r.runId === 'stale'));
   E.FS.clearAll();
   t.ok('clearAll resets recovery history', E.Recovery.history().length === 0);
+  t.ok('stale lastScan is invalidated when file count changes', /lastScan\.fileCount !== Engine\.FS\.count\(\)/.test(appSrc));
+  t.ok('fault benchmark compares against baseline count', /afterInject > baselineCount/.test(appSrc));
 };
