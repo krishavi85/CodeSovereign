@@ -925,11 +925,11 @@ function renderAgent() {
     `<div style="display:flex;align-items:center;gap:13px;padding:12px 12px;border-radius:10px">
       <span style="width:9px;height:9px;border-radius:50%;flex:none;background:${color};box-shadow:0 0 8px ${color}"></span>
       <span style="width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;background:${stC}20;color:${color}"><span style="display:inline-flex;width:16px;height:16px;align-items:center;justify-content:center">${I[ik]}</span></span>
-      <span style="font-size:13px;font-weight:600;width:80px;flex:none">${name}</span>
-      <span style="font-size:10.5px;font-weight:600;color:${color};background:${stC}20;padding:2px 8px;border-radius:6px;flex:none">${st}</span>
-      <span style="flex:1;font-size:12.5px;color:#8b93a7;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${desc}</span>
-      ${file ? `<span style="font:500 11px 'JetBrains Mono',monospace;color:#c7cddb;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:3px 8px;border-radius:6px;flex:none">${file}</span>` : ''}
-      ${time ? `<span style="font-size:11px;color:#6b7488;flex:none">${time}</span>` : ''}
+      <span style="font-size:13px;font-weight:600;width:80px;flex:none">${esc(name)}</span>
+      <span style="font-size:10.5px;font-weight:600;color:${color};background:${stC}20;padding:2px 8px;border-radius:6px;flex:none">${esc(st)}</span>
+      <span style="flex:1;font-size:12.5px;color:#8b93a7;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(desc)}</span>
+      ${file ? `<span style="font:500 11px 'JetBrains Mono',monospace;color:#c7cddb;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:3px 8px;border-radius:6px;flex:none">${esc(file)}</span>` : ''}
+      ${time ? `<span style="font-size:11px;color:#6b7488;flex:none">${esc(time)}</span>` : ''}
     </div>`;
 
   const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','user':'You','route':'Router','repo':'Repo','deps':'Deps','screenshot':'Observer','evaluate':'Brain','explore':'Explore' };

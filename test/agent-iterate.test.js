@@ -404,6 +404,13 @@ module.exports = async function (t) {
   const preview = win.Engine.Preview.build();
   t.ok('Live Preview injects a nested CSP', preview && /Content-Security-Policy/.test(preview));
   t.ok('preview CSP sets connect-src none so srcdoc cannot call local LLM ports', /connect-src 'none'/.test(preview));
+  win.Engine.FS.write('/index.html', '<html><body><header>Top</header><head><title>X</title></head><body></body></html>');
+  const headerFirst = win.Engine.Preview.build();
+  const headerBlock = (headerFirst.match(/<header[\s\S]*?<\/header>/i) || [])[0] || '';
+  t.ok('preview CSP is not injected into <header>', !/Content-Security-Policy/.test(headerBlock));
+  t.ok('preview CSP still lands in the real <head>', /<head[^>]*>[\s\S]*?Content-Security-Policy/.test(headerFirst));
+  win.Engine.FS.write('/index.html', RICH_HTML);
+  t.ok('Agent activity escapes LLM text before innerHTML', /\$\{esc\(desc\)\}/.test(appSrc) && /\$\{esc\(file\)\}/.test(appSrc));
   t.ok('preview HTML severs window.opener', /window\.opener=null/.test(preview));
   t.ok('Preview.openTab is exported', typeof win.Engine.Preview.openTab === 'function');
   t.ok('IDE preview tab uses a detached blob open', appSrc.includes('Preview.openTab') && !appSrc.includes("w.document.write(h)"));

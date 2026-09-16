@@ -2199,8 +2199,9 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
       let html = FS.read(htmlPath) || '';
       const previewCsp = "<meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'\">";
       const detachOpener = "<script>try{if(window.opener)window.opener=null;}catch(e){}</script>";
-      if (/<head[\s>]/i.test(html)) {
-        html = html.replace(/<head([^>]*)>/i, '<head$1>' + previewCsp + detachOpener);
+      const headOpen = /<head(\s[^>]*)?>/i;
+      if (headOpen.test(html)) {
+        html = html.replace(headOpen, function (m) { return m + previewCsp + detachOpener; });
       } else {
         html = previewCsp + detachOpener + html;
       }
