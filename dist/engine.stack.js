@@ -98,6 +98,7 @@
       gateway: 'cloud',
       localaiUrl: 'http://127.0.0.1:8080',
       llamaUrl: 'http://127.0.0.1:8081',
+      lmstudioUrl: 'http://127.0.0.1:1234',
       lastProbe: null
     },
     execution: 'native',
@@ -172,10 +173,11 @@
   const Router = {
     get() { return Object.assign({}, state.router); },
     setGateway(kind, urls) {
-      if (['cloud', 'localai', 'llamacpp'].indexOf(kind) < 0) return { ok: false, reason: 'unknown gateway' };
+      if (['cloud', 'localai', 'llamacpp', 'lmstudio'].indexOf(kind) < 0) return { ok: false, reason: 'unknown gateway' };
       state.router.gateway = kind;
       if (urls && urls.localaiUrl) state.router.localaiUrl = String(urls.localaiUrl).replace(/\/+$/, '');
       if (urls && urls.llamaUrl) state.router.llamaUrl = String(urls.llamaUrl).replace(/\/+$/, '');
+      if (urls && urls.lmstudioUrl) state.router.lmstudioUrl = String(urls.lmstudioUrl).replace(/\/+$/, '');
       persist();
       this.applyToLLM();
       emit('stack:router', { gateway: kind });
@@ -186,8 +188,8 @@
       if (!LLM || !LLM.setConfig || !LLM.getConfig) return { ok: false, reason: 'LLM missing' };
       const r = state.router;
       const cur = LLM.getConfig() || {};
-      const isLocalProv = cur.providerId === 'localai' || cur.providerId === 'llamacpp';
-      if (r.gateway === 'localai' || r.gateway === 'llamacpp') {
+      const isLocalProv = cur.providerId === 'localai' || cur.providerId === 'llamacpp' || cur.providerId === 'lmstudio';
+      if (r.gateway === 'localai' || r.gateway === 'llamacpp' || r.gateway === 'lmstudio') {
         if (!isLocalProv) {
           state.router.cloudSnapshot = {
             providerId: cur.providerId || '',
@@ -199,10 +201,18 @@
         }
         // Omit apiKey so Electron keychain is not wiped and cs.stack.v1 never
         // receives the live cloud secret. Local fetches skip Authorization.
+        const ggufs = (LLM.Gguf && LLM.Gguf.list && LLM.Gguf.list()) || [];
+        const keepModel = isLocalProv && cur.model ? cur.model : ((ggufs[0] && String(ggufs[0].name).replace(/\.gguf$/i, '')) || '');
+        const defaults = {
+          localai: { providerId: 'localai', baseUrl: r.localaiUrl, model: keepModel || 'qwen2.5-coder' },
+          llamacpp: { providerId: 'llamacpp', baseUrl: r.llamaUrl, model: keepModel || 'qwen2.5-coder-7b-instruct' },
+          lmstudio: { providerId: 'lmstudio', baseUrl: r.lmstudioUrl || 'http://127.0.0.1:1234', model: keepModel || 'local-model' }
+        };
+        const next = defaults[r.gateway];
         LLM.setConfig({
-          providerId: r.gateway === 'localai' ? 'localai' : 'llamacpp',
-          baseUrl: r.gateway === 'localai' ? r.localaiUrl : r.llamaUrl,
-          model: r.gateway === 'localai' ? 'qwen2.5-coder' : 'qwen2.5-coder-7b-instruct',
+          providerId: next.providerId,
+          baseUrl: next.baseUrl,
+          model: next.model,
           enabled: true
         });
       } else if (isLocalProv) {
@@ -220,7 +230,8 @@
       const r = state.router;
       const targets = [
         { id: 'localai', url: r.localaiUrl + '/v1/models' },
-        { id: 'llamacpp', url: r.llamaUrl + '/v1/models' }
+        { id: 'llamacpp', url: r.llamaUrl + '/v1/models' },
+        { id: 'lmstudio', url: (r.lmstudioUrl || 'http://127.0.0.1:1234') + '/v1/models' }
       ];
       const results = [];
       for (let i = 0; i < targets.length; i++) {

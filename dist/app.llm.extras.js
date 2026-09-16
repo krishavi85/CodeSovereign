@@ -73,7 +73,20 @@
       : "Not configured \u2014 Agent uses the built-in deterministic synthesizer.";
 
     const p = llm.resolveProvider(cfg);
+    const isLocal = !!(p && p.local);
     const modelSel = modelOptionsFor(p, cfg.model);
+    const ggufs = (llm.Gguf && llm.Gguf.list && llm.Gguf.list()) || [];
+    const ggufRows = ggufs.length
+      ? ggufs.map(function (g) {
+          const size = g.bytes ? (g.bytes >= 1073741824 ? (g.bytes / 1073741824).toFixed(1) + " GB" : (g.bytes / 1048576).toFixed(0) + " MB") : "";
+          return '<div class="llm-gguf-row" data-gguf-id="' + esc(g.id) + '" style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)">'
+            + '<div style="flex:1;min-width:0"><div style="font-weight:600;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + esc(g.name) + '</div>'
+            + '<div class="cs-muted" style="font-size:11px">' + esc(g.gateway || "lmstudio") + (size ? " · " + size : "") + (g.path ? " · " + esc(g.path) : "") + '</div></div>'
+            + '<button type="button" class="btn primary llm-gguf-use" data-gguf-id="' + esc(g.id) + '" style="padding:4px 8px;font-size:11px">Use</button>'
+            + '<button type="button" class="btn ghost llm-gguf-remove" data-gguf-id="' + esc(g.id) + '" style="padding:4px 8px;font-size:11px">Remove</button>'
+            + '</div>';
+        }).join("")
+      : '<div class="cs-muted" style="font-size:12px;padding:6px 0">No GGUF files registered yet. Pick a .gguf from disk — CodeSovereign stores the filename and routes inference through LM Studio or llama.cpp.</div>';
 
     return `
       <div class="card" style="padding:20px;margin-bottom:18px">
@@ -82,7 +95,7 @@
           <span id="llmStatusPill" style="margin-left:auto;font:600 11px Inter;padding:3px 9px;border-radius:10px;background:${st.configured ? "rgba(52,211,153,.12)" : "rgba(139,147,167,.18)"};color:${statusColor};border:1px solid ${statusColor}">${esc(statusText)}</span>
         </div>
         <div style="font-size:12.5px;color:var(--muted);margin-bottom:14px">
-          Wire the agent to a real LLM. Your key is stored only in this browser's localStorage and is sent only to the provider you pick.
+          Wire the agent to a cloud LLM or a local one (LM Studio, llama.cpp, LocalAI). Local keys stay off the wire. GGUF weights stay on disk — this app only stores the filename and talks to the local OpenAI-compatible server.
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px">
@@ -93,19 +106,31 @@
           <div>
             <div style="font:600 11px Inter;letter-spacing:.05em;color:#7b859c;text-transform:uppercase;margin-bottom:5px">Model</div>
             <select id="llmModel" style="width:100%;padding:9px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter">${modelSel}</select>
-            <input id="llmModelCustom" placeholder="Custom model id" value="${esc(cfg.model)}" style="display:none;width:100%;margin-top:6px;padding:8px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter"/>
+            <input id="llmModelCustom" placeholder="Custom model id or GGUF name" value="${esc(cfg.model)}" style="display:${modelSel && !isLocal ? "none" : "block"};width:100%;margin-top:6px;padding:8px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter"/>
           </div>
         </div>
 
-        <div id="llmBaseUrlRow" style="display:${cfg.providerId === "openai_compat" ? "block" : "none"};margin-bottom:12px">
+        <div id="llmBaseUrlRow" style="display:${(cfg.providerId === "openai_compat" || isLocal) ? "block" : "none"};margin-bottom:12px">
           <div style="font:600 11px Inter;letter-spacing:.05em;color:#7b859c;text-transform:uppercase;margin-bottom:5px">Base URL</div>
-          <input id="llmBaseUrl" placeholder="https://api.together.xyz" value="${esc(cfg.baseUrl || "")}" style="width:100%;padding:9px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter"/>
+          <input id="llmBaseUrl" placeholder="http://127.0.0.1:1234" value="${esc(cfg.baseUrl || (p && p.baseUrl) || "")}" style="width:100%;padding:9px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter"/>
         </div>
 
-        <div style="margin-bottom:12px">
+        <div id="llmKeyRow" style="margin-bottom:12px;display:${isLocal ? "none" : "block"}">
           <div style="font:600 11px Inter;letter-spacing:.05em;color:#7b859c;text-transform:uppercase;margin-bottom:5px">API Key</div>
           <input id="llmKey" type="password" placeholder="paste key here" value="${esc(cfg.apiKey || "")}" style="width:100%;padding:9px 10px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:8px;font:13px Inter" autocomplete="off"/>
-          <div id="llmKeyHint" style="font-size:11.5px;color:var(--muted);margin-top:5px">${esc(p && p.notes || "")}</div>
+        </div>
+        <div id="llmKeyHint" style="font-size:11.5px;color:var(--muted);margin:-6px 0 12px">${esc(p && p.notes || "")}</div>
+
+        <div id="llmGgufBox" style="margin-bottom:14px;padding:12px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.02)">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+            <div style="font:600 12px Inter">Local GGUF models</div>
+            <span class="cs-muted" style="font-size:11.5px;flex:1">Integrates .gguf files through LM Studio (port 1234) or llama.cpp (port 8081)</span>
+            <label class="btn ghost" style="padding:4px 10px;font-size:11px;cursor:pointer">
+              Add GGUF
+              <input id="llmGgufFile" type="file" accept=".gguf" style="display:none"/>
+            </label>
+          </div>
+          <div id="llmGgufList">${ggufRows}</div>
         </div>
 
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
@@ -114,6 +139,7 @@
             <span style="font:600 12.5px Inter">Use real LLM for the Agent</span>
           </label>
           <span style="flex:1"></span>
+          <button id="llmRefreshModelsBtn" class="btn ghost" type="button">Refresh models</button>
           <button id="llmTestBtn" class="btn ghost" type="button">Test connection</button>
           <button id="llmSaveBtn" class="btn primary" type="button">Save</button>
         </div>
@@ -134,30 +160,54 @@
     const modelCustomEl = document.getElementById("llmModelCustom");
     const baseUrlRow = document.getElementById("llmBaseUrlRow");
     const baseUrlEl = document.getElementById("llmBaseUrl");
+    const keyRow = document.getElementById("llmKeyRow");
     const keyEl = document.getElementById("llmKey");
     const enabledEl = document.getElementById("llmEnabled");
     const testBtn = document.getElementById("llmTestBtn");
     const saveBtn = document.getElementById("llmSaveBtn");
+    const refreshBtn = document.getElementById("llmRefreshModelsBtn");
     const testOut = document.getElementById("llmTestOut");
     const keyHint = document.getElementById("llmKeyHint");
     const statusPill = document.getElementById("llmStatusPill");
+    const ggufFile = document.getElementById("llmGgufFile");
+
+    function currentProvider() {
+      return llm.providerById(providerEl ? providerEl.value : "") || llm.resolveProvider(llm.getConfig());
+    }
+
+    function mergeModelOptions(p, currentModel) {
+      const seen = {};
+      const opts = [];
+      function add(m) {
+        const v = String(m || "").trim();
+        if (!v || seen[v]) return;
+        seen[v] = true;
+        opts.push(v);
+      }
+      (p && p.modelOptions || []).forEach(add);
+      ((llm.Gguf && llm.Gguf.list && llm.Gguf.list()) || []).forEach(function (g) {
+        add(g.name);
+        add(String(g.name).replace(/\.gguf$/i, ""));
+      });
+      add(currentModel);
+      return opts.map(function (m) {
+        return `<option value="${esc(m)}" ${m === currentModel ? "selected" : ""}>${esc(m)}</option>`;
+      }).join("");
+    }
 
     function refreshModelList() {
       const cfg = llm.getConfig();
-      const p = llm.providerById(providerEl.value);
-      const opts = modelOptionsFor(p, "");
-      if (opts) {
-        modelEl.innerHTML = opts;
-        modelEl.style.display = "";
-        if (modelCustomEl) modelCustomEl.style.display = "none";
-      } else {
-        modelEl.style.display = "none";
-        if (modelCustomEl) {
-          modelCustomEl.style.display = "";
-          modelCustomEl.value = cfg.model || "";
-        }
+      const p = currentProvider();
+      const local = !!(p && p.local);
+      const opts = mergeModelOptions(p, (modelCustomEl && modelCustomEl.value) || cfg.model || "");
+      if (modelEl) {
+        modelEl.innerHTML = opts || '<option value="">(type a model id)</option>';
+        modelEl.style.display = opts ? "" : "none";
       }
-      if (baseUrlRow) baseUrlRow.style.display = (providerEl.value === "openai_compat") ? "block" : "none";
+      if (modelCustomEl) modelCustomEl.style.display = "";
+      if (baseUrlRow) baseUrlRow.style.display = (local || (providerEl && providerEl.value === "openai_compat")) ? "block" : "none";
+      if (baseUrlEl && local && !baseUrlEl.value && p && p.baseUrl) baseUrlEl.value = p.baseUrl;
+      if (keyRow) keyRow.style.display = local ? "none" : "block";
       if (keyHint && p) keyHint.textContent = p.notes || "";
     }
 
@@ -165,15 +215,21 @@
       providerEl.onchange = refreshModelList;
       refreshModelList();
     }
+    if (modelEl) {
+      modelEl.onchange = function () {
+        if (modelCustomEl) modelCustomEl.value = modelEl.value;
+      };
+    }
 
     function collect() {
+      const p = currentProvider();
       const data = {
         providerId: providerEl ? providerEl.value : "",
-        model: (modelEl && modelEl.style.display !== "none") ? modelEl.value : ((modelCustomEl && modelCustomEl.value) || ""),
-        apiKey: keyEl ? keyEl.value.trim() : "",
+        model: ((modelEl && modelEl.value) || (modelCustomEl && modelCustomEl.value.trim()) || ""),
         baseUrl: baseUrlEl ? baseUrlEl.value.trim() : "",
         enabled: !!(enabledEl && enabledEl.checked)
       };
+      if (!(p && p.local) && keyEl) data.apiKey = keyEl.value.trim();
       return data;
     }
 
@@ -220,6 +276,64 @@
         }
       };
     }
+    if (refreshBtn) {
+      refreshBtn.onclick = async () => {
+        llm.setConfig(collect());
+        if (testOut) { testOut.style.display = "block"; testOut.textContent = "Listing /v1/models …"; }
+        try {
+          const r = await llm.listModels();
+          const ids = (r && r.models) || [];
+          ids.forEach(function (id) {
+            if (modelEl && !Array.from(modelEl.options).some(function (o) { return o.value === id; })) {
+              const opt = document.createElement("option");
+              opt.value = id; opt.textContent = id;
+              modelEl.appendChild(opt);
+            }
+          });
+          if (ids[0] && modelCustomEl && !modelCustomEl.value) modelCustomEl.value = ids[0];
+          if (testOut) {
+            testOut.style.color = r.ok ? "var(--good)" : "var(--err)";
+            testOut.textContent = r.ok ? ("Models: " + (ids.join(", ") || "(none loaded)")) : (r.error || ("HTTP " + r.status));
+          }
+          try { window.csToast && window.csToast(r.ok ? ("Found " + ids.length + " local model(s)") : "Could not list models", r.ok ? "#34d399" : "#f59e0b"); } catch (_) {}
+        } catch (e) {
+          if (testOut) { testOut.style.color = "var(--err)"; testOut.textContent = String(e && e.message || e); }
+        }
+      };
+    }
+    if (ggufFile) {
+      ggufFile.onchange = function () {
+        const f = ggufFile.files && ggufFile.files[0];
+        ggufFile.value = "";
+        if (!f) return;
+        const p = currentProvider();
+        const gateway = (p && (p.id === "llamacpp" || p.id === "localai")) ? p.id : "lmstudio";
+        const r = llm.Gguf.add({ name: f.name, path: f.path || "", bytes: f.size, gateway: gateway });
+        if (!r.ok) {
+          try { window.csToast && window.csToast(r.reason || "Could not add GGUF", "#ef4444"); } catch (_) {}
+          return;
+        }
+        llm.Gguf.select(r.model.id);
+        try { window.csToast && window.csToast("Registered " + r.model.name, "#34d399"); } catch (_) {}
+        try { if (typeof renderAll === "function") renderAll(); } catch (_) {}
+      };
+    }
+    root.querySelectorAll(".llm-gguf-use").forEach(function (btn) {
+      btn.onclick = function (ev) {
+        ev.preventDefault();
+        const r = llm.Gguf.select(btn.getAttribute("data-gguf-id"));
+        try { window.csToast && window.csToast(r.ok ? ("Using " + r.model.name) : (r.reason || "failed"), r.ok ? "#34d399" : "#ef4444"); } catch (_) {}
+        try { if (typeof renderAll === "function") renderAll(); } catch (_) {}
+      };
+    });
+    root.querySelectorAll(".llm-gguf-remove").forEach(function (btn) {
+      btn.onclick = function (ev) {
+        ev.preventDefault();
+        llm.Gguf.remove(btn.getAttribute("data-gguf-id"));
+        try { window.csToast && window.csToast("Removed GGUF", "#7c6ff5"); } catch (_) {}
+        try { if (typeof renderAll === "function") renderAll(); } catch (_) {}
+      };
+    });
   }
 
   // ---------- Inject the card into the Settings screen ----------

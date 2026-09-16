@@ -66,6 +66,19 @@
       notes: "Use for any OpenAI-compatible endpoint (Together, Groq, OpenRouter, LM Studio, Ollama, vLLM...)."
     },
     {
+      id: "lmstudio",
+      label: "LM Studio (local)",
+      baseUrl: "http://127.0.0.1:1234",
+      chatPath: "/v1/chat/completions",
+      defaultModel: "",
+      modelOptions: [],
+      supportsJson: false,
+      local: true,
+      keyHeader: "Authorization",
+      keyPrefix: "Bearer ",
+      notes: "LM Studio OpenAI-compatible server. Start the server in LM Studio (Developer → Local Server) on http://127.0.0.1:1234 — no API key required. Load a GGUF there, or register one below."
+    },
+    {
       id: "localai",
       label: "LocalAI (Sovereign Model Gateway)",
       baseUrl: "http://127.0.0.1:8080",
@@ -85,11 +98,11 @@
       chatPath: "/v1/chat/completions",
       defaultModel: "qwen2.5-coder-7b-instruct",
       modelOptions: ["qwen2.5-coder-7b-instruct", "codellama-7b-instruct", "deepseek-coder"],
-      supportsJson: true,
+      supportsJson: false,
       local: true,
       keyHeader: "Authorization",
       keyPrefix: "Bearer ",
-      notes: "llama-server OpenAI-compatible endpoint. Default http://127.0.0.1:8081 — no API key required. https://github.com/ggerganov/llama.cpp"
+      notes: "llama-server OpenAI-compatible endpoint. Default http://127.0.0.1:8081 — no API key required. Point it at a registered GGUF: llama-server -m model.gguf --port 8081"
     }
   ];
 
@@ -189,11 +202,33 @@
       temperature: 0.2,
       max_tokens: 4096
     };
-    if (provider.supportsJson) {
-      // Most OpenAI-compatible providers honor either of these.
+    // Local GGUF servers (LM Studio, llama.cpp) often reject json_object.
+    if (provider.supportsJson && !isLocalEndpoint(provider, cfg)) {
       body.response_format = { type: "json_object" };
     }
     return { url, headers, body };
+  }
+
+  async function listModels() {
+    const cfg = loadConfig();
+    const provider = resolveProvider(cfg);
+    if (!provider.baseUrl) return { ok: false, models: [], error: "No base URL set." };
+    const url = provider.baseUrl.replace(/\/+$/, "") + "/v1/models";
+    try {
+      const res = await fetch(url, { method: "GET" });
+      const text = await res.text();
+      let data = null;
+      try { data = JSON.parse(text); } catch (_) { data = null; }
+      const rows = (data && (data.data || data.models)) || [];
+      const models = rows.map(function (m) {
+        if (!m) return "";
+        if (typeof m === "string") return m;
+        return m.id || m.name || "";
+      }).filter(Boolean);
+      return { ok: res.ok, models: models, url: url, status: res.status };
+    } catch (e) {
+      return { ok: false, models: [], error: String(e && e.message || e), url: url };
+    }
   }
 
   async function complete(prompt, ctx) {
@@ -319,6 +354,69 @@
     };
   }
 
+  // ----- Registered GGUF files (metadata only — never the weights) -----
+  const GGUF_KEY = "cs.llm.gguf.v1";
+  function ggufBasename(p) {
+    return String(p == null ? "" : p).replace(/\\/g, "/").split("/").pop() || "";
+  }
+  function ggufSafeName(name) {
+    const base = ggufBasename(name).replace(/[^\w.\- +()[\]]+/g, "_").slice(0, 180);
+    return base;
+  }
+  function loadGgufs() {
+    try {
+      const raw = localStorage.getItem(GGUF_KEY);
+      const c = raw ? JSON.parse(raw) : null;
+      if (c && Array.isArray(c.models)) return c.models.filter(function (m) { return m && m.id && m.name; });
+    } catch (_) {}
+    return [];
+  }
+  function saveGgufs(models) {
+    try { localStorage.setItem(GGUF_KEY, JSON.stringify({ models: models || [] })); } catch (_) {}
+  }
+  const Gguf = {
+    STORE_KEY: GGUF_KEY,
+    list: loadGgufs,
+    add: function (meta) {
+      meta = meta || {};
+      const name = ggufSafeName(meta.name || meta.file || meta.path || "");
+      if (!name) return { ok: false, reason: "name required" };
+      if (!/\.gguf$/i.test(name) && !meta.allowNonGguf) return { ok: false, reason: "file must be .gguf" };
+      const models = loadGgufs();
+      const id = "gguf-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6);
+      const entry = {
+        id: id,
+        name: name,
+        path: typeof meta.path === "string" ? String(meta.path).slice(0, 500) : "",
+        bytes: typeof meta.bytes === "number" && isFinite(meta.bytes) ? Math.max(0, Math.floor(meta.bytes)) : 0,
+        gateway: (meta.gateway === "llamacpp" || meta.gateway === "localai") ? meta.gateway : "lmstudio",
+        addedAt: Date.now()
+      };
+      models.push(entry);
+      saveGgufs(models);
+      return { ok: true, model: entry };
+    },
+    remove: function (id) {
+      const next = loadGgufs().filter(function (m) { return m.id !== id; });
+      saveGgufs(next);
+      return { ok: true, count: next.length };
+    },
+    select: function (id) {
+      const m = loadGgufs().find(function (x) { return x.id === id; });
+      if (!m) return { ok: false, reason: "unknown GGUF" };
+      const gateway = m.gateway || "lmstudio";
+      const p = providerById(gateway);
+      const modelId = String(m.name).replace(/\.gguf$/i, "");
+      setConfig({
+        providerId: gateway,
+        model: modelId || m.name,
+        baseUrl: (p && p.baseUrl) || "http://127.0.0.1:1234",
+        enabled: true
+      });
+      return { ok: true, model: m, providerId: gateway };
+    }
+  };
+
   // ----- Patch Engine.Agent.run: try LLM first, fall back to template -----
   function patchAgent() {
     if (!window.Engine || !window.Engine.Agent) return false;
@@ -414,9 +512,13 @@
     setConfig,
     providerById,
     resolveProvider,
+    isLocalEndpoint,
+    needsApiKey,
     complete,
     llmPlan,
     testConnection,
+    listModels,
+    Gguf,
     status,
     patchAgent,
     STORE_KEY

@@ -97,12 +97,12 @@
       + '<div style="padding:12px;border:1px solid var(--line);border-radius:8px;background:var(--bg-2)">'
       + '<div class="cs-eyebrow">Model router</div>'
       + '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">'
-      + [['cloud', 'Cloud LLM'], ['localai', 'LocalAI'], ['llamacpp', 'llama.cpp']].map(function (p) {
+      + [['cloud', 'Cloud LLM'], ['lmstudio', 'LM Studio'], ['localai', 'LocalAI'], ['llamacpp', 'llama.cpp']].map(function (p) {
         const on = r.gateway === p[0];
         return '<button class="btn ' + (on ? 'primary' : 'ghost') + '" data-stack-action="router" data-stack-id="' + p[0] + '" style="padding:4px 10px;font-size:11px">' + p[1] + '</button>';
       }).join('')
       + '</div>'
-      + '<div style="font-size:10.5px;color:var(--muted);margin-top:8px">LocalAI ' + esc(r.localaiUrl) + ' · llama.cpp ' + esc(r.llamaUrl) + '</div>'
+      + '<div style="font-size:10.5px;color:var(--muted);margin-top:8px">LM Studio ' + esc(r.lmstudioUrl || 'http://127.0.0.1:1234') + ' · LocalAI ' + esc(r.localaiUrl) + ' · llama.cpp ' + esc(r.llamaUrl) + '</div>'
       + '<button class="btn ghost" data-stack-action="probe" style="margin-top:8px;padding:4px 10px;font-size:11px">Probe local gateways</button>'
       + '<div id="stackProbeOut" style="font-size:10.5px;font-family:monospace;color:var(--muted);margin-top:6px">' + (r.lastProbe ? esc(JSON.stringify(r.lastProbe.results)) : '') + '</div>'
       + '</div>'

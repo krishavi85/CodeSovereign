@@ -146,6 +146,8 @@ module.exports = async function (t) {
   t.equal('router switches to localai', r.router.gateway, 'localai');
   t.ok('LLM provider includes localai', win.Engine.LLM.providers.some((p) => p.id === 'localai'));
   t.ok('LLM provider includes llamacpp', win.Engine.LLM.providers.some((p) => p.id === 'llamacpp'));
+  t.ok('LLM provider includes lmstudio', win.Engine.LLM.providers.some((p) => p.id === 'lmstudio'));
+  t.ok('lmstudio needs no API key', win.Engine.LLM.providers.find((p) => p.id === 'lmstudio').local === true);
   const cfg = win.Engine.LLM.getConfig();
   t.equal('applyToLLM selected localai', cfg.providerId, 'localai');
   t.ok('localai needs no API key', win.Engine.LLM.providers.find((p) => p.id === 'localai').local === true);
@@ -185,6 +187,20 @@ module.exports = async function (t) {
   t.ok('boot scrubs a leaked snapshot key from storage', String(leaked.store['cs.stack.v1'] || '').indexOf('sk-leaked') < 0);
   t.ok('boot snapshot has no apiKey', !leaked.win.BuildingStack.Router.get().cloudSnapshot || leaked.win.BuildingStack.Router.get().cloudSnapshot.apiKey == null);
 
+  const badGguf = win.Engine.LLM.Gguf.add({ name: 'weights.bin', bytes: 12 });
+  t.ok('GGUF add rejects non-gguf', !badGguf.ok);
+  const gguf = win.Engine.LLM.Gguf.add({ name: 'qwen2.5-coder-7b-instruct-q4_k_m.gguf', bytes: 4096, gateway: 'lmstudio' });
+  t.ok('GGUF add accepts .gguf', gguf.ok && gguf.model && gguf.model.id);
+  t.equal('GGUF list has the file', win.Engine.LLM.Gguf.list().length, 1);
+  t.ok('GGUF store has no weight bytes payload', String(store['cs.llm.gguf.v1'] || '').indexOf('"bytes":4096') >= 0 && !/"content"/.test(String(store['cs.llm.gguf.v1'] || '')));
+  const used = win.Engine.LLM.Gguf.select(gguf.model.id);
+  t.ok('GGUF select ok', used.ok);
+  t.equal('GGUF select uses lmstudio', win.Engine.LLM.getConfig().providerId, 'lmstudio');
+  t.ok('GGUF select omits apiKey', win.Engine.LLM.getConfig().model.indexOf('qwen2.5-coder') === 0);
+  S.Router.setGateway('lmstudio');
+  t.equal('router switches to lmstudio', S.Router.get().gateway, 'lmstudio');
+  t.equal('lmstudio apply keeps registered model', win.Engine.LLM.getConfig().providerId, 'lmstudio');
+
   S.Execution.set('aider');
   t.equal('execution backend is aider', S.Execution.current(), 'aider');
   t.ok('cline agents listed', S.Execution.agents.indexOf('RepairAgent') >= 0);
@@ -200,6 +216,7 @@ module.exports = async function (t) {
   t.ok('index.html loads app.stack.js', /app\.stack\.js/.test(html));
   t.ok('CSP allows LocalAI on 8080', /http:\/\/127\.0\.0\.1:8080/.test(html) && /http:\/\/localhost:8080/.test(html));
   t.ok('CSP allows llama.cpp on 8081', /http:\/\/127\.0\.0\.1:8081/.test(html) && /http:\/\/localhost:8081/.test(html));
+  t.ok('CSP allows LM Studio on 1234', /http:\/\/127\.0\.0\.1:1234/.test(html) && /http:\/\/localhost:1234/.test(html));
   t.ok('CSP does not wildcard every loopback port', !/127\.0\.0\.1:\*/.test(html) && !/localhost:\*/.test(html));
   t.ok('CSP does not allow loopback websockets', !/ws:\/\/127\.0\.0\.1/.test(html) && !/ws:\/\/localhost/.test(html));
 
@@ -256,6 +273,7 @@ module.exports = async function (t) {
   const settingsHtml = uiWin.renderSettings();
   t.ok('Settings shows Building Stack card', /Open-Source Building Stack/.test(settingsHtml));
   t.ok('Settings lists Cline github link', /github.com\/cline\/cline/.test(settingsHtml));
+  t.ok('Settings model router includes LM Studio', /LM Studio/.test(settingsHtml));
   t.ok('stack card sits before Tools', settingsHtml.indexOf('Open-Source Building Stack') < settingsHtml.indexOf('Tools</h3>'));
   t.ok('Agent shows execution backends', /Execution backend/.test(uiWin.renderAgent()));
   t.ok('Factory shows PocketFlow', /GodMode generation flows/.test(uiWin.renderFactory()));
