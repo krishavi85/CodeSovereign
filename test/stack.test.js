@@ -184,14 +184,20 @@ module.exports = async function (t) {
   t.ok('CSP does not allow loopback websockets', !/ws:\/\/127\.0\.0\.1/.test(html) && !/ws:\/\/localhost/.test(html));
 
   const extras = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.stack.js'), 'utf8');
+  const mpSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.marketplace.js'), 'utf8');
+  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.js'), 'utf8');
   t.ok('UI injector does not add nav pages', !/S\.screen\s*=\s*['"]stack['"]/.test(extras));
   t.ok('injects into Settings', /renderSettings/.test(extras));
   t.ok('injects into Agent', /renderAgent/.test(extras));
   t.ok('injects into Factory', /renderFactory/.test(extras));
   t.ok('injects into Pipelines', /renderPipelines/.test(extras));
-  t.ok('marketplace banner is composed into Marketplace HTML', /renderStackMarketplaceBanner/.test(fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.marketplace.js'), 'utf8')));
-  t.ok('marketplace bind calls bindBuildingStack', /bindBuildingStack/.test(fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.marketplace.js'), 'utf8')));
+  t.ok('marketplace banner is composed into Marketplace HTML', /renderStackMarketplaceBanner/.test(mpSrc));
+  t.ok('marketplace bind calls bindBuildingStack', /bindBuildingStack/.test(mpSrc));
+  t.ok('marketplace toasts fall back to window.toast', /csToast \|\| window\.toast/.test(mpSrc));
+  t.ok('marketplace Install is delegated from the screen root', /__mpBound/.test(mpSrc) && /hit\('\.mp-install'\)/.test(mpSrc));
+  t.ok('app.js aliases csToast to toast', /window\.csToast\s*=\s*toast/.test(appSrc));
   t.ok('stack UI does not wrap MarketplaceUI.render', !/MarketplaceUI/.test(extras) && !/insertAdjacentHTML/.test(extras));
+  t.ok('stack clicks are delegated from the screen root', /__stackRootBound/.test(extras) && /data-stack-action/.test(extras));
 
   // UI injector: stack card lands on Settings without a new page.
   const uiStore = {};

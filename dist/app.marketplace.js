@@ -28,7 +28,8 @@
   }
 
   function toast(msg, color) {
-    if (window.csToast) window.csToast(msg, color || '#7c6ff5');
+    const fn = window.csToast || window.toast;
+    if (fn) fn(msg, color || '#7c6ff5');
     else console.log('[toast]', msg);
   }
 
@@ -100,7 +101,7 @@
         </div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-top:auto">
           <div class="cs-muted" style="font-size:11.5px">by ${esc(t.author)} · ${t.downloads || 0} dl</div>
-          <button class="btn primary mp-install" data-id="${esc(t.id)}" style="padding:5px 10px;font-size:11.5px">Install</button>
+          <button type="button" class="btn primary mp-install" data-id="${esc(t.id)}" style="padding:5px 10px;font-size:11.5px">Install</button>
         </div>
       </div>
     `).join('')}
@@ -113,65 +114,75 @@
 function bindMarketplace(root) {
     if (!root) return;
 
-    // Debounced search
-    let t = null;
-    root.querySelector('#mpSearch')?.addEventListener('input', e => {
-      clearTimeout(t);
-      t = setTimeout(() => { S.marketplace = Object.assign({}, S.marketplace, { q: e.target.value }); render(); }, 200);
-    });
-    root.querySelector('#mpCategory')?.addEventListener('change', e => {
-      S.marketplace = Object.assign({}, S.marketplace, { category: e.target.value });
-      render();
-    });
-    root.querySelector('#mpSync')?.addEventListener('click', async () => {
-      const btn = root.querySelector('#mpSync');
-      btn.disabled = true; btn.textContent = 'Syncing…';
-      try {
-        const r = await window.TemplateMarketplace.sync();
-        toast('Synced ' + r.length + ' templates', '#34d399');
-        render();
-      } catch (e) { toast('Sync failed: ' + e.message, '#ef4444'); }
-      finally { btn.disabled = false; btn.textContent = 'Sync'; }
-    });
-    root.querySelector('#mpPublish')?.addEventListener('click', async () => {
-      const id = prompt('Template id (a-z, 0-9, dash):');
-      if (!id) return;
-      const label = prompt('Template label:') || id;
-      const desc = prompt('Short description:') || '';
-      const category = prompt('Category (frontend, fullstack, backend, mobile, desktop, tooling):') || 'custom';
-      const r = await window.TemplateMarketplace.publish({ id, label, desc, category });
-      if (r.ok) {
-        toast('Published "' + id + '" with ' + r.fileCount + ' files', '#34d399');
-        render();
-      } else {
-        toast('Publish failed: ' + r.reason, '#ef4444');
-      }
-    });
-
-    // Card click -> preview modal
-    root.querySelectorAll('.mp-card').forEach(el => {
-      el.addEventListener('click', async (e) => {
-        if (e.target.closest('.mp-install')) return; // ignore install clicks
-        const id = el.dataset.id;
-        const t = await window.TemplateMarketplace.get(id);
-        if (!t) return;
-        showPreview(t);
+    // Delegate from #main so search/filter innerHTML swaps keep Install bound.
+    if (!root.__mpBound) {
+      root.__mpBound = true;
+      let t = null;
+      root.addEventListener('input', e => {
+        if (!e.target || e.target.id !== 'mpSearch') return;
+        clearTimeout(t);
+        t = setTimeout(() => { S.marketplace = Object.assign({}, S.marketplace, { q: e.target.value }); render(); }, 200);
       });
-    });
-    // Install button
-    root.querySelectorAll('.mp-install').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const id = btn.dataset.id;
-        btn.disabled = true; btn.textContent = 'Installing…';
-        try {
-          const r = await window.TemplateMarketplace.install(id);
-          if (r.ok) toast('Installed ' + r.count + ' files', '#34d399');
-          else toast('Install failed: ' + (r.reason || 'unknown'), '#ef4444');
-        } catch (err) { toast('Install error: ' + err.message, '#ef4444'); }
-        finally { btn.disabled = false; btn.textContent = 'Install'; }
+      root.addEventListener('change', e => {
+        if (!e.target || e.target.id !== 'mpCategory') return;
+        S.marketplace = Object.assign({}, S.marketplace, { category: e.target.value });
+        render();
       });
-    });
+      root.addEventListener('click', async (e) => {
+        const hit = (sel) => {
+          const el = e.target && e.target.closest && e.target.closest(sel);
+          return el && (!root.contains || root.contains(el)) ? el : null;
+        };
+        const sync = hit('#mpSync');
+        if (sync) {
+          sync.disabled = true; sync.textContent = 'Syncing…';
+          try {
+            const r = await window.TemplateMarketplace.sync();
+            toast('Synced ' + r.length + ' templates', '#34d399');
+            render();
+          } catch (err) { toast('Sync failed: ' + err.message, '#ef4444'); }
+          finally { sync.disabled = false; sync.textContent = 'Sync'; }
+          return;
+        }
+        const pub = hit('#mpPublish');
+        if (pub) {
+          const id = prompt('Template id (a-z, 0-9, dash):');
+          if (!id) return;
+          const label = prompt('Template label:') || id;
+          const desc = prompt('Short description:') || '';
+          const category = prompt('Category (frontend, fullstack, backend, mobile, desktop, tooling):') || 'custom';
+          const r = await window.TemplateMarketplace.publish({ id, label, desc, category });
+          if (r.ok) {
+            toast('Published "' + id + '" with ' + r.fileCount + ' files', '#34d399');
+            render();
+          } else {
+            toast('Publish failed: ' + r.reason, '#ef4444');
+          }
+          return;
+        }
+        const installBtn = hit('.mp-install');
+        if (installBtn) {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = installBtn.dataset.id;
+          installBtn.disabled = true; installBtn.textContent = 'Installing…';
+          try {
+            const r = await window.TemplateMarketplace.install(id);
+            if (r.ok) toast('Installed ' + (r.count != null ? r.count : 0) + ' files', '#34d399');
+            else toast('Install failed: ' + (r.reason || 'unknown'), '#ef4444');
+          } catch (err) { toast('Install error: ' + err.message, '#ef4444'); }
+          finally { installBtn.disabled = false; installBtn.textContent = 'Install'; }
+          return;
+        }
+        const card = hit('.mp-card');
+        if (card) {
+          const id = card.dataset.id;
+          const tpl = await window.TemplateMarketplace.get(id);
+          if (!tpl) return;
+          showPreview(tpl);
+        }
+      });
+    }
     if (typeof window.bindBuildingStack === 'function') {
       try { window.bindBuildingStack(root); } catch (_) {}
     }

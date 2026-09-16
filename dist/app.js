@@ -162,6 +162,8 @@ function toast(msg, color = '#a78bfa') {
     renderToasts();
   }, 2600);
 }
+window.toast = toast;
+window.csToast = toast;
 
 function renderToasts() {
   const root = document.getElementById('toasts');

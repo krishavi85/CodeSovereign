@@ -319,14 +319,14 @@
 
   function bindStack(root) {
     root = root || document.getElementById('main') || document;
-    if (!root || !root.querySelectorAll) return;
-    root.querySelectorAll('[data-stack-action]').forEach(function (el) {
-      if (el.__stackBound) return;
-      el.__stackBound = true;
-      el.addEventListener('click', function (ev) {
-        ev.preventDefault();
-        handleAction(el.getAttribute('data-stack-action'), el.getAttribute('data-stack-id'), el);
-      });
+    if (!root || !root.addEventListener) return;
+    if (root.__stackRootBound) return;
+    root.__stackRootBound = true;
+    root.addEventListener('click', function (ev) {
+      const el = ev.target && ev.target.closest && ev.target.closest('[data-stack-action]');
+      if (!el || (typeof root.contains === 'function' && !root.contains(el))) return;
+      ev.preventDefault();
+      handleAction(el.getAttribute('data-stack-action'), el.getAttribute('data-stack-id'), el);
     });
   }
 
