@@ -145,4 +145,9 @@ module.exports = async function (t) {
   t.ok('Factory resyncs unless a plan is pending', /pendingPlan/.test(appSrc));
   t.ok('Fault benchmark uses pickTarget', /FI\.pickTarget/.test(appSrc));
   t.ok('Last run falls back to lastAnalysis', /lastAnalysis\(\)/.test(appSrc));
+
+  E.Recovery._runs.push({ runId: 'stale', status: 'NOOP', repairedCount: 0, agent: 'Sovereign-1.5' });
+  t.ok('stale NOOP exists in history', E.Recovery.history().some((r) => r.runId === 'stale'));
+  E.FS.clearAll();
+  t.ok('clearAll resets recovery history', E.Recovery.history().length === 0);
 };

@@ -4100,7 +4100,15 @@ function renderRecoveryLastRun(){
   try {
     if (!window.Engine || !window.Engine.Recovery) return '<div style="color:var(--muted);font-size:13px">Engine.Recovery not loaded</div>';
     var runs = window.Engine.Recovery.history();
-    var r = runs.length ? runs[runs.length - 1] : (window.Engine.Recovery.lastAnalysis ? window.Engine.Recovery.lastAnalysis() : null);
+    var analysis = window.Engine.Recovery.lastAnalysis ? window.Engine.Recovery.lastAnalysis() : null;
+    var lastRepair = runs.length ? runs[runs.length - 1] : null;
+    var r = lastRepair;
+    if (!r) r = analysis;
+    else if (analysis && (!lastRepair.repairedCount) && (lastRepair.status === 'NOOP' || lastRepair.status === 'SCANNED') && analysis.at && lastRepair.finishedAt && analysis.at >= lastRepair.finishedAt) {
+      r = analysis;
+    } else if (analysis && lastRepair.status === 'NOOP' && (lastRepair.repairedCount || 0) === 0 && !lastRepair.diffCount) {
+      r = analysis;
+    }
     if (!r) {
       return '<div style="color:var(--muted);font-size:13px">No runs yet. Open Recovery to scan, or click <b>Repair All</b> to start an autonomous repair cycle.</div>';
     }

@@ -1030,6 +1030,14 @@
 
     history(){ return this._runs.slice(); },
     lastAnalysis(){ return this._lastAnalysis; },
+    resetState(){
+      this._runs = [];
+      this._diffs = [];
+      this._lastAnalysis = null;
+      this._saveRuns();
+      this._saveDiffs();
+      try { localStorage.removeItem(NS_RUN); localStorage.removeItem(NS_DIFFS); } catch (_) {}
+    },
     getRun(runId){ return this._runs.find(r => r.runId === runId) || null; },
 
     // V2: compute and return the diff for a given snapshot/run
@@ -2036,6 +2044,24 @@
   window.GoldenPaths      = GoldenPaths;
   window.Certificate      = Certificate;
   window.Benchmark        = Benchmark;
+  try {
+    const _clear = Engine.FS.clear && Engine.FS.clear.bind(Engine.FS);
+    const _clearAll = Engine.FS.clearAll && Engine.FS.clearAll.bind(Engine.FS);
+    if (_clear) {
+      Engine.FS.clear = function () {
+        const r = _clear();
+        try { Recovery.resetState(); } catch (_) {}
+        return r;
+      };
+    }
+    if (_clearAll) {
+      Engine.FS.clearAll = function () {
+        const r = _clearAll();
+        try { Recovery.resetState(); } catch (_) {}
+        return r;
+      };
+    }
+  } catch (_) {}
   try {
     if (window.Engine) {
       window.Engine.Recovery      = Recovery;
