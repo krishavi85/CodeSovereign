@@ -132,4 +132,44 @@ module.exports = async function (t) {
   files['/package.json'] = JSON.stringify({ name: 'demo2', dependencies: { openai: '^4', 'next-auth': '^4', pg: '^8', resend: '^3' } });
   const r2 = En.Cost.analyze({});
   t.ok('dropping the mandatory-paid dep opens a zero-cost path', r2.zeroCostPathAvailable === true);
+
+  // ---- AIRouter.omniRouteStatus / stopOmniRoute — in-app start/stop control,
+  // no PowerShell / manual `npx omniroute serve` needed. Both are read-only or
+  // main-process-delegated; neither spawns anything from the renderer itself. ----
+  {
+    // no window.desktop at all (plain browser) -> reports not running, never throws
+    t.deepEqual('omniRouteStatus with no desktop bridge is a safe no-op', await En.AIRouter.omniRouteStatus(), { ok: false, installed: false, running: false });
+    const stopNoBridge = await En.AIRouter.stopOmniRoute();
+    t.equal('stopOmniRoute with no desktop bridge reports it cannot', stopNoBridge.ok, false);
+
+    // desktop bridge present: status reflects whatever the main process reports
+    let omniCalls = [];
+    win.desktop = {
+      isDesktop: true,
+      ai: {
+        omniroute: (action) => { omniCalls.push(action); return Promise.resolve(
+          action === 'status' ? { installed: '3.8.50', running: true } : { ok: true }
+        ); }
+      }
+    };
+    const st = await En.AIRouter.omniRouteStatus();
+    t.deepEqual('omniRouteStatus reflects a running gateway', st, { ok: true, installed: true, running: true });
+    t.ok('omniRouteStatus asked the main process for "status" (read-only)', omniCalls.includes('status'));
+
+    // stopping while wired to omniroute falls back to the built-in synthesizer
+    // rather than leaving Engine.LLM pointed at a gateway that no longer answers
+    llmCfg = { providerId: 'omniroute', apiKey: '', baseUrl: 'http://localhost:20128', enabled: true, model: 'auto' };
+    const stopRes = await En.AIRouter.stopOmniRoute();
+    t.ok('stopOmniRoute called the main-process "stop" action', omniCalls.includes('stop'));
+    t.equal('stopOmniRoute reports ok', stopRes.ok, true);
+    t.equal('stopping OmniRoute disables the provider it was wired to', llmCfg.enabled, false);
+    t.equal('...without discarding which provider it was', llmCfg.providerId, 'omniroute');
+
+    // stopping while wired to something else leaves that config untouched
+    llmCfg = { providerId: 'ollama', apiKey: 'ollama', baseUrl: 'http://localhost:11434', enabled: true, model: 'qwen2.5-coder:7b' };
+    await En.AIRouter.stopOmniRoute();
+    t.equal('stopping OmniRoute does not disable an unrelated active provider', llmCfg.enabled, true);
+
+    delete win.desktop;
+  }
 };

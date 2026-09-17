@@ -35,11 +35,26 @@
         ? '<b style="color:var(--good)">AI connected</b> — ' + esc(st.source) + (st.model ? ' · <code>' + esc(st.model) + '</code>' : '') + (st.free ? ' · <span style="color:var(--good)">free</span>' : '')
         : '<b>Not connected</b> — the app uses its built-in deterministic generator. Connect one below.') + '</div>';
 
-    // OmniRoute — the unlimited-free option
+    // OmniRoute — the unlimited-free option. state.omniStatus is polled on
+    // mount (read-only — never spawns anything) so the card shows the real
+    // running/stopped state before the user has clicked anything.
+    var os_ = state.omniStatus;
+    var omniRunning = !!(os_ && os_.running);
+    var omniDotColor = omniRunning ? 'var(--good)' : (os_ ? 'var(--muted)' : '#7c5cff');
+    var omniStatusText = state.omniBusy ? 'Starting…'
+      : omniRunning ? 'Running on :20128'
+      : os_ ? (os_.installed ? 'Installed, not running' : 'Not started')
+      : 'Checking…';
+    var omniBtn = omniRunning
+      ? '<button id="aiOmniStopBtn" class="btn ghost" style="padding:5px 12px;font-size:12px">' + (state.omniStopping ? 'Stopping…' : 'Stop OmniRoute') + '</button>'
+      : '<button id="aiOmniBtn" class="btn primary" style="padding:5px 12px;font-size:12px">' + (state.omniBusy ? 'Starting…' : 'Enable free AI (OmniRoute)') + '</button>';
     var omni = '<div style="padding:10px 12px;border:1px solid #7c5cff;border-radius:8px;background:rgba(124,92,255,.06);margin-bottom:8px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
       '<div style="font-weight:600">OmniRoute — free AI gateway <span style="font-size:10px;color:var(--muted);font-weight:400">no key · ~150 free provider tiers · MIT</span></div>' +
-      '<div style="font-size:11.5px;color:var(--muted);margin:4px 0 8px">Runs <code>npx omniroute serve</code> locally and routes <code>model:"auto"</code> across free tiers with automatic fallback.</div>' +
-      '<button id="aiOmniBtn" class="btn primary" style="padding:5px 12px;font-size:12px">' + (state.omniBusy ? 'Starting…' : 'Enable free AI (OmniRoute)') + '</button>' +
+      '<span style="font-size:11px;display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:' + omniDotColor + ';display:inline-block"></span><span style="color:' + omniDotColor + '">' + esc(omniStatusText) + '</span></span>' +
+      '</div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin:4px 0 8px">Runs <code>npx omniroute serve</code> locally (in-app — no terminal) and routes <code>model:"auto"</code> across free tiers with automatic fallback.</div>' +
+      omniBtn +
       (state.omniLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:100px;overflow:auto">' + esc(state.omniLog) + '</pre>' : '') +
       '</div>';
 
@@ -129,6 +144,14 @@
     });
   }
 
+  // Read-only poll of whether OmniRoute is installed/running — never spawns
+  // anything itself, so it's safe to call on every Settings mount.
+  function refreshOmniStatus() {
+    var AR = E().AIRouter;
+    if (!AR || !AR.omniRouteStatus) return Promise.resolve();
+    return AR.omniRouteStatus().then(function (s) { state.omniStatus = s; rerender(); });
+  }
+
   function bindLocalAi(host) {
     var AR = E().AIRouter, AI = E().AI;
 
@@ -141,9 +164,22 @@
       AR.ensureOmniRoute(function (s) { state.omniLog += s + '\n'; rerender(); }).then(function (r) {
         state.omniBusy = false;
         state.omniLog += (r && r.ok) ? ('\nready on ' + r.base + ' — wired as `auto` (free)') : ('\nfailed: ' + ((r && r.error) || 'unknown'));
-        return scan();
+        return refreshOmniStatus().then(function () { return scan(); });
       }).then(function () {
         window.toast && window.toast(AI.ready() ? 'Free AI connected via OmniRoute' : 'OmniRoute not reachable', AI.ready() ? '#34d399' : '#ef4444');
+        try { window.renderAll && window.renderAll(); } catch (_) {}
+      });
+    };
+
+    var osb = host.querySelector('#aiOmniStopBtn');
+    if (osb) osb.onclick = function () {
+      state.omniStopping = true; state.omniLog = 'stopping OmniRoute…\n'; rerender();
+      AR.stopOmniRoute().then(function (r) {
+        state.omniStopping = false;
+        state.omniLog += (r && r.ok !== false) ? '\nstopped' : ('\nfailed: ' + ((r && r.error) || 'unknown'));
+        return refreshOmniStatus().then(function () { return scan(); });
+      }).then(function () {
+        window.toast && window.toast('OmniRoute stopped', '#7c6ff5');
         try { window.renderAll && window.renderAll(); } catch (_) {}
       });
     };
@@ -312,8 +348,20 @@
     var original = window.renderSettings;
     window.renderSettings = function () {
       var out = original.apply(this, arguments);
-      var anchor = out.match(/<div class="card"[^>]*>\s*<h3[^>]*>[\s\S]*?Integrations<\/h3>/);
-      if (anchor) return out.replace(anchor[0], fullHtml() + '\n      ' + anchor[0]);
+      // Find the Integrations heading *text* (icons are already interpolated
+      // by render time), then the card that contains it, and insert right
+      // before that card. A /card[\s\S]*?Integrations/ match starts at the
+      // FIRST .card/.h3 in the document and spans everything up to
+      // Integrations, landing the host at the top instead of beside it; and
+      // .replace(str, replacement) treats $-sequences in `replacement` as
+      // tokens, so slice() is used instead of String.replace.
+      var headingEnd = out.indexOf('Integrations</h3>');
+      if (headingEnd >= 0) {
+        var cardStart = out.lastIndexOf('<div class="card"', headingEnd);
+        if (cardStart >= 0) return out.slice(0, cardStart) + fullHtml() + '\n      ' + out.slice(cardStart);
+      }
+      var close = out.lastIndexOf('</div>');
+      if (close >= 0) return out.slice(0, close) + fullHtml() + '\n    ' + out.slice(close);
       return out + fullHtml();
     };
     renderSettings.__aiInjected = true;
@@ -328,8 +376,10 @@
             if (host && !host.__aiBound) {
               host.__aiBound = true;
               rerender();
-              // populate the hardware summary + model-fit column on first view
+              // populate the hardware summary + model-fit column, and OmniRoute's
+              // real running/installed state, on first view
               if (!state.hw && E().Hardware) E().Hardware.probe().then(function (hw) { state.hw = hw; rerender(); });
+              if (!state.omniStatus) refreshOmniStatus();
             }
           }
         } catch (_) { /* best effort */ }

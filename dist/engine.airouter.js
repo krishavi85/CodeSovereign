@@ -131,6 +131,31 @@
     });
   }
 
+  // Is the OmniRoute gateway installed / currently listening on :20128?
+  // Read-only — never spawns or installs anything.
+  function omniRouteStatus() {
+    var D = window.desktop;
+    if (!(D && D.isDesktop && D.ai && D.ai.omniroute)) return Promise.resolve({ ok: false, installed: false, running: false });
+    return D.ai.omniroute('status').then(function (r) {
+      return { ok: true, installed: !!(r && r.installed), running: !!(r && r.running) };
+    }, function () { return { ok: false, installed: false, running: false }; });
+  }
+
+  // Stop the OmniRoute child process this app started. If the active provider
+  // was wired to it, fall back to the built-in synthesizer rather than leave
+  // Engine.LLM pointed at a gateway that no longer answers.
+  function stopOmniRoute() {
+    var D = window.desktop;
+    if (!(D && D.isDesktop && D.ai && D.ai.omniroute)) return Promise.resolve({ ok: false, error: 'not running in the desktop app' });
+    return D.ai.omniroute('stop').then(function (r) {
+      try {
+        var cfg = LLM() && LLM().getConfig();
+        if (cfg && cfg.providerId === 'omniroute') LLM().setConfig(Object.assign({}, cfg, { enabled: false }));
+      } catch (_) { /* best effort */ }
+      return r || { ok: true };
+    });
+  }
+
   function route(opts) {
     opts = opts || {};
     var hwP = HW() ? HW().probe() : Promise.resolve(null);
@@ -183,6 +208,6 @@
     return discover().then(function (d) { out.localRuntimes = (d.runtimes || []).map(function (r) { return { id: r.id, models: (r.models || []).length }; }); return out; });
   }
 
-  Engine.AIRouter = { discover: discover, recommend: recommend, apply: apply, route: route, status: status, ensureOmniRoute: ensureOmniRoute, LOCAL_PORTS: LOCAL_PORTS };
+  Engine.AIRouter = { discover: discover, recommend: recommend, apply: apply, route: route, status: status, ensureOmniRoute: ensureOmniRoute, omniRouteStatus: omniRouteStatus, stopOmniRoute: stopOmniRoute, LOCAL_PORTS: LOCAL_PORTS };
   console.info('[AIRouter] local inference router ready — Engine.AIRouter');
 })();
