@@ -22,7 +22,10 @@ module.exports = async function (t) {
     discover: () => Promise.resolve({ at: Date.now(), runtimes: [], count: 0 }),
     recommend: () => ({ fits: false, reason: 'no probe yet' }),
     omniRouteStatus: () => Promise.resolve({ ok: false, installed: false, running: false }),
-    stopOmniRoute: () => Promise.resolve({ ok: true })
+    stopOmniRoute: () => Promise.resolve({ ok: true }),
+    openClawStatus: () => Promise.resolve({ ok: false, installed: false, running: false }),
+    ensureOpenClaw: () => Promise.resolve({ ok: true, running: true, base: 'http://127.0.0.1:18789' }),
+    stopOpenClaw: () => Promise.resolve({ ok: true })
   };
   const MM = { CATALOG: [] };
   const HW = { probe: () => Promise.resolve({}), summary: () => 'test host' };
@@ -83,6 +86,13 @@ module.exports = async function (t) {
     html.includes('price $100') && html.includes('$&amp; leftover') || html.includes('$& leftover')
   );
 
+  // ---- OpenClaw card ----
+  t.ok('OpenClaw card is present', /OpenClaw — local agent gateway/.test(html));
+  t.ok('OpenClaw start button is present', /id="aiOpenclawBtn"/.test(html));
+  t.ok('OpenClaw also runs in-app, no terminal needed', /Installs.*npx openclaw daemon start.*in-app — no terminal/.test(html));
+  t.ok('OpenClaw card is honest that CodeSovereign does not route generation through it yet', /does not yet route its own generation through OpenClaw/.test(html));
+  t.ok('OpenClaw card sits before Integrations too', html.indexOf('OpenClaw') < html.indexOf('Integrations'));
+
   // ---- status states: not checked yet / stopped / running ----
   t.ok('unknown status shows "Checking…"', /Checking…/.test(html));
 
@@ -98,4 +108,10 @@ module.exports = async function (t) {
   t.ok('status is polled read-only on Settings mount (before any click)', extrasSrc.includes('refreshOmniStatus()') && extrasSrc.includes("if (!state.omniStatus) refreshOmniStatus()"));
   t.ok('status refresh never spawns anything — comment states it is read-only', /read-only poll of whether omniroute is installed\/running/i.test(extrasSrc));
   t.ok('the free-models list surfaces once OmniRoute is discovered running (real /v1/models, not a static list)', extrasSrc.includes('cs-aimodel') && extrasSrc.includes('rt.models'));
+
+  t.ok('Start button calls AIRouter.ensureOpenClaw (in-app, not a shell command)', extrasSrc.includes('AR.ensureOpenClaw'));
+  t.ok('a Stop control exists and calls AIRouter.stopOpenClaw', extrasSrc.includes('aiOpenclawStopBtn') && extrasSrc.includes('AR.stopOpenClaw'));
+  t.ok('OpenClaw status is polled read-only on Settings mount too', extrasSrc.includes('refreshOpenclawStatus()') && extrasSrc.includes('if (!state.openclawStatus) refreshOpenclawStatus()'));
+  t.ok('a dashboard link appears once the gateway is running', extrasSrc.includes('127.0.0.1:18789/') && extrasSrc.includes('Open dashboard'));
+  t.ok('first-time setup limits are stated, not hidden', extrasSrc.includes('cannot fill that in for you'));
 };

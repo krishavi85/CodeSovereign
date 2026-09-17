@@ -562,6 +562,27 @@ function registerIpc() {
       return res;
     } catch (e) { return fail(e); }
   });
+  let _openclawOkd = false;
+  ipcMain.handle('ai:openclaw', async (_e, action) => {
+    try {
+      if (action === 'start' || action === 'ensure') {
+        const running = await aihost.openclawRunning();
+        if (!running && !_openclawOkd) {
+          const r = await dialog.showMessageBox(win, {
+            type: 'info', noLink: true,
+            title: 'Start OpenClaw?',
+            message: 'Run the OpenClaw agent gateway locally?',
+            detail: 'This runs `npx openclaw daemon start` (downloads the MIT-licensed package on first use) and installs it as a background service on port 18789, loopback-only. It survives app restarts until you stop it. Nothing leaves your machine except the model calls the agent you invoke makes.',
+            buttons: ['Install & start', 'Cancel'], defaultId: 0, cancelId: 1
+          });
+          if (r.response !== 0) return { ok: false, error: 'declined' };
+          _openclawOkd = true;
+        }
+      }
+      const res = await aihost.openclaw(action, (s) => { if (win && !win.isDestroyed()) win.webContents.send('proc:data', { id: 'openclaw', stream: 'stdout', data: s + '\n' }); });
+      return res;
+    } catch (e) { return fail(e); }
+  });
   // Locked-down HTTP: loopback only, or an LLM API host the CSP already allows.
   ipcMain.handle('ai:request', async (_e, opts) => {
     try {

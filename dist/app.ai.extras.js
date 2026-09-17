@@ -63,6 +63,34 @@
       (state.omniLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:100px;overflow:auto">' + esc(state.omniLog) + '</pre>' : '') +
       '</div>';
 
+    // OpenClaw — a local agent gateway, installed as a real background
+    // service (not a plain child process) so it survives app restarts.
+    // Honesty note, found live: its --local agent-completion path hung well
+    // past a healthy Ollama response time in testing, so this card only
+    // offers start/stop/status — CodeSovereign does not route its own
+    // generation through it (yet). The dashboard link is where you'd
+    // configure channels/providers for OpenClaw's own agent use.
+    var ocs = state.openclawStatus;
+    var ocRunning = !!(ocs && ocs.running);
+    var ocDotColor = ocRunning ? 'var(--good)' : (ocs ? 'var(--muted)' : '#e08a3f');
+    var ocStatusText = state.openclawBusy ? 'Starting…'
+      : ocRunning ? 'Running on :18789'
+      : ocs ? (ocs.installed ? 'Installed, not running' : 'Not started')
+      : 'Checking…';
+    var ocBtn = ocRunning
+      ? '<button id="aiOpenclawStopBtn" class="btn ghost" style="padding:5px 12px;font-size:12px">' + (state.openclawStopping ? 'Stopping…' : 'Stop OpenClaw') + '</button>' +
+        ' <a href="http://127.0.0.1:18789/" target="_blank" rel="noopener" style="font-size:11.5px;color:var(--accent);margin-left:8px">Open dashboard ↗</a>'
+      : '<button id="aiOpenclawBtn" class="btn primary" style="padding:5px 12px;font-size:12px">' + (state.openclawBusy ? 'Starting…' : 'Start OpenClaw') + '</button>';
+    var openclaw = '<div style="padding:10px 12px;border:1px solid #e08a3f;border-radius:8px;background:rgba(224,138,63,.06);margin-bottom:8px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
+      '<div style="font-weight:600">OpenClaw — local agent gateway <span style="font-size:10px;color:var(--muted);font-weight:400">MIT</span></div>' +
+      '<span style="font-size:11px;display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:' + ocDotColor + ';display:inline-block"></span><span style="color:' + ocDotColor + '">' + esc(ocStatusText) + '</span></span>' +
+      '</div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin:4px 0 8px">Installs <code>npx openclaw daemon start</code> as a background service (in-app — no terminal), loopback-only, port 18789. A first-ever install needs one manual <code>openclaw configure</code> to pick providers/channels — this button cannot fill that in for you. CodeSovereign does not yet route its own generation through OpenClaw\'s agent runner: a live test found it noticeably slower than the Ollama it was calling.</div>' +
+      ocBtn +
+      (state.openclawLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:100px;overflow:auto">' + esc(state.openclawLog) + '</pre>' : '') +
+      '</div>';
+
     // discovered running runtimes
     var rows = '';
     if (disc && disc.runtimes && disc.runtimes.length) {
@@ -118,7 +146,7 @@
       '<button id="aiManualBtn" class="btn ghost" style="padding:6px 12px;font-size:12px">Connect</button></div></details>';
 
     return '<div class="card" style="padding:20px;margin-bottom:18px"><h3 class="cs-h3" style="margin-bottom:14px">Local AI</h3>' +
-      banner + omni + rows + cat + recHtml + manual +
+      banner + omni + openclaw + rows + cat + recHtml + manual +
       '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">' +
       '<button id="aiScanBtn" class="btn primary" style="padding:6px 12px;font-size:12px">' + (state.busy ? 'Scanning…' : 'Scan &amp; recommend') + '</button>' +
       '<button id="aiAutoBtn" class="btn ghost" style="padding:6px 12px;font-size:12px">Auto-connect</button>' +
@@ -157,6 +185,13 @@
     return AR.omniRouteStatus().then(function (s) { state.omniStatus = s; rerender(); });
   }
 
+  // Same, for OpenClaw.
+  function refreshOpenclawStatus() {
+    var AR = E().AIRouter;
+    if (!AR || !AR.openClawStatus) return Promise.resolve();
+    return AR.openClawStatus().then(function (s) { state.openclawStatus = s; rerender(); });
+  }
+
   function bindLocalAi(host) {
     var AR = E().AIRouter, AI = E().AI;
 
@@ -186,6 +221,30 @@
       }).then(function () {
         window.toast && window.toast('OmniRoute stopped', '#7c6ff5');
         try { window.renderAll && window.renderAll(); } catch (_) {}
+      });
+    };
+
+    var ocb = host.querySelector('#aiOpenclawBtn');
+    if (ocb) ocb.onclick = function () {
+      state.openclawBusy = true; state.openclawLog = 'starting OpenClaw…\n'; rerender();
+      AR.ensureOpenClaw(function (s) { state.openclawLog += s + '\n'; rerender(); }).then(function (r) {
+        state.openclawBusy = false;
+        state.openclawLog += (r && r.ok) ? ('\nready on ' + r.base) : ('\nfailed: ' + ((r && r.error) || 'unknown'));
+        return refreshOpenclawStatus();
+      }).then(function () {
+        window.toast && window.toast(state.openclawStatus && state.openclawStatus.running ? 'OpenClaw gateway running' : 'OpenClaw not reachable', state.openclawStatus && state.openclawStatus.running ? '#34d399' : '#ef4444');
+      });
+    };
+
+    var ocsb = host.querySelector('#aiOpenclawStopBtn');
+    if (ocsb) ocsb.onclick = function () {
+      state.openclawStopping = true; state.openclawLog = 'stopping OpenClaw…\n'; rerender();
+      AR.stopOpenClaw().then(function (r) {
+        state.openclawStopping = false;
+        state.openclawLog += (r && r.ok !== false) ? '\nstopped' : ('\nfailed: ' + ((r && r.error) || 'unknown'));
+        return refreshOpenclawStatus();
+      }).then(function () {
+        window.toast && window.toast('OpenClaw stopped', '#e08a3f');
       });
     };
 
@@ -381,10 +440,11 @@
             if (host && !host.__aiBound) {
               host.__aiBound = true;
               rerender();
-              // populate the hardware summary + model-fit column, and OmniRoute's
-              // real running/installed state, on first view
+              // populate the hardware summary + model-fit column, and OmniRoute's /
+              // OpenClaw's real running/installed state, on first view
               if (!state.hw && E().Hardware) E().Hardware.probe().then(function (hw) { state.hw = hw; rerender(); });
               if (!state.omniStatus) refreshOmniStatus();
+              if (!state.openclawStatus) refreshOpenclawStatus();
             }
           }
         } catch (_) { /* best effort */ }

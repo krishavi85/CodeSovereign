@@ -119,6 +119,7 @@ contextBridge.exposeInMainWorld('desktop', {
   ai: {
     discover: () => invoke('ai:discover'),
     request: (opts) => invoke('ai:request', opts),
-    omniroute: (action) => invoke('ai:omniroute', action)
+    omniroute: (action) => invoke('ai:omniroute', action),
+    openclaw: (action) => invoke('ai:openclaw', action)
   }
 });

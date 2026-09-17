@@ -215,4 +215,65 @@ async function omniroute(action, onStatus) {
   return { ok: false, error: 'unknown action' };
 }
 
-module.exports = { discover, request, allowed, RUNTIMES, omniroute, omniRunning };
+/* ---- OpenClaw: local agent gateway, run as a real OS service ----
+ * Unlike OmniRoute (a plain child process we own), OpenClaw's own `daemon`
+ * subcommand installs+runs it as a launchd/systemd/schtasks service — the
+ * gateway then survives independently of this app. We only ever shell out
+ * to `openclaw daemon start|stop` and poll the loopback port; we never hold
+ * a process handle for it. Verified live: `daemon start` on Windows
+ * registers/starts a Scheduled Task ("OpenClaw Gateway") and the gateway
+ * answers on 127.0.0.1:18789 a few seconds later.
+ *
+ * NOTE (found in testing, not hidden): a machine that has never run
+ * `openclaw configure` has no channels/provider auth set up yet — the
+ * gateway can still start, but has nothing to route to. That first-time
+ * setup is interactive (picks providers/credentials) and is left to the
+ * user, same as any other credential entry this app never automates.
+ */
+const OPENCLAW_PORT = 18789;
+
+async function openclawInstalled() {
+  const v = await cli('npx', ['--yes', 'openclaw', '--version'], 60000);
+  return v != null && /\d+\.\d+/.test(v) ? v.trim().split('\n').pop() : null;
+}
+
+function openclawRunning() {
+  return new Promise((resolve) => {
+    const req = http.request({ hostname: '127.0.0.1', port: OPENCLAW_PORT, path: '/', method: 'GET', timeout: 1500 }, (res) => {
+      res.resume();
+      resolve(res.statusCode > 0);
+    });
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.on('error', () => resolve(false));
+    req.end();
+  });
+}
+
+async function openclawEnsure(onStatus) {
+  if (await openclawRunning()) return { ok: true, running: true, started: false, base: 'http://127.0.0.1:' + OPENCLAW_PORT };
+  const ver = await openclawInstalled();
+  if (!ver) { if (onStatus) onStatus('installing OpenClaw (first run only)…'); }
+  if (onStatus) onStatus('starting the OpenClaw gateway service…');
+  const started = await cli('npx', ['--yes', 'openclaw', 'daemon', 'start'], 90000);
+  if (started == null) return { ok: false, error: 'openclaw daemon start failed to run' };
+  for (let i = 0; i < 45; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    if (await openclawRunning()) return { ok: true, running: true, started: true, base: 'http://127.0.0.1:' + OPENCLAW_PORT, version: ver || 'installed' };
+    if (onStatus && i % 5 === 0) onStatus('waiting for the OpenClaw gateway to come up (' + i + 's)…');
+  }
+  return { ok: false, error: 'OpenClaw did not answer on :' + OPENCLAW_PORT + ' within 45s — it may need `openclaw configure` run once first (interactive: picks providers/credentials).' };
+}
+
+async function openclawStop() {
+  const r = await cli('npx', ['--yes', 'openclaw', 'daemon', 'stop'], 30000);
+  return { ok: r != null };
+}
+
+async function openclaw(action, onStatus) {
+  if (action === 'status') return { installed: await openclawInstalled(), running: await openclawRunning() };
+  if (action === 'start' || action === 'ensure') return openclawEnsure(onStatus);
+  if (action === 'stop') return openclawStop();
+  return { ok: false, error: 'unknown action' };
+}
+
+module.exports = { discover, request, allowed, RUNTIMES, omniroute, omniRunning, openclaw, openclawRunning };

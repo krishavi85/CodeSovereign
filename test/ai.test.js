@@ -172,4 +172,45 @@ module.exports = async function (t) {
 
     delete win.desktop;
   }
+
+  // ---- AIRouter.ensureOpenClaw / openClawStatus / stopOpenClaw — the same
+  // in-app start/stop/status pattern as OmniRoute, for OpenClaw's own
+  // background-service gateway (launchd/systemd/schtasks, not a plain child
+  // process). OpenClaw is deliberately NOT wired as an Engine.LLM provider —
+  // it isn't a drop-in chat endpoint, and a live test found its --local
+  // completion path far slower than the Ollama it called, so these three
+  // calls only ever start/stop/ask about the gateway process. ----
+  {
+    t.deepEqual('openClawStatus with no desktop bridge is a safe no-op', await En.AIRouter.openClawStatus(), { ok: false, installed: false, running: false });
+    const stopNoBridge = await En.AIRouter.stopOpenClaw();
+    t.equal('stopOpenClaw with no desktop bridge reports it cannot', stopNoBridge.ok, false);
+    const ensureNoBridge = await En.AIRouter.ensureOpenClaw();
+    t.equal('ensureOpenClaw with no desktop bridge reports it cannot', ensureNoBridge.ok, false);
+
+    let openclawCalls = [];
+    win.desktop = {
+      isDesktop: true,
+      ai: {
+        openclaw: (action) => { openclawCalls.push(action); return Promise.resolve(
+          action === 'status' ? { installed: '2026.7.1-2', running: true }
+          : action === 'stop' ? { ok: true }
+          : { ok: true, running: true, started: true, base: 'http://127.0.0.1:18789' }
+        ); }
+      }
+    };
+    const st = await En.AIRouter.openClawStatus();
+    t.deepEqual('openClawStatus reflects a running gateway', st, { ok: true, installed: true, running: true });
+    t.ok('openClawStatus asked the main process for "status" (read-only)', openclawCalls.includes('status'));
+
+    const ensureRes = await En.AIRouter.ensureOpenClaw();
+    t.ok('ensureOpenClaw called the main-process "ensure" action', openclawCalls.includes('ensure'));
+    t.equal('ensureOpenClaw reports the base URL it came up on', ensureRes.base, 'http://127.0.0.1:18789');
+    t.equal('starting OpenClaw does not touch Engine.LLM config (not wired as a provider)', llmCfg.providerId, 'ollama');
+
+    const stopRes = await En.AIRouter.stopOpenClaw();
+    t.ok('stopOpenClaw called the main-process "stop" action', openclawCalls.includes('stop'));
+    t.equal('stopOpenClaw reports ok', stopRes.ok, true);
+
+    delete win.desktop;
+  }
 };

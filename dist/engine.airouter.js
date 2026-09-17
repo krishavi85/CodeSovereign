@@ -156,6 +156,38 @@
     });
   }
 
+  /* ---- OpenClaw: a local agent gateway (not a drop-in Engine.LLM chat
+     provider — it has its own agent/session/tool model), installed as a
+     real background service (launchd/systemd/schtasks) rather than a
+     plain child process. Start/stop/status only; CodeSovereign does not
+     route its own generation prompts through it (see the honesty note on
+     ensureOpenClaw — a live test found its --local completion path can
+     hang well past a healthy Ollama response time, so it is not wired as
+     a "faster" path until that is resolved). */
+  function ensureOpenClaw(onStatus) {
+    var D = window.desktop;
+    if (!(D && D.isDesktop && D.ai && D.ai.openclaw)) {
+      return Promise.resolve({ ok: false, error: 'OpenClaw launch needs the desktop app — or run `npx openclaw daemon start` yourself' });
+    }
+    return D.ai.openclaw('ensure').then(function (r) {
+      return r || { ok: false, error: 'openclaw failed' };
+    });
+  }
+
+  function openClawStatus() {
+    var D = window.desktop;
+    if (!(D && D.isDesktop && D.ai && D.ai.openclaw)) return Promise.resolve({ ok: false, installed: false, running: false });
+    return D.ai.openclaw('status').then(function (r) {
+      return { ok: true, installed: !!(r && r.installed), running: !!(r && r.running) };
+    }, function () { return { ok: false, installed: false, running: false }; });
+  }
+
+  function stopOpenClaw() {
+    var D = window.desktop;
+    if (!(D && D.isDesktop && D.ai && D.ai.openclaw)) return Promise.resolve({ ok: false, error: 'not running in the desktop app' });
+    return D.ai.openclaw('stop').then(function (r) { return r || { ok: true }; });
+  }
+
   function route(opts) {
     opts = opts || {};
     var hwP = HW() ? HW().probe() : Promise.resolve(null);
@@ -208,6 +240,9 @@
     return discover().then(function (d) { out.localRuntimes = (d.runtimes || []).map(function (r) { return { id: r.id, models: (r.models || []).length }; }); return out; });
   }
 
-  Engine.AIRouter = { discover: discover, recommend: recommend, apply: apply, route: route, status: status, ensureOmniRoute: ensureOmniRoute, omniRouteStatus: omniRouteStatus, stopOmniRoute: stopOmniRoute, LOCAL_PORTS: LOCAL_PORTS };
+  Engine.AIRouter = { discover: discover, recommend: recommend, apply: apply, route: route, status: status,
+    ensureOmniRoute: ensureOmniRoute, omniRouteStatus: omniRouteStatus, stopOmniRoute: stopOmniRoute,
+    ensureOpenClaw: ensureOpenClaw, openClawStatus: openClawStatus, stopOpenClaw: stopOpenClaw,
+    LOCAL_PORTS: LOCAL_PORTS };
   console.info('[AIRouter] local inference router ready — Engine.AIRouter');
 })();
