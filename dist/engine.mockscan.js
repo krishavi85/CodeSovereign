@@ -128,7 +128,14 @@
     return 'UNKNOWN';
   }
 
-  Engine.MockScan = { run: run, inferIntent: inferIntent, classify: classify, SIGNALS: SIGNALS };
+  function fix() {
+    var MD = (window.Engine && window.Engine.MockDetect) || window.MockDetect;
+    if (MD && typeof MD.fix === 'function') return MD.fix();
+    var before = run();
+    return { patched: [], remaining: before.signals || [], before: before.total || 0, after: before.total || 0 };
+  }
+
+  Engine.MockScan = { run: run, inferIntent: inferIntent, classify: classify, SIGNALS: SIGNALS, fix: fix };
   window.MockScan = Engine.MockScan;
   console.info('[MockScan] full simulation-signal scanner ready — Engine.MockScan');
 })();

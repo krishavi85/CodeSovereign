@@ -14,6 +14,8 @@ const fsp = require('fs/promises');
 
 const workspace = require('./lib/workspace');
 const proc = require('./lib/proc');
+const mcp = require('./lib/mcp');
+const net = require('./lib/net');
 const observer = require('./lib/observer');
 const trust = require('./lib/trust');
 const hardware = require('./lib/hardware');
@@ -438,6 +440,27 @@ function registerIpc() {
   ipcMain.handle('trust:grant', () => { const r = workspace.getRoot(); if (r) { trust.grant(r); rebuildMenu(); } return ok({ trusted: true }); });
   ipcMain.handle('trust:revoke', () => { const r = workspace.getRoot(); if (r) { trust.revoke(r); rebuildMenu(); } return ok({ trusted: false }); });
   ipcMain.handle('trust:audit', (_e, limit) => trust.readAudit(typeof limit === 'number' ? limit : 200));
+
+  /* ---- MCP stdio (allowlisted spawn + JSON-RPC) ---- */
+  ipcMain.handle('mcp:start', (_e, opts) => {
+    try { return ok(mcp.start(opts || {})); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('mcp:request', async (_e, opts) => {
+    try {
+      const o = opts || {};
+      if (typeof o.id !== 'string') return fail('id required');
+      const rpc = await mcp.request(o.id, o.method, o.params);
+      return { ok: !(rpc && rpc.error), rpc: rpc };
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('mcp:stop', (_e, id) => {
+    try { return ok(mcp.stop(String(id || ''))); } catch (e) { return fail(e); }
+  });
+
+  /* ---- HTTPS / localhost HTTP (desktop bypasses renderer CSP) ---- */
+  ipcMain.handle('net:fetch', async (_e, opts) => {
+    try { return ok(await net.fetchUrl(opts || {})); } catch (e) { return fail(e); }
+  });
 
   /* ---- runtime observer (hidden BrowserWindow, localhost/workspace only) ---- */
   ipcMain.handle('obs:load', async (_e, target) => {

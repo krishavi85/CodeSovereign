@@ -63,6 +63,16 @@ contextBridge.exposeInMainWorld('desktop', {
     audit: (limit) => invoke('trust:audit', limit)
   },
 
+  mcp: {
+    start: (opts) => invoke('mcp:start', opts),
+    request: (id, method, params) => invoke('mcp:request', { id: id, method: method, params: params }),
+    stop: (id) => invoke('mcp:stop', id)
+  },
+
+  net: {
+    fetch: (opts) => invoke('net:fetch', opts)
+  },
+
   git: {
     available: () => invoke('git:available'),
     exec: (args) => invoke('git:exec', args),

@@ -37,6 +37,7 @@ module.exports = async function (t) {
 
   // --- credential key names ---
   t.ok('creds key: llm.apiKey ok', KEY_RE.test('llm.apiKey'));
+  t.ok('creds key: llm.localToken ok', KEY_RE.test('llm.localToken'));
   t.ok('creds key: github.token ok', KEY_RE.test('github.token'));
   t.ok('creds key: path traversal blocked', !KEY_RE.test('../../secret'));
   t.ok('creds key: slashes blocked', !KEY_RE.test('a/b'));

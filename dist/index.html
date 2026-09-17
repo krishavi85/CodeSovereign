@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' http://localhost:* http://127.0.0.1:* https://*.supabase.co https://api.openai.com https://api.minimaxi.chat https://api.minimax.chat https://api.anthropic.com https://openrouter.ai https://api.together.xyz https://api.groq.com https://api.mistral.ai https://api.deepseek.com https://generativelanguage.googleapis.com; frame-src 'self' data: blob:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:1234 http://localhost:1234 http://127.0.0.1:1337 http://localhost:1337 http://127.0.0.1:3100 http://localhost:3100 http://127.0.0.1:8000 http://localhost:8000 http://127.0.0.1:8080 http://localhost:8080 http://127.0.0.1:8081 http://localhost:8081 http://127.0.0.1:11434 http://localhost:11434 http://127.0.0.1:20128 http://localhost:20128 http://127.0.0.1:54321 http://localhost:54321 https://*.supabase.co https://api.openai.com https://api.minimaxi.chat https://api.minimax.chat https://api.anthropic.com https://api.github.com https://github.com https://api.vercel.com https://www.googleapis.com https://gmail.googleapis.com https://oauth2.googleapis.com https://accounts.google.com https://mcp.context7.com https://mcp.supabase.com https://mcp.sentry.dev https://openrouter.ai https://api.together.xyz https://api.groq.com https://api.mistral.ai https://api.deepseek.com https://generativelanguage.googleapis.com; frame-src 'self' data: blob:">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="x-content-type-options" content="nosniff">
 <title>CodeSovereign — AI App Factory</title>
@@ -109,6 +109,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 .tree-row.active{background:rgba(109,93,252,.16);color:#a9b0ff}
 .tree-row .ext{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--muted);min-width:36px}
 .tree-row.dir{font-weight:600;color:#9aa3b8}
+.tab-ghost{position:absolute;color:rgba(167,139,250,.55);font:400 13px/1.62 'JetBrains Mono',monospace;pointer-events:none;white-space:pre;z-index:2}
+.tab-portal{position:absolute;right:12px;bottom:12px;z-index:3;max-width:280px;padding:10px 12px;border-radius:10px;background:#141a2b;border:1px solid rgba(167,139,250,.35);box-shadow:0 12px 30px rgba(0,0,0,.45);color:#c7cddb;font:500 12px Inter,sans-serif}
+.inline-edit{position:absolute;z-index:4;min-width:320px;max-width:520px;padding:8px 10px;border-radius:10px;background:#141a2b;border:1px solid rgba(167,139,250,.45);box-shadow:0 12px 30px rgba(0,0,0,.5);display:flex;align-items:center;gap:8px}
+.inline-edit[hidden]{display:none}
+.inline-k{flex:none;font:700 10px Inter,sans-serif;letter-spacing:.06em;color:#a78bfa;background:rgba(167,139,250,.12);padding:4px 7px;border-radius:6px}
+.inline-edit input{flex:1;background:transparent;border:0;outline:0;color:#e6e9f2;font:400 13px Inter,sans-serif}
+.tab-hint{display:inline-flex;align-items:center;gap:8px;margin-left:auto;color:#7b859c;font:500 11px Inter,sans-serif;min-width:0}
 
 /* ============ TYPE SCALE (text-too-large fix) ============ */
 .cs-h1{font-size:20px;margin:0;font-weight:700;line-height:1.25}
@@ -168,7 +175,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
       <button id="previewRefresh" class="cs-icon-btn" style="width:28px;height:28px" title="Refresh">↻</button>
       <button id="previewClose" class="cs-icon-btn" style="width:28px;height:28px" title="Close">✕</button>
     </div>
-    <iframe id="previewFrame" sandbox="allow-scripts" style="flex:1;border:0;background:#fff"></iframe>
+    <iframe id="previewFrame" sandbox="allow-scripts" csp="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'" style="flex:1;border:0;background:#fff"></iframe>
   </div>
 </div>
 
@@ -195,6 +202,13 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="app.plugins.js"></script>
 <script src="app.plugins.extras.js"></script>
 <script src="engine.llm.js"></script>
+<script src="engine.tab.js"></script>
+<script src="engine.inline.js"></script>
+<script src="engine.loop.js"></script>
+<script src="engine.orchestra.js"></script>
+<script src="engine.runtime.js"></script>
+<script src="engine.work.js"></script>
+<script src="engine.stack.js"></script>
 <script src="app.llm.extras.js"></script>
 <script src="app.bus.js"></script>
 <script src="app.bus_ui.js"></script>
@@ -282,6 +296,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="app.js"></script>
 <script src="app.ai.extras.js"></script>
 <script src="app.ultramode.js"></script>
+<script src="app.stack.js"></script>
+<script src="app.orchestra.js"></script>
+<script src="app.runtime.js"></script>
+<script src="app.work.js"></script>
 
 <!-- Desktop layer: no-ops in a plain browser, wires real disk/proc/keychain in Electron -->
 <script src="desktop/desktop-fs.js"></script>
@@ -289,6 +307,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="desktop/desktop-git.js"></script>
 <script src="desktop/desktop-exec.js"></script>
 <script src="desktop/desktop-adapters.js"></script>
+<script src="desktop/desktop-mcp.js"></script>
 <script src="desktop/desktop-observe.js"></script>
 <script src="desktop/desktop-app.js"></script>
 </body>
