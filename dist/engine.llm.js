@@ -272,7 +272,7 @@
       '{ "summary": "<one-line summary of what you built>",',
       '  "files": [ { "path": "/index.html", "content": "<full file contents>" }, ... ] }',
       "or a tool call:",
-      '{ "think": "<brief>", "tool": "grep|list_dir|read_file|write_file|delete_file|run_tests|install_deps|run_command|observe|web_search|browser|mcp|generate_image|ask_user|done", "args": {} }',
+        '{ "think": "<brief>", "tool": "grep|list_dir|read_file|write_file|delete_file|run_tests|install_deps|run_command|observe|web_search|browser|mcp|generate_image|ask_user|delegate|done", "args": {} }',
       "If you cannot emit valid JSON, emit files as blocks:",
       "FILE: /index.html",
       "```html",
@@ -286,6 +286,7 @@
       "- All file paths start with /. Keep paths short and ASCII.",
       "- Every file must be complete and runnable. Visual quality matters as much as behavior.",
       "- run_command only runs workspace package jobs (install, test, build, lint, typecheck). It cannot spawn arbitrary node/python/git argv.",
+      "- Prefer delegate/subagents for multi-role work. The coordinator plans; workers implement. Reuse Project brain memories.",
       ctxBlk
     ].join("\n");
   }
@@ -1685,6 +1686,14 @@
           text: "Brain: " + intent.mode + " via " + intent.engines.join(" + ") + " (" + intent.reason + ")"
         });
         onStep && onStep(steps[steps.length - 1]);
+        if (window.Engine.ModelRouter && window.Engine.ModelRouter.select) {
+          const pick = window.Engine.ModelRouter.select(prompt);
+          steps.push({
+            kind: "model",
+            text: "Model router: " + pick.label + " (" + pick.reason + ")"
+          });
+          onStep && onStep(steps[steps.length - 1]);
+        }
         const includeContents = followUp || intent.mode === "edit" || intent.mode === "repair" || intent.mode === "explore" || intent.mode === "deps";
         const explore = relevantContext(prompt, { followUp: followUp, includeContents: includeContents });
         steps.push({
@@ -1697,6 +1706,14 @@
         });
         onStep && onStep(steps[steps.length - 1]);
         const engines = runSelectedEngines(intent, steps, onStep);
+        if (window.Engine.Coordinator && window.Engine.Coordinator.shouldDelegate(prompt)) {
+          const swarm = await window.Engine.Coordinator.run(prompt, {
+            onStep: function (s) { steps.push(s); onStep && onStep(s); }
+          });
+          extraUser = (extraUser ? extraUser + "\n\n" : "") +
+            "COORDINATOR RESULTS (coordinator did not write implementation):\n" +
+            JSON.stringify({ ok: swarm.ok, agents: swarm.agents }).slice(0, 2000);
+        }
         if (followUp) {
           const selected = (explore.files && explore.files.length) ? explore.files : snapshotWorkspace().slice(0, 6);
           const existingIssues = selected.length
@@ -1708,6 +1725,10 @@
         extraUser = extraUser
           ? (extraUser + (exploreBlk ? "\n\n" + exploreBlk : "") + "\n\n" + formatRag(intent, null, followUp || intent.mode === "deps" ? engines.deps : null, null, { followUp: followUp }))
           : ((exploreBlk ? exploreBlk + "\n\n" : "") + formatRag(intent, null, followUp || intent.mode === "deps" ? engines.deps : null, null, { followUp: followUp }));
+        const brainBlk = window.Engine.ProjectBrain && window.Engine.ProjectBrain.contextBlock
+          ? window.Engine.ProjectBrain.contextBlock()
+          : "";
+        if (brainBlk) extraUser = extraUser + "\n\n" + brainBlk;
         const cap = (window.Engine.Loop && window.Engine.Loop.SAFETY_CAP) || SAFETY_CAP;
         for (let round = 1; round <= cap; round++) {
           steps.push({

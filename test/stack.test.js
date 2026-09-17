@@ -337,7 +337,9 @@ module.exports = async function (t) {
   t.ok('index.html loads engine.tab.js', /engine\.tab\.js/.test(html));
   t.ok('index.html loads engine.inline.js', /engine\.inline\.js/.test(html));
   t.ok('index.html loads engine.loop.js', /engine\.loop\.js/.test(html));
+  t.ok('index.html loads engine.orchestra.js', /engine\.orchestra\.js/.test(html));
   t.ok('index.html loads app.stack.js', /app\.stack\.js/.test(html));
+  t.ok('index.html loads app.orchestra.js', /app\.orchestra\.js/.test(html));
   t.ok('index.html loads the desktop layer', /desktop\/desktop-app\.js/.test(html));
   const deskSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'desktop', 'desktop-app.js'), 'utf8');
   const llmSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'engine.llm.js'), 'utf8');

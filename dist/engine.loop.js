@@ -18,7 +18,7 @@
     'write_file', 'create_file', 'delete_file',
     'run_command', 'install_deps', 'run_tests',
     'observe', 'web_search', 'browser', 'mcp',
-    'generate_image', 'ask_user', 'done'
+    'generate_image', 'ask_user', 'delegate', 'done'
   ];
   const SAFETY_CAP = 48;
   const DENY_CMD = /rm\s+-rf|curl\s+|wget\s+|powershell|invoke-webrequest|safeStorage|localStorage\.|\/etc\/passwd|child_process/i;
@@ -254,10 +254,27 @@
       };
     }
     if (name === 'browser') {
+      const B = Engine.Browser;
+      if (B && B.experience) {
+        if (args.action || args.op) {
+          if (!B.session().opened) await B.navigate(args.url || 'preview');
+          const act = await B.act(args.action || args.op, args);
+          return { ok: !!act.ok, tool: name, action: act, console: B.console(), network: B.network(), screenshot: B.screenshot() };
+        }
+        const nav = await B.navigate(args.url || args.href || 'preview');
+        return { ok: !!nav.ok, tool: name, inspect: nav.inspect, capture: B.screenshot(), console: B.console(), network: B.network(), cookies: B.session().cookies };
+      }
       const html = Engine.Preview && Engine.Preview.build ? Engine.Preview.build() : '';
       const inspect = Engine.Preview && Engine.Preview.inspect ? Engine.Preview.inspect(html) : null;
       const capture = Engine.Preview && Engine.Preview.capture ? Engine.Preview.capture() : null;
       return { ok: !!html, tool: name, inspect: inspect, capture: capture };
+    }
+    if (name === 'delegate') {
+      const Swarm = Engine.Swarm;
+      if (!Swarm || !Swarm.spawn) return { ok: false, tool: name, error: 'swarm not loaded' };
+      const rec = Swarm.spawn({ role: args.role || args.agent, task: args.task || args.text, isolation: args.isolation, instructions: args.instructions, model: args.model });
+      const r = await Swarm.run(rec.id, args.task || args.text || '');
+      return { ok: !!r.ok, tool: name, agent: rec, result: r };
     }
     if (name === 'mcp') {
       const hub = window.PluginHub || Engine.PluginHub;
