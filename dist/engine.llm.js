@@ -285,6 +285,7 @@
       "- Use plain HTML/CSS/JS unless the project context requires a framework.",
       "- All file paths start with /. Keep paths short and ASCII.",
       "- Every file must be complete and runnable. Visual quality matters as much as behavior.",
+      "- run_command only runs workspace package jobs (install, test, build, lint, typecheck). It cannot spawn arbitrary node/python/git argv.",
       ctxBlk
     ].join("\n");
   }

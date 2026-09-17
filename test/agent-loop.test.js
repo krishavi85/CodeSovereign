@@ -87,6 +87,63 @@ module.exports = async function (t) {
   const blocked = await Loop.exec('run_command', { cmd: 'rm -rf /' });
   t.ok('dangerous commands are blocked', blocked.ok === false);
 
+  t.ok('assertSafeCommand is exported', typeof Loop.assertSafeCommand === 'function');
+  t.ok('planCommand is exported', typeof Loop.planCommand === 'function');
+
+  const npmPlan = Loop.planCommand('npm test');
+  t.ok('npm test maps to the test job', npmPlan.ok && npmPlan.job === 'test');
+  const runTestPlan = Loop.planCommand('npm run test');
+  t.ok('npm run test maps to the test job', runTestPlan.ok && runTestPlan.job === 'test');
+  const installPlan = Loop.planCommand('npm install');
+  t.ok('npm install maps to the install job', installPlan.ok && installPlan.job === 'install');
+  const buildPlan = Loop.planCommand('npm run build');
+  t.ok('npm run build maps to the build job', buildPlan.ok && buildPlan.job === 'build');
+
+  let threw = false;
+  try { Loop.assertSafeCommand('node -e process.exit(0)'); } catch (e) { threw = /blocked|allowlist/i.test(String(e.message || e)); }
+  t.ok('assertSafeCommand rejects node -e', threw);
+
+  const ran = [];
+  win.CSExec = {
+    available: () => true,
+    run: async (cmd, args) => { ran.push({ fn: 'run', cmd: cmd, args: args || [] }); return { code: 0, output: 'ran' }; },
+    install: async () => { ran.push({ fn: 'install' }); return { code: 0, output: 'installed' }; },
+    test: async () => { ran.push({ fn: 'test' }); return { code: 0, output: 'tested' }; },
+    build: async () => { ran.push({ fn: 'build' }); return { code: 0, output: 'built' }; },
+    lint: async () => { ran.push({ fn: 'lint' }); return { code: 0, output: 'linted' }; },
+    typecheck: async () => { ran.push({ fn: 'typecheck' }); return { code: 0, output: 'typed' }; }
+  };
+
+  async function blockedCmd(cmd, label) {
+    const before = ran.length;
+    const r = await Loop.exec('run_command', { cmd: cmd });
+    t.ok(label + ' is blocked', r.ok === false);
+    t.ok(label + ' never reaches CSExec.run', ran.length === before && ran.every(function (x) { return x.fn !== 'run'; }));
+  }
+  await blockedCmd('node -e process.exit(0)', 'node -e');
+  await blockedCmd('node --eval process.exit(0)', 'node --eval');
+  await blockedCmd('python -c print(1)', 'python -c');
+  await blockedCmd('python3 -c print(1)', 'python3 -c');
+  await blockedCmd('git clone /tmp/evil', 'git clone absolute');
+  await blockedCmd('git clone https://example.com/r.git', 'git clone url');
+  await blockedCmd('npm test; node -e 1', 'shell chaining');
+  await blockedCmd('npm run ../../evil', 'path-escape script');
+  await blockedCmd('npx eslint /tmp', 'npx absolute path');
+
+  ran.length = 0;
+  const npmTest = await Loop.exec('run_command', { cmd: 'npm test' });
+  t.ok('npm test is allowed', npmTest.ok === true && npmTest.job === 'test');
+  t.ok('npm test routes to CSExec.test', ran.length === 1 && ran[0].fn === 'test');
+  t.ok('allowed jobs never use generic CSExec.run', ran.every(function (x) { return x.fn !== 'run'; }));
+
+  ran.length = 0;
+  const npmInstall = await Loop.exec('run_command', { cmd: 'npm install' });
+  t.ok('npm install routes to CSExec.install', npmInstall.ok && ran.length === 1 && ran[0].fn === 'install');
+
+  delete win.CSExec;
+  const browserNpmTest = await Loop.exec('run_command', { cmd: 'npm run test' });
+  t.ok('npm run test without desktop uses in-browser validators', browserNpmTest.ok === true && browserNpmTest.job === 'test');
+
   const tests = await Loop.exec('run_tests', {});
   t.ok('run_tests inspects failures via validators', typeof tests.ok === 'boolean');
 

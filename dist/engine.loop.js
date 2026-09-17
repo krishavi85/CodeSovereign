@@ -6,6 +6,7 @@
 
    Engine.Loop.exec(tool, args)
    Engine.Loop.parse(text)
+   Engine.Loop.planCommand(cmd) / assertSafeCommand(cmd)
    Engine.Loop.tools
    Engine.Loop.NO_FIXED_LIMIT
    ===================================================================== */
@@ -21,6 +22,89 @@
   ];
   const SAFETY_CAP = 48;
   const DENY_CMD = /rm\s+-rf|curl\s+|wget\s+|powershell|invoke-webrequest|safeStorage|localStorage\.|\/etc\/passwd|child_process/i;
+  const SHELL_META = /[;&|`$<>(){}[\]\\'"\n\r]/;
+  const EVAL_FLAG = /^(-e|-c|-p|--eval|--print|--exec)$/i;
+  const ABS_OR_URL = /^(?:\/|[A-Za-z]:[\\/]|\\\\|file:|git\+|ssh:|https?:|ftp:)/i;
+  const ESCAPE = /\.\.(?:[\\/]|$)|(?:^|[\\/])\.\./;
+  const SAFE_SCRIPT = /^[A-Za-z][A-Za-z0-9:_-]*$/;
+  const JOB_SCRIPTS = {
+    test: true, tests: true, 'test:unit': true, 'test:ci': true,
+    build: true, 'build:prod': true, compile: true, dist: true,
+    lint: true, 'lint:js': true, eslint: true,
+    typecheck: true, 'type-check': true, tsc: true, types: true
+  };
+
+  function scriptJob(name) {
+    const key = String(name || '').toLowerCase();
+    if (key === 'test' || key === 'tests' || key === 'test:unit' || key === 'test:ci') return 'test';
+    if (key === 'build' || key === 'build:prod' || key === 'compile' || key === 'dist') return 'build';
+    if (key === 'lint' || key === 'lint:js' || key === 'eslint') return 'lint';
+    if (key === 'typecheck' || key === 'type-check' || key === 'tsc' || key === 'types') return 'typecheck';
+    return null;
+  }
+
+  function basenameCmd(tok) {
+    return String(tok || '').replace(/^.*[\\/]/, '').replace(/\.(cmd|exe|bat|ps1)$/i, '').toLowerCase();
+  }
+
+  function argvUnsafe(parts) {
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      if (EVAL_FLAG.test(p)) return true;
+      if (ABS_OR_URL.test(p) || ESCAPE.test(p) || p.indexOf('..') >= 0) return true;
+      if (/^(--prefix|--cwd|--workdir|--dir|-C|--global|--prefix=)/i.test(p)) return true;
+    }
+    return false;
+  }
+
+  function planCommand(cmd) {
+    const raw = String(cmd == null ? '' : cmd).trim();
+    if (!raw) return { ok: false, error: 'cmd required' };
+    if (SHELL_META.test(raw) || DENY_CMD.test(raw)) return { ok: false, error: 'command blocked' };
+    const parts = raw.split(/\s+/).filter(Boolean);
+    if (!parts.length || argvUnsafe(parts)) return { ok: false, error: 'command blocked' };
+    const bin = basenameCmd(parts[0]);
+    const args = parts.slice(1);
+    if (bin === 'npm' || bin === 'pnpm' || bin === 'yarn' || bin === 'bun') {
+      const a0 = String(args[0] || '').toLowerCase();
+      if ((a0 === 'install' || a0 === 'ci' || (bin === 'yarn' && args.length === 0)) && args.length <= 1) {
+        return { ok: true, job: 'install', pm: bin, argv: args.length ? [bin, a0] : [bin] };
+      }
+      if (a0 === 'test' && args.length === 1) {
+        return { ok: true, job: 'test', pm: bin, argv: [bin, 'test'] };
+      }
+      if ((a0 === 'run' || a0 === 'run-script') && args.length === 2 && SAFE_SCRIPT.test(args[1]) && JOB_SCRIPTS[args[1].toLowerCase()]) {
+        const job = scriptJob(args[1]);
+        return { ok: true, job: job, pm: bin, script: args[1], argv: [bin, 'run', args[1]] };
+      }
+      if (bin === 'yarn' && args.length === 1 && SAFE_SCRIPT.test(args[0]) && JOB_SCRIPTS[args[0].toLowerCase()]) {
+        const job = scriptJob(args[0]);
+        return { ok: true, job: job, pm: bin, script: args[0], argv: [bin, args[0]] };
+      }
+      return { ok: false, error: 'command not in workspace job allowlist' };
+    }
+    if (bin === 'npx') {
+      const rest = args.filter(function (a) { return a !== '--yes' && a !== '-y'; });
+      if (rest[0] === 'eslint' && rest.length <= 2 && (rest.length === 1 || rest[1] === '.')) {
+        return { ok: true, job: 'lint', pm: 'npx', argv: ['npx', 'eslint', '.'] };
+      }
+      if (rest[0] === 'tsc' && rest.length === 2 && rest[1] === '--noEmit') {
+        return { ok: true, job: 'typecheck', pm: 'npx', argv: ['npx', 'tsc', '--noEmit'] };
+      }
+      return { ok: false, error: 'command not in workspace job allowlist' };
+    }
+    return { ok: false, error: 'command not in workspace job allowlist' };
+  }
+
+  function assertSafeCommand(cmd) {
+    const plan = planCommand(cmd);
+    if (!plan.ok) {
+      const err = new Error(plan.error || 'command blocked');
+      err.code = 'ECMD';
+      throw err;
+    }
+    return plan;
+  }
 
   function llm() { return Engine.LLM || {}; }
 
@@ -88,18 +172,45 @@
     }
     if (name === 'run_command') {
       const cmd = String(args.cmd || args.command || '').trim();
-      if (!cmd) return { ok: false, tool: name, error: 'cmd required' };
-      if (DENY_CMD.test(cmd)) return { ok: false, tool: name, error: 'command blocked' };
-      if (window.CSExec && window.CSExec.available && window.CSExec.available() && window.CSExec.run) {
-        const parts = cmd.split(/\s+/);
-        const r = await window.CSExec.run(parts[0], parts.slice(1), { label: cmd });
-        return { ok: r.code === 0, tool: name, code: r.code, output: clip(r.output, 6000) };
+      let plan;
+      try { plan = assertSafeCommand(cmd); }
+      catch (e) { return { ok: false, tool: name, error: String(e.message || e), cmd: cmd }; }
+      const ex = window.CSExec;
+      const desktop = !!(ex && ex.available && ex.available());
+      async function viaJob(fn, fallback) {
+        if (desktop && typeof ex[fn] === 'function') {
+          const r = await ex[fn]();
+          return { ok: r.code === 0, tool: name, job: plan.job, code: r.code, output: clip(r.output, 6000) };
+        }
+        return fallback();
       }
-      if (/^npm\s+test\b|^npm\s+run\s+test\b/.test(cmd)) {
-        const issues = Engine.Validator ? Engine.Validator.runAll() : [];
-        return { ok: !issues.filter(function (i) { return i.severity === 'error'; }).length, tool: name, output: 'in-browser tests: ' + issues.length + ' issue(s)', issues: issues.slice(0, 20) };
+      if (plan.job === 'install') {
+        return viaJob('install', function () {
+          return { ok: true, tool: name, job: 'install', skipped: true, note: 'recorded install; desktop npm install when available' };
+        });
       }
-      return { ok: false, tool: name, error: 'no desktop shell; command not run', cmd: cmd };
+      if (plan.job === 'test') {
+        return viaJob('test', function () {
+          const issues = Engine.Validator ? Engine.Validator.runAll() : [];
+          return { ok: !issues.filter(function (i) { return i.severity === 'error'; }).length, tool: name, job: 'test', output: 'in-browser tests: ' + issues.length + ' issue(s)', issues: issues.slice(0, 20) };
+        });
+      }
+      if (plan.job === 'build') {
+        return viaJob('build', function () {
+          return { ok: false, tool: name, job: 'build', error: 'no desktop shell; command not run', cmd: cmd };
+        });
+      }
+      if (plan.job === 'lint') {
+        return viaJob('lint', function () {
+          return { ok: false, tool: name, job: 'lint', error: 'no desktop shell; command not run', cmd: cmd };
+        });
+      }
+      if (plan.job === 'typecheck') {
+        return viaJob('typecheck', function () {
+          return { ok: false, tool: name, job: 'typecheck', error: 'no desktop shell; command not run', cmd: cmd };
+        });
+      }
+      return { ok: false, tool: name, error: 'command not in workspace job allowlist', cmd: cmd };
     }
     if (name === 'install_deps') {
       const deps = LLM.scanDeps ? LLM.scanDeps() : null;
@@ -191,6 +302,8 @@
     tools: TOOLS,
     exec: exec,
     parse: parse,
+    planCommand: planCommand,
+    assertSafeCommand: assertSafeCommand,
     pendingAnswers: pendingAnswers,
     NO_FIXED_LIMIT: true,
     SAFETY_CAP: SAFETY_CAP
