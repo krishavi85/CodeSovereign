@@ -28,7 +28,8 @@ module.exports = async function (t) {
   });
   t.ok('initialize JSON-RPC round-trip', !!(init && init.result && init.result.serverInfo && init.result.serverInfo.name === 'echo'));
   const call = await mcp.request(started.id, 'tools/call', { name: 'echo', arguments: { n: 7 } });
-  t.ok('tools/call echoes arguments', /"n":7/.test(JSON.stringify(call && call.result)));
+  const echoed = ((((call || {}).result || {}).content || [])[0] || {}).text || '';
+  t.ok('tools/call echoes arguments', /"n":7/.test(echoed) && !(call && call.error));
   mcp.stop(started.id);
   proc.killAll();
   fs.rmSync(tmp, { recursive: true, force: true });
