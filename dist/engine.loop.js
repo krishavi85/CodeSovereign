@@ -18,7 +18,7 @@
     'write_file', 'create_file', 'delete_file',
     'run_command', 'install_deps', 'run_tests',
     'observe', 'web_search', 'browser', 'mcp',
-    'generate_image', 'ask_user', 'delegate', 'done'
+    'generate_image', 'ask_user', 'delegate', 'computer', 'goal', 'done'
   ];
   const SAFETY_CAP = 48;
   const DENY_CMD = /rm\s+-rf|curl\s+|wget\s+|powershell|invoke-webrequest|safeStorage|localStorage\.|\/etc\/passwd|child_process/i;
@@ -243,14 +243,17 @@
           return (e.name + e.link + (e.role || '')).toLowerCase().indexOf(q.toLowerCase()) >= 0;
         }).slice(0, 6).map(function (e) { return { name: e.name, link: e.link, role: e.role }; })
         : [];
+      const docs = (Engine.Docs && Engine.Docs.search) ? Engine.Docs.search(q) : [];
       return {
         ok: true,
         tool: name,
         query: q,
         liveWeb: false,
-        note: 'App CSP does not allow arbitrary web search; results are repo hits plus the local engine catalog.',
+        beyondRepo: docs.length > 0,
+        note: 'App CSP does not allow arbitrary live web fetch. Results are repo hits, the engine catalog, and a docs corpus beyond this workspace.',
         hits: grep.hits || [],
-        catalog: catalog
+        catalog: catalog,
+        docs: docs
       };
     }
     if (name === 'browser') {
@@ -275,6 +278,24 @@
       const rec = Swarm.spawn({ role: args.role || args.agent, task: args.task || args.text, isolation: args.isolation, instructions: args.instructions, model: args.model });
       const r = await Swarm.run(rec.id, args.task || args.text || '');
       return { ok: !!r.ok, tool: name, agent: rec, result: r };
+    }
+    if (name === 'computer') {
+      const C = Engine.Computer;
+      if (!C) return { ok: false, tool: name, error: 'computer use not loaded' };
+      const op = String(args.action || args.op || 'launch').toLowerCase();
+      if (op === 'launch') return Object.assign({ ok: true, tool: name }, await C.launch(args.app || args.target || 'preview'));
+      if (op === 'click') return Object.assign({ tool: name }, await C.click(args.selector || args.text));
+      if (op === 'type') return Object.assign({ tool: name }, await C.type(args.text));
+      if (op === 'key') return { ok: true, tool: name, result: C.key(args.combo || args.key) };
+      if (op === 'dialog') return Object.assign({ tool: name }, C.dialog(args.title, args.choice));
+      if (op === 'screenshot') return { ok: true, tool: name, screenshot: C.screenshot() };
+      return { ok: true, tool: name, inspect: C.inspect() };
+    }
+    if (name === 'goal') {
+      const G = Engine.Goal;
+      if (!G) return { ok: false, tool: name, error: 'goal engine not loaded' };
+      const g = await G.run(args.objective || args.text || args.goal || '');
+      return { ok: g && g.status === 'satisfied', tool: name, goal: g };
     }
     if (name === 'mcp') {
       const hub = window.PluginHub || Engine.PluginHub;

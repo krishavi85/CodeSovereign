@@ -272,7 +272,7 @@
       '{ "summary": "<one-line summary of what you built>",',
       '  "files": [ { "path": "/index.html", "content": "<full file contents>" }, ... ] }',
       "or a tool call:",
-        '{ "think": "<brief>", "tool": "grep|list_dir|read_file|write_file|delete_file|run_tests|install_deps|run_command|observe|web_search|browser|mcp|generate_image|ask_user|delegate|done", "args": {} }',
+        '{ "think": "<brief>", "tool": "grep|list_dir|read_file|write_file|delete_file|run_tests|install_deps|run_command|observe|web_search|browser|mcp|generate_image|ask_user|delegate|computer|goal|done", "args": {} }',
       "If you cannot emit valid JSON, emit files as blocks:",
       "FILE: /index.html",
       "```html",
@@ -287,6 +287,7 @@
       "- Every file must be complete and runnable. Visual quality matters as much as behavior.",
       "- run_command only runs workspace package jobs (install, test, build, lint, typecheck). It cannot spawn arbitrary node/python/git argv.",
       "- Prefer delegate/subagents for multi-role work. The coordinator plans; workers implement. Reuse Project brain memories.",
+      "- /goal starts a persistent self-healing loop (run tests → fix → run again) with no product step cap. computer drives mouse/keyboard. web_search uses docs beyond this repo.",
       ctxBlk
     ].join("\n");
   }
