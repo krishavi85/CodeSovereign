@@ -417,7 +417,7 @@
     const errors = issues.filter(function (i) { return i.severity === 'error'; });
     ProjectBrain.remember('artifacts', 'coordinator result', 'agents=' + spawned.length + ' errors=' + errors.length);
     emit('done', 'RETURN FINISHED WORK — coordinator did not write implementation');
-    return {
+    const summary = {
       ok: errors.length === 0,
       coordinatorWrote: false,
       isolation: isolation,
@@ -427,12 +427,15 @@
       brain: ProjectBrain.contextBlock(),
       steps: steps
     };
+    Coordinator.last = { at: now(), ok: summary.ok, isolation: isolation, agents: summary.agents };
+    return summary;
   }
 
   const Coordinator = {
     shouldDelegate: shouldDelegate,
     plan: planTasks,
-    run: coordinate
+    run: coordinate,
+    last: null
   };
 
   /* ---------- Browser Agent ---------- */
@@ -599,7 +602,7 @@
       session.network.forEach(function (n) {
         if (n.status && n.status >= 400) issues.push('http ' + n.status + ' ' + n.url);
       });
-      return {
+      const result = {
         ok: issues.length === 0,
         loop: ['write frontend', 'start preview', 'open application', 'look at page', 'click controls', 'inspect console', 'inspect API requests', 'detect problem'],
         navigate: nav,
@@ -609,8 +612,11 @@
         network: Browser.network(),
         problems: issues
       };
+      Browser.lastExperience = result;
+      return result;
     }
   };
+  Browser.lastExperience = null;
 
   Engine.Swarm = Swarm;
   Engine.Coordinator = Coordinator;

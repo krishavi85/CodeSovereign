@@ -101,6 +101,7 @@ module.exports = async function (t) {
   t.ok('coordinator does not write implementation', run.coordinatorWrote === false);
   t.ok('coordinator spawned multiple agents', run.agents && run.agents.length >= 3);
   t.ok('coordinator recorded steps', run.steps.some((s) => s.kind === 'coord') && run.steps.some((s) => s.kind === 'swarm'));
+  t.ok('coordinator last run survives for the Agent card', E.Coordinator.last && E.Coordinator.last.agents && E.Coordinator.last.agents.length >= 3);
 
   E.ProjectBrain.remember('tests', 'how to test notes', 'run npm test then click Save');
   E.ProjectBrain.sync();
@@ -141,6 +142,7 @@ module.exports = async function (t) {
   const exp = await E.Browser.experience();
   t.ok('experience loop looks at the page', exp.loop && exp.loop.indexOf('look at page') >= 0 && exp.screenshot);
   t.ok('experience inspects console and network', Array.isArray(exp.console) && Array.isArray(exp.network));
+  t.ok('browser last experience survives for Recovery', E.Browser.lastExperience && Array.isArray(E.Browser.lastExperience.loop));
 
   const loopBrowser = await E.Loop.exec('browser', { action: 'click', selector: '#save' });
   t.ok('Loop.browser drives the Browser Agent', loopBrowser.ok && loopBrowser.action && loopBrowser.console);

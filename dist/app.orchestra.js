@@ -107,7 +107,9 @@
       + '<button class="btn ghost" data-orch-action="coord-vm" style="padding:4px 10px;font-size:11px">Run on isolated copies</button>'
       + '</div>'
       + '<div style="font-size:11px;color:var(--muted)">Live workers: ' + live.length + ' · coordinator plans and validates; it does not write the implementation.</div>'
-      + '<div id="orchCoordOut" style="font-size:11px;font-family:monospace;color:var(--muted);margin-top:8px"></div>'
+      + '<div id="orchCoordOut" style="font-size:11px;font-family:monospace;color:var(--muted);margin-top:8px">'
+      + (Coord.last ? ((Coord.last.ok ? 'ok' : 'issues') + ' · ' + (Coord.last.isolation || 'shared') + ' · ' + (Coord.last.agents || []).map(function (a) { return a.role; }).join(', ')) : '')
+      + '</div>'
       + '</div>';
   }
 
@@ -139,7 +141,9 @@
       + '<div style="font-size:12.5px;color:var(--muted);margin:6px 0 10px">Navigate, follow links, click / double-click / right-click / hover, type, submit, scroll, screenshot, inspect console and network. Cookies, localStorage and IndexedDB persist per workspace. The agent must experience the app it created.</div>'
       + '<div style="font-size:11px;color:var(--muted);margin-bottom:8px">url ' + esc(s.url) + ' · console ' + (s.console || []).length + ' · network ' + (s.network || []).length + '</div>'
       + '<button class="btn primary" data-orch-action="experience" style="padding:4px 10px;font-size:11px">Experience the app</button>'
-      + '<div id="orchBrowserOut" style="font-size:11px;font-family:monospace;color:var(--muted);margin-top:8px"></div>'
+      + '<div id="orchBrowserOut" style="font-size:11px;font-family:monospace;color:var(--muted);margin-top:8px">'
+      + (B.lastExperience ? ((B.lastExperience.ok ? 'OK' : 'PROBLEMS') + ' · ' + ((B.lastExperience.problems || []).slice(0, 4).join(' · ') || 'preview experienced')) : '')
+      + '</div>'
       + '</div>';
   }
 
