@@ -937,7 +937,7 @@ function renderAgent() {
       ${time ? `<span style="font-size:11px;color:#6b7488;flex:none">${esc(time)}</span>` : ''}
     </div>`;
 
-  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','user':'You','route':'Router','repo':'Repo','deps':'Deps','screenshot':'Observer','evaluate':'Brain','explore':'Explore','think':'Think','act':'Act','observe':'Observe','diagnose':'Diagnose','ask':'Ask','coord':'Coordinator','swarm':'Subagent','model':'Router','goal':'Goal','cloud':'Cloud' };
+  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','user':'You','route':'Router','repo':'Repo','deps':'Deps','screenshot':'Observer','evaluate':'Brain','explore':'Explore','think':'Think','act':'Act','observe':'Observe','diagnose':'Diagnose','ask':'Ask','coord':'Coordinator','swarm':'Subagent','model':'Router','goal':'Goal','cloud':'Cloud','steer':'Steer','review':'Bugbot','evidence':'Evidence' };
   const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket','error':'alert','user':'user','route':'sparkle','repo':'branch','deps':'clip','screenshot':'eye','evaluate':'flask','explore':'branch','coord':'sparkle','swarm':'user','model':'sparkle' };
   const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c','error':'#f87171','user':'#fbbf24','route':'#a78bfa','repo':'#22d3ee','deps':'#60a5fa','screenshot':'#34d399','evaluate':'#a78bfa','explore':'#22d3ee','coord':'#a78bfa','swarm':'#22d3ee','model':'#fbbf24' };
 
@@ -3140,8 +3140,8 @@ function renderRecoveryV4Cards(){
           <div style="font-size:13px;font-weight:600;color:#f472b6">V4.6 API Runtime</div>
           <span style="font-size:10px;background:#f472b622;color:#f472b6;padding:2px 6px;border-radius:3px">REAL FETCH</span>
         </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Real fetch() with retries, status check, body shape check, missing-key detection.</div>
-        <button class="btn" onclick="runV4ApiDemo()">Call Live API</button>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Same-origin fetch() against this workspace — retries, status check, body shape. No third-party placeholder APIs.</div>
+        <button class="btn" onclick="runV4ApiDemo()">Call workspace API</button>
         <div id="v4-api-out" style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)"></div>
       </div>
       <!-- V4.7 DB Validator -->
@@ -3262,18 +3262,17 @@ async function runV4ServerDemo(){
 async function runV4ApiDemo(){
   const out = document.getElementById("v4-api-out");
   if (!out) return;
-  out.textContent = "calling live JSONPlaceholder API...";
+    out.textContent = "calling same-origin workspace…";
   try {
     const API = window.APIRuntime || window.Engine.APIRuntime;
+    const loc = (typeof location !== "undefined" && location.href) ? location.href : "/";
     const r = await API.call({
-      url: "https://jsonplaceholder.typicode.com/posts/1",
-      expectStatus: 200,
-      expectJsonKeys: ["id","title","body"],
-      fallbackJson: { id: 1, title: "sandbox post", body: "CSP-safe fallback payload" }
+      url: loc,
+      expectStatus: 200
     });
-    out.textContent = "ok=" + r.ok + " status=" + r.status + " ms=" + r.durationMs + " hasId=" + !!(r.json && r.json.id);
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "api-demo", ok: r.ok, status: r.status, url: "jsonplaceholder" });
-    toast("V4.6 API call " + (r.ok ? "OK" : "FAIL"), r.ok ? "#34d399" : "#ef4444");
+    out.textContent = "ok=" + r.ok + " status=" + r.status + " ms=" + r.durationMs + " same-origin=" + !r.fallback;
+    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "api-demo", ok: r.ok, status: r.status, url: "workspace" });
+    toast("V4.6 workspace API " + (r.ok ? "OK" : "FAIL"), r.ok ? "#34d399" : "#ef4444");
   } catch(e){ out.textContent = "error: " + e.message; toast("V4.6 error: " + e.message, "#ef4444"); }
 }
 

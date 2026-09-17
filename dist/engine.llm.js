@@ -272,7 +272,7 @@
       '{ "summary": "<one-line summary of what you built>",',
       '  "files": [ { "path": "/index.html", "content": "<full file contents>" }, ... ] }',
       "or a tool call:",
-        '{ "think": "<brief>", "tool": "grep|list_dir|read_file|write_file|delete_file|run_tests|install_deps|run_command|observe|web_search|browser|mcp|generate_image|ask_user|delegate|computer|goal|done", "args": {} }',
+        '{ "think": "<brief>", "tool": "grep|list_dir|read_file|write_file|delete_file|run_tests|install_deps|run_command|observe|web_search|browser|mcp|generate_image|understand_image|ask_user|delegate|computer|goal|done", "args": {} }',
       "If you cannot emit valid JSON, emit files as blocks:",
       "FILE: /index.html",
       "```html",
@@ -288,6 +288,10 @@
       "- run_command only runs workspace package jobs (install, test, build, lint, typecheck). It cannot spawn arbitrary node/python/git argv.",
       "- Prefer delegate/subagents for multi-role work. The coordinator plans; workers implement. Reuse Project brain memories.",
       "- /goal starts a persistent self-healing loop (run tests → fix → run again) with no product step cap. computer drives mouse/keyboard. web_search uses docs beyond this repo.",
+      "- MCP tools use stdio, SSE, or Streamable HTTP (OAuth for remote). Named tools include database.query, jira.createIssue, figma.getDesign, supabase.executeSQL, github.createPR, playwright.openPage, plus Google Drive / Gmail / Calendar.",
+      "- Custom Modes and Skills stay active. Steering messages arrive at the next safe tool boundary — merge them and continue; do not abort working state.",
+      "- Bugbot is a separate CODE REVIEWER. Do not approve your own diff. Require screenshots/logs/demos; never treat 'task completed' as proof.",
+      "- Checkpoints are created before major edits. Design-to-code must compare visually and re-verify. Audit a11y (contrast, semantic HTML, ARIA, keyboard, alt).",
       ctxBlk
     ].join("\n");
   }
