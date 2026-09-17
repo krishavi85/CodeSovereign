@@ -1,7 +1,7 @@
 {
   "name": "codesovereign-desktop",
   "productName": "CodeSovereign",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.5",
   "description": "CodeSovereign — AI App Factory, packaged as a desktop application.",
   "author": "krishavi85",
   "license": "MIT",
@@ -12,10 +12,18 @@
     "dev": "electron . --dev",
     "smoke": "electron . --smoke",
     "smoke:observer": "electron . --smoke-observer",
+    "acceptance": "electron . --acceptance",
+    "acceptance:build": "electron . --acceptance-build",
+    "acceptance:ultramode": "electron . --acceptance-ultramode",
     "test": "node test/run.js",
     "web": "npx --yes serve dist -l 4173",
     "dist:win": "electron-builder --win --publish never",
+    "dist:mac": "electron-builder --mac --publish never",
+    "dist:linux": "electron-builder --linux --publish never",
+    "dist:all": "electron-builder -mwl --publish never",
     "dist:dir": "electron-builder --dir --publish never",
+    "installer:verify": "node scripts/verify-installer.js",
+    "installer:lifecycle": "node scripts/verify-installer.js --lifecycle",
     "postinstall": "electron-builder install-app-deps || exit 0"
   },
   "devDependencies": {
@@ -45,8 +53,18 @@
     },
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
@@ -62,12 +80,54 @@
       "artifactName": "${productName}-${version}-portable.${ext}"
     },
     "mac": {
-      "target": ["dmg", "zip"],
-      "category": "public.app-category.developer-tools"
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "identity": null,
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "writeUpdateInfo": false
     },
     "linux": {
-      "target": ["AppImage", "deb"],
-      "category": "Development"
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Development",
+      "maintainer": "krishavi85",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     }
+  },
+  "dependencies": {
+    "@ethereumjs/common": "^4.4.0",
+    "@ethereumjs/tx": "^5.4.0",
+    "@ethereumjs/util": "^9.1.0",
+    "@ethereumjs/vm": "^8.1.1",
+    "solc": "^0.8.28"
   }
 }

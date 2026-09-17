@@ -1,0 +1,9 @@
+body { font: 15px/1.5 system-ui, sans-serif; max-width: 640px; margin: 2rem auto; }
+h1 { font-size: 1.4rem; }
+form { display: flex; gap: .5rem; margin-bottom: 1rem; }
+input { flex: 1; padding: .4rem .6rem; }
+button { padding: .4rem .8rem; cursor: pointer; }
+ul { list-style: none; padding: 0; }
+li { padding: .4rem 0; border-bottom: 1px solid #ddd; }
+li.error { color: #c00; }
+.toolbar { margin-top: 1rem; display: flex; gap: .5rem; align-items: center; }

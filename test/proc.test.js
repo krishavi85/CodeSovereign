@@ -46,5 +46,25 @@ module.exports = async function (t) {
   });
   t.ok('spawnAllowed: streams + exits 0', ev2.some((e) => e.stream === 'stdout' && /streamed/.test(e.data)) && ev2.some((e) => e.stream === 'exit' && e.code === 0));
 
+  // sanitized environment — secrets in the parent env do not reach the child
+  process.env.MY_SECRET_TOKEN = 'leaked-value-xyz';
+  process.env.NPM_TOKEN = 'npm-leaked';
+  const envRun = await proc.runManaged({ cmd: 'node', args: ['-e', 'process.stdout.write(JSON.stringify({s:process.env.MY_SECRET_TOKEN||null,n:process.env.NPM_TOKEN||null,ci:process.env.CI||null,path:!!process.env.PATH||!!process.env.Path}))'], cwd: '.' });
+  const env = JSON.parse(envRun.stdout || '{}');
+  t.equal('secret env var is stripped', env.s, null);
+  t.equal('NPM_TOKEN is stripped', env.n, null);
+  t.ok('PATH is preserved', env.path === true);
+  t.ok('CI is blanked', !env.ci);
+  delete process.env.MY_SECRET_TOKEN; delete process.env.NPM_TOKEN;
+
+  // timeout terminates a hung process
+  const t0 = Date.now();
+  const hung = await proc.runManaged({ cmd: 'node', args: ['-e', 'setInterval(()=>{},1000)'], cwd: '.', timeoutMs: 1500 });
+  t.ok('timeout kills a hung process (~1.5s)', hung.code === -2 && (Date.now() - t0) < 6000);
+
+  // sanitizedEnv() has no obviously-sensitive keys
+  const se = proc.sanitizedEnv();
+  t.ok('sanitizedEnv drops *TOKEN*/*SECRET*/*KEY*', !Object.keys(se).some((k) => /TOKEN|SECRET|_KEY$|PASSWORD/i.test(k)));
+
   fs.rmSync(tmp, { recursive: true, force: true });
 };

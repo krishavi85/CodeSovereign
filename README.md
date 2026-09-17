@@ -1,7 +1,8 @@
 # CodeSovereign — AI App Factory
 
-An "AI app factory" workspace: describe an app, and the built-in engine plans,
-scaffolds, builds, validates, repairs, packages and documents it. Runs two ways:
+An "AI app factory" workspace: describe an app (or hand it a Figma export),
+and the built-in engine plans, scaffolds, builds, validates, repairs, packages
+and documents it. Runs two ways:
 
 - **Desktop app** (primary) — Electron, real folders on disk, real command
   execution, OS-keychain credentials. See [`electron/README.md`](electron/README.md).
@@ -51,7 +52,59 @@ artifact as-is. The `dist/desktop/` scripts are inert without Electron.
 
 Top nav: Welcome · Agent · IDE · Factory · Pipelines · Marketplace · Workspaces ·
 Ratings · Actions · GitHub · OAuth. Left rail: Welcome · Universal · Agent · IDE ·
-Factory · Recovery · Settings.
+Factory · Recovery · **Ultra Mode** · Settings.
+
+**Ultra Mode** is the closed loop: one natural-language request →
+`Engine.UltraMode` derives a machine-readable contract, generates a real
+project, runs its real tests/build, observes it running, repairs what fails, and
+returns **SOVEREIGN VERIFIED** or an honest blocked/failed result, gated on a
+14-criterion Definition-of-Done (adds accessibility, visual-integrity, licence-compatibility and performance-health gates).
+
+Every run also produces, offline: the **documentation set** (`README` + `docs/API`
++ `DATABASE` + `DEPLOYMENT` + `TROUBLESHOOTING`), generated **e2e / install /
+upgrade / user-journey** test suites, per-request **tracing + crash capture +
+p50/p95/p99** in the backend, a **localization** substrate (`i18n/` catalogue +
+`window.t()` runtime + pseudo-locale), a **feature-completion graph**, **refactor**
+(AST-safe rename) + **dependency-upgrade** plans, and one downloadable
+**delivery archive** (`/delivery/` — manifest + certificate + all evidence +
+continuation state), CHANGELOG + release notes + SHA-256 checksums, an
+environment `doctor.js`, CI for 5 providers, and an ADR **decision log**
+(every choice + every rejected approach). It also ingests an attached spec
+(Markdown / JSON Schema / OpenAPI) or a Figma export. Engines: `engine.intake.js`,
+`engine.design.js`, `engine.docs.js`, `engine.testgen.js`, `engine.journeys.js`,
+`engine.localize.js`, `engine.features.js`, `engine.refactor.js`, `engine.upgrade.js`,
+`engine.cicd.js`, `engine.bootstrap.js`, `engine.release.js`, `engine.decisions.js`,
+`engine.delivery.js`, `engine.perfcheck.js`, `engine.a11y.js`, `engine.visualcheck.js`,
+`engine.depintel.js`.
+
+**Web targets** — generated → run → verified: vanilla **or**
+React/Preact/Vue/Svelte/Angular frontends (vendored VDOM runtime, no build);
+Node **or** pure-stdlib Python backends; REST **and/or** a zero-dep GraphQL
+executor; RFC 6455 WebSockets; monolith **or** microservices (gateway +
+per-domain services + compose); SQLite/Postgres/JSON; Docker/Compose/Kubernetes/
+Helm/Terraform IaC.
+
+**Runtime-adapter targets** — native **Android** (`gradle assembleDebug` + a
+headless emulator + adb install/launch/screenshot/logcat), native **iOS**
+(staged: source + static everywhere, xcodebuild/xcross/Theos for build/runtime),
+**EVM smart contracts** (bundled `solc` + `@ethereumjs/vm` local chain), **ML
+model training** (a real `python train.py` run), **native desktop** (Tauri —
+`cargo check` the Rust core; Electron — headless boot smoke + electron-forge),
+and **browser extensions** (MV3 — WXT / Plasmo / plain, static-validated +
+Playwright load-unpacked). Each generates a real artifact and verifies it in a
+real runtime; if this host lacks the runtime the run ends **BLOCKED** with the
+exact prerequisite — `support ≠ environment availability`.
+
+**Local proof, not hosted delivery** — `LOCAL CAPABILITY ≠ HOSTED-SERVICE
+DELIVERY`. Offline: local **Whisper** speech-to-text (`engine.audio.js`),
+**screenshot → component tree** by CV (`engine.vision.js`), **npm publish**
+proven via `npm pack` round-trip / Verdaccio (`engine.registry.js`), **artifact
+signing** — SHA-256 + SPDX SBOM + SLSA provenance + Cosign (`engine.signing.js`),
+**OpenTelemetry** to a local collector (`engine.observability.js`). Only the
+*final external publish* — npmjs.com, a signed GitHub Release, a hosted
+Sentry/APM account — needs the user's credentials. See
+[`docs/RUNTIME_ADAPTERS.md`](docs/RUNTIME_ADAPTERS.md) and
+[`docs/ULTRAMODE_CLOSED_LOOP.md`](docs/ULTRAMODE_CLOSED_LOOP.md).
 
 ## Backend / Supabase
 

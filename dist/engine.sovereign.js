@@ -37,6 +37,9 @@
     'assumptions.md':            'Inferred behavior — each with evidence and confidence',
     // requirements (spec 1)
     'requirements.json':         'Detected archetypes, domain-pack mandatory checklist, contradictions',
+    'requirements-verification.json': 'Per-requirement verification record — requested / implied / missing / verified, criteria + evidence refs + coverage history (spec §3)',
+    'feasibility.json':          'Feasibility — host toolchain check for the chosen stack + effort / hosting-cost estimate + constraint conflicts (spec §5 / §8)',
+    'build-matrix.json':         'Per-target build status board — web / desktop / extension / android / ios / evm / ml, truthful per-stage + blockers (spec §34)',
     'requirement-traceability.json': 'requirement -> components -> tests',
     'product-brief.md':          'Derived brief: archetypes, mandatory checklist, integrations, risks',
     'risk-register.json':        'Domain risks + detected contradictions',
@@ -45,6 +48,14 @@
     // architecture / connections (spec 3, 5)
     'connection-graph.json':     'Typed node/edge graph of the real wiring',
     'connection-health.json':    'Per-edge status: valid / broken / missing / circular / unused',
+    'wiring-trace.json':         'Deep per-entity wiring: UI control → fetch → route → service → data layer → table, link by link (spec §12)',
+    'blast-radius.json':         'Change-impact report — files / tests / migrations / routes a change touches + rebuild/redeploy/risk (spec §59)',
+    'recovery-loop.json':        'Last autonomous recovery loop — cycles, hypotheses tested, and whether the contract\'s acceptance criteria are satisfied (spec §21-24)',
+    'recovery-prevention.json':  'How to stop the repaired defect classes recurring — lint/CI rules, not code review (spec §21-24)',
+    'quality-policy.json':       'Code-quality policy — max fn length / complexity / params, console/TODO, circular/dead-code, gate on|off (spec §51)',
+    'quality-findings.json':     'Code-quality scan against the policy — per-file findings + pass/fail (spec §51)',
+    'completion-audit.json':     'Evidence-backed per-dimension completion % — rolled up from the real .sovereign/ artifacts, not the plan (spec §54)',
+    'completion-audit.md':       'Readable completion audit table',
     'architecture.md':           'Architecture summary + system-context / component / data-flow mermaid',
     'diagrams/system-context.mmd': 'The app and the external systems it talks to',
     'diagrams/component.mmd':    'Components grouped by layer, edges = imports',
@@ -63,10 +74,104 @@
     'runtime-trace.json':        'Observed console / network / navigation + per-control event->effect (desktop)',
     'repairs/repair-ledger.md':  'Failed contract, root cause, patch, tests, rollback per repair',
     // rollups
-    'analysis-summary.md':       'The latest full analysis in one readable page'
+    'analysis-summary.md':       'The latest full analysis in one readable page',
+    // P0 pipeline (spec §55/§56/§68)
+    'product-contract.json':     'Requirements with machine-checkable acceptance criteria',
+    'evidence-ledger.json':      'Every claim -> evidence -> confidence, with assertion counts',
+    'definition-of-done.json':   'The DoD gate: 9 criteria computed from the evidence',
+    'release-certificate.md':    'Cross-gate SOVEREIGN VERIFIED certificate',
+    'orchestrator-run.json':     'Last Ultra pipeline run (tasks, generators, DoD before/after)',
+    'cost-analysis.json':        'Per-dependency cost tier + zero-cost alternatives (spec §30)',
+    'cost-sovereignty.md':       'Readable mandatory vs optional cost breakdown',
+    'requirements-ai.json':      'Model-found archetypes + implied requirements (when AI is connected)',
+    'security-findings.json':    'Product security scan — injection / XSS / secrets / auth (spec §17)',
+    'security-report.md':        'Readable security findings + score',
+    'architecture-findings.json': 'Layering / boundary scan — wrong-layer imports, inverted deps, cross-service reach (spec §5)',
+    'architecture-rules.md':      'Readable architecture violations + score',
+    'privacy-findings.json':      'PII / data-protection scan — data in logs, PII in URLs, secrets in responses, egress (spec §18)',
+    'privacy-report.md':          'Readable privacy findings + score',
+    'a11y-findings.json':         'WCAG 2.1 AA accessibility audit — alt / labels / contrast / keyboard / focus / ARIA (spec §47)',
+    'a11y-report.md':             'Readable accessibility findings + score',
+    'visual-observations.json':   'Observer render at mobile/tablet/desktop — box + computed-style measurements + screenshots (spec §12-13)',
+    'visual-findings.json':       'Visual validation — overflow / clipping / covering overlays / zero-size controls / low contrast',
+    'visual-report.md':           'Readable visual-integrity findings + score',
+    'design-spec.json':           'Normalized design spec from a Figma export / HTML / screenshot — sections, components, tokens (spec §11)',
+    'design-findings.json':       'Design-input summary — source, status, component roles, token counts',
+    'design-report.md':           'Readable design-input summary',
+    'design-language.json':       'Extracted design language (palette / type / scale) fed to the contract + token CSS',
+    'dependency-intel.json':      'Dependency intelligence — abandoned / duplicate-major / vulnerable pins / safe-upgrade (spec §10)',
+    'license-report.json':        'Licence classification of every dependency + conflicts with the distribution model (spec §52)',
+    'dependency-report.md':       'Readable dependency + licence findings',
+    'perf-report.json':           'Generated perf test output — p50/p95/p99 latency + heap-growth samples under a load burst',
+    'perf-findings.json':         'Performance + memory-leak classification (spec §45-46)',
+    'perf-report.md':             'Readable performance summary',
+    'localization-findings.json': 'Localization coverage — hard-coded strings, missing keys, per-locale % + RTL wiring (spec §48)',
+    'localization-report.md':     'Readable localization coverage summary',
+    'refactor-plan.json':         'Safe-refactor candidates + TypeScript-migration readiness (spec §60)',
+    'refactor-report.md':         'Readable refactoring + TS-readiness summary',
+    'upgrade-plan.json':          'Rules-driven dependency-upgrade plan — risk, codemod availability, notes (spec §62)',
+    'upgrade-report.md':          'Readable dependency-upgrade plan',
+    'feature-graph.json':         'Feature-completion graph — per-feature facet checklist (data/migration/service/API/UI/test/journey) + next task (spec §63-64)',
+    'feature-graph.md':           'Readable feature-completion matrix',
+    'decision-log.json':          'Decision ledger — ADRs harvested from the build evidence (assumptions, substitutions, refusals, rolled-back repairs, release decision) (spec §57-58)',
+    'decision-report.md':         'Architecture Decision Records, newest first',
+    'conventions.json':           'Coding conventions inferred from the workspace — indent / quotes / semicolons / module system / naming / test framework / async + error style (spec §57)',
+    'conventions.md':             'Readable coding-conventions table + confidence',
+    'asset-licenses.json':        'Font / image / ML-model asset licence + attribution scan (spec §52)',
+    'packaging-evidence.json':    'Packaging targets — Python wheel (build + clean-venv install + import) / VST3 (JUCE project + recipe) (spec §35)',
+    'intake.json':                'Non-text prompt intake — spec docs / JSON schema / OpenAPI parsed to entities + requirements (build-flow stage 1)',
+    'cicd.json':                  'Multi-provider CI/CD generation — GitLab / Jenkins / Azure / Bitbucket from the detected stack (spec §40)',
+    'cicd-report.md':             'Readable CI/CD generation summary',
+    'bootstrap.json':             'Environment bootstrap plan — required runtimes + versions + setup steps (spec §33)',
+    'bootstrap-report.md':        'Readable environment-bootstrap summary',
+    'release-notes.json':         'Release engineering — version, verdict, changelog + notes generation (spec §37)',
+    'release-notes.md':           'The generated release announcement',
+    'audio-evidence.json':        'Offline speech-to-text (whisper.cpp / faster-whisper) — transcript + segments (offline-plan §2)',
+    'screenshot-analysis-evidence.json': 'Screenshot -> component tree via offline CV — regions, roles, palette (offline-plan §3)',
+    'signing-evidence.json':      'Artifact signing — checksums + SPDX SBOM + SLSA provenance offline; cosign when present (offline-plan §6)',
+    'otel-evidence.json':         'Observability — OTLP exporter wired + a local collector probe; /debug/traces is the always-on fallback (offline-plan §7)',
+    'registry-evidence.json':     'npm package publish proof — Verdaccio / npm-pack tarball round-trip into a clean consumer (offline-plan §5)',
+    'extension-evidence.json':    'Browser extension (MV3) — static validation + build + Playwright load-unpacked (offline-plan §9)',
+    'desktop-evidence.json':      'Native desktop (Tauri / Electron) — cargo check / headless boot smoke (offline-plan §10)',
+    'documentation-index.json':   'Documentation factory — which docs were (re)generated + folded-in verification evidence (spec §49)',
+    'documentation-report.md':    'Readable summary of the documentation factory run',
+    'delivery-manifest.json':     'Delivery archive manifest — verdict, DoD result, per-file hashes, content hash (spec §19-20)',
+    'journeys.json':              'Compiled user journeys from the contract — ordered ops + requirement ids (spec §65)',
+    'journey-evidence.json':      'User-journey coverage — covered / uncovered + which requirements each exercises',
+    'journey-report.md':          'Readable user-journey coverage summary',
+    'blockchain-evidence.json':   'EVM target — solc compile + local-chain deploy + transactions + receipts + static analysis',
+    'mobile-evidence.json':       'Native-mobile target — gradle build + emulator install/launch + logcat + screenshot',
+    'ml-evidence.json':           'ML-training target — dataset inspection + real training loss curve + checkpoint + eval metric',
+    'ultramode-plan.json':        'The build plan the Ultra Mode loop is executing (web steps or the runtime-adapter plan)',
+    'deployment.json':           'Last generated deployment target + IaC + preflight (spec §41)'
   };
 
   function rel(p) { return ROOT + '/' + String(p).replace(/^\/+/, ''); }
+
+  // Scrub token-shaped strings before anything is written to an evidence file.
+  var SECRET_PATTERNS = [
+    /\b(gh[pousr]_[A-Za-z0-9]{20,})\b/g,                       // GitHub tokens
+    /\b(sk-[A-Za-z0-9_-]{20,})\b/g,                            // OpenAI-style
+    /\b(sk-ant-[A-Za-z0-9_-]{20,})\b/g,                        // Anthropic
+    /\b(xox[baprs]-[A-Za-z0-9-]{10,})\b/g,                     // Slack
+    /\b(AKIA[0-9A-Z]{16})\b/g,                                 // AWS access key id
+    /(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})/g, // JWT
+    /(-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----)/g,
+    /\b([A-Za-z0-9_]*(?:token|secret|password|apikey|api_key)[A-Za-z0-9_]*\s*[=:]\s*)["']?([A-Za-z0-9_\-./+]{12,})["']?/gi
+  ];
+  function redact(s) {
+    var out = String(s == null ? '' : s);
+    SECRET_PATTERNS.forEach(function (re, i) {
+      out = out.replace(re, i === SECRET_PATTERNS.length - 1 ? '$1[REDACTED]' : '[REDACTED]');
+    });
+    return out;
+  }
+  function redactDeep(obj) {
+    if (typeof obj === 'string') return redact(obj);
+    if (Array.isArray(obj)) return obj.map(redactDeep);
+    if (obj && typeof obj === 'object') { var o = {}; for (var k in obj) o[k] = redactDeep(obj[k]); return o; }
+    return obj;
+  }
 
   function read(p) {
     try {
@@ -77,8 +182,12 @@
     } catch (_) { return null; }
   }
 
+  // Files that can contain build/runtime output -> redact secrets on the way in.
+  var RISKY_RE = /(execution-evidence|runtime-trace|diagnostics\/|known-issues|production-readiness|command-audit|ultramode-run|ultramode-report|ultramode-plan|product-contract)/;
   function write(p, data) {
+    if (RISKY_RE.test(p)) data = (typeof data === 'string') ? redact(data) : redactDeep(data);
     var body = (typeof data === 'string') ? data : JSON.stringify(data, null, 2);
+    if (body.length > 4 * 1024 * 1024) body = body.slice(0, 4 * 1024 * 1024) + '\n…[truncated]…';
     FS.write(rel(p), body);
     return true;
   }
@@ -541,6 +650,100 @@
     } catch (_) {}
     safe(function () { requirements(reqCtx); });
 
+    // ---- cost sovereignty (spec §30) ----
+    safe(function () { window.Engine.Cost && window.Engine.Cost.analyze({}); });
+
+    // ---- product security scan (spec §17) ----
+    safe(function () { window.Engine.Security && window.Engine.Security.scan(); });
+
+    // ---- architecture / layering scan (spec §5) ----
+    safe(function () { window.Engine.ArchRules && window.Engine.ArchRules.scan(); });
+
+    // ---- privacy / PII scan (spec §18) ----
+    safe(function () { window.Engine.Privacy && window.Engine.Privacy.scan(); });
+
+    // ---- accessibility audit (spec §47) ----
+    safe(function () { window.Engine.A11y && window.Engine.A11y.audit(); });
+
+    // ---- visual validation (spec §12-13; static here, live via the observer) ----
+    safe(function () { window.Engine.VisualCheck && window.Engine.VisualCheck.analyze(); });
+
+    // ---- design / vision input (spec §11) ----
+    safe(function () { window.Engine.Design && window.Engine.Design.analyze(); });
+
+    // ---- dependency + licence intelligence (spec §10 + §52) ----
+    safe(function () { window.Engine.DepIntel && window.Engine.DepIntel.analyze(); });
+
+    // ---- performance + memory-leak surfacing (spec §45-46) ----
+    safe(function () { window.Engine.PerfCheck && window.Engine.PerfCheck.analyze(); });
+
+    // ---- localization coverage (spec §48) ----
+    safe(function () { window.Engine.Localize && window.Engine.Localize.analyze(); });
+
+    // ---- refactor candidates + TS readiness (spec §60) ----
+    safe(function () { window.Engine.Refactor && window.Engine.Refactor.analyze(); });
+
+    // ---- dependency upgrade plan (spec §62) ----
+    safe(function () { window.Engine.Upgrade && window.Engine.Upgrade.analyze(); });
+
+    // ---- user-journey coverage (spec §65) — from contract.journeys ----
+    safe(function () { window.Engine.Journeys && window.Engine.Journeys.analyze(); });
+
+    // ---- feature completion graph (spec §63-64) ----
+    safe(function () { window.Engine.Features && window.Engine.Features.analyze(); });
+
+    // ---- code-quality governance (spec §51) — before the gate so DoD can read it ----
+    safe(function () { window.Engine.Quality && window.Engine.Quality.scan(); });
+
+    // ---- P0 pipeline: refresh the ledger + DoD gate if a contract exists ----
+    if (window.Engine.Contract && window.Engine.Contract.load()) {
+      safe(function () { window.Engine.Ledger && window.Engine.Ledger.build(); });
+      safe(function () { window.Engine.DoD && window.Engine.DoD.evaluate(); });
+      // §3 — the per-requirement verification record (requested → implied →
+      // missing → verified), tied to the contract + the ledger.
+      safe(function () { window.Engine.Requirements && window.Engine.Requirements.verificationRecord && window.Engine.Requirements.verificationRecord(); });
+      // §5 + §8 — feasibility: host-capability check + effort / cost estimate
+      safe(function () { var f = window.Engine.Feasibility && window.Engine.Feasibility.analyze && window.Engine.Feasibility.analyze(); if (f && f.catch) f.catch(function () {}); });
+    }
+
+    // ---- documentation factory (spec §49) — after the gate so it folds in evidence ----
+    safe(function () { window.Engine.Docs && window.Engine.Docs.analyze(); });
+
+    // ---- CI/CD for the other providers (spec §40) ----
+    safe(function () { window.Engine.CICD && window.Engine.CICD.analyze(); });
+
+    // ---- environment bootstrapper (spec §33) ----
+    safe(function () { window.Engine.Bootstrap && window.Engine.Bootstrap.analyze(); });
+
+    // ---- release engineering — changelog / notes / checksums (spec §37) ----
+    safe(function () { window.Engine.Release && window.Engine.Release.analyze(); });
+
+    // ---- offline capability adapters (offline-plan §3-10): generate the local
+    //      proof artefacts (SBOM + provenance, OTLP exporter, screenshot CV) ----
+    safe(function () { window.Engine.Signing && window.Engine.Signing.analyze(); });
+    safe(function () { window.Engine.Observability && window.Engine.Observability.analyze(); });
+    safe(function () { window.Engine.Registry && window.Engine.Registry.analyze(); });
+    safe(function () { window.Engine.Packaging && window.Engine.Packaging.analyze(); });
+    safe(function () { if (window.Engine.Vision && window.Engine.Sovereign.read('design-reference.txt')) { var vp = window.Engine.Vision.analyze(); if (vp && vp.catch) vp.catch(function () {}); } });
+
+    // ---- deep wiring trace (spec §12): control → fetch → route → service → db → table ----
+    safe(function () { window.Engine.Wiring && window.Engine.Wiring.trace(); });
+
+    // ---- per-target build-matrix status board (spec §34) ----
+    safe(function () { window.Engine.BuildMatrix && window.Engine.BuildMatrix.compute(); });
+
+    // ---- evidence-backed completion audit (spec §54) — rolls up every artefact above ----
+    safe(function () { window.Engine.Audit && window.Engine.Audit.run(); });
+
+    // ---- decision ledger / ADRs (spec §57-58) — after the gate for the release decision ----
+    safe(function () { window.Engine.Decisions && window.Engine.Decisions.analyze(); });
+
+    // ---- coding conventions (spec §57) — make the implicit house style explicit ----
+    safe(function () { window.Engine.Conventions && window.Engine.Conventions.analyze(); });
+
+    // ---- delivery archive (spec §19-20) — one self-contained acceptance bundle ----
+    safe(function () { window.Engine.Delivery && window.Engine.Delivery.write(); });
+
     return {
       ok: true,
       elapsedMs: Date.now() - t0,
@@ -749,7 +952,42 @@
     write('decision-state.json', ds);
     appendChanges('requirements — archetypes [' + archetypes.map(function (a) { return a.archetype; }).join(',') + '], ' + missing.length + ' mandatory items not found, ' + contradictions.length + ' contradictions');
 
+    // Model-assisted enrichment (non-blocking): archetypes + implied requirements
+    // the prompt didn't state. Written to a supplementary file and folded back in.
+    if (R.aiAssist && window.Engine.AI && window.Engine.AI.ready && window.Engine.AI.ready()) {
+      R.aiAssist(reqCtxOf(ctx)).then(function (ai) {
+        if (!ai || (!(ai.added || []).length && !(ai.archetypes || []).length)) return;
+        var merged = Object.assign({}, model, {
+          aiArchetypes: ai.archetypes || [],
+          aiImpliedRequirements: ai.added || [],
+          aiRisks: ai.risks || [],
+          aiAt: Date.now()
+        });
+        write('requirements.json', merged);
+        write('requirements-ai.json', { generatedAt: Date.now(), source: 'ai', archetypes: ai.archetypes || [], impliedRequirements: ai.added || [], risks: ai.risks || [] });
+        appendChanges('requirements (AI) — +' + (ai.archetypes || []).length + ' archetype(s), +' + (ai.added || []).length + ' implied requirement(s)');
+      }).catch(function () {});
+    }
+
     return { ok: true, model: model };
+  }
+  function reqCtxOf(ctx) {
+    var c = Object.assign({}, ctx || {});
+    if (!c.prompt) { try { c.prompt = (FS.read('/README.md') || FS.read('/SPEC.md') || '').slice(0, 1500); } catch (_) {} }
+    return c;
+  }
+
+  var HISTORY_KEEP = 15;
+  function pruneHistory() {
+    var stamps = {};
+    Object.keys(FS._data).forEach(function (p) {
+      var m = p.indexOf(ROOT + '/history/') === 0 && p.slice((ROOT + '/history/').length).split('/')[0];
+      if (m) stamps[m] = 1;
+    });
+    var all = Object.keys(stamps).sort();
+    all.slice(0, Math.max(0, all.length - HISTORY_KEEP)).forEach(function (old) {
+      try { FS.remove(ROOT + '/history/' + old); } catch (_) {}
+    });
   }
 
   function snapshot(reason) {
@@ -761,7 +999,8 @@
       var raw = FS.read(rel(f));
       if (raw != null) { FS.write(rel(dir + '/' + f), raw); n++; }
     });
-    appendChanges('snapshot ' + stamp + ' (' + (reason || 'manual') + ') — ' + n + ' files');
+    pruneHistory();
+    appendChanges('snapshot ' + stamp + ' (' + (reason || 'manual') + ') — ' + n + ' files (keeping last ' + HISTORY_KEEP + ')');
     return { id: stamp, fileCount: n };
   }
 

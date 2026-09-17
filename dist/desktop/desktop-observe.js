@@ -51,17 +51,19 @@
   }
 
   function ensureServer(url) {
-    // 1. explicit url or an already-running detected server
-    var candidates = url ? [url] : [];
     var det = detectDevServer();
-    if (det) candidates.push(det.url);
-    COMMON_PORTS.forEach(function (p) { candidates.push('http://localhost:' + p); });
+    // 1. an explicit URL, or THIS project's own dev port, is authoritative —
+    //    never crawl a stray server on a shared common port (that server could
+    //    be a completely different app and would silently invalidate the run).
+    //    The common-port scan is a last resort only when the project declares no
+    //    dev/start script and no URL was given.
+    var candidates = url ? [url] : (det ? [det.url] : COMMON_PORTS.map(function (p) { return 'http://localhost:' + p; }));
 
     return chainFirst(candidates.map(function (u) {
       return function () { return tryLoad(u, 0, 0).then(function (r) { return r.ok ? { url: u, started: false } : null; }); };
     })).then(function (hit) {
       if (hit) return hit;
-      // 2. nothing running — start the dev server
+      // 2. nothing running on our own port — start the dev script
       if (!det) return Promise.reject(new Error('No dev/start script in package.json and nothing serving on common ports. Pass a URL.'));
       try { window.toast && window.toast('Starting dev server (' + det.script + ')…', '#a78bfa'); } catch (_) {}
       return D.proc.spawnAllowed({ cmd: (pkg() && detectPm()) || 'npm', args: ['run', det.script], cwd: '.' }).then(function (r) {
@@ -89,11 +91,34 @@
     if (!available()) return Promise.resolve({ ok: false, reason: 'open a project folder in the desktop app first' });
     return ensureServer(opts.url).then(function (srv) {
       try { window.toast && window.toast('Observing ' + srv.url + ' …', '#22d3ee'); } catch (_) {}
-      return D.observer.crawl({ max: opts.max || 40 }).then(function (res) {
+      // Let a freshly-started server warm up: reload once and settle so the
+      // first API calls a crawled control makes resolve inside the observer's
+      // per-control window (a cold `node` process' first response can be slow).
+      var settle = srv.started
+        ? D.observer.load(srv.url).then(function () { return new Promise(function (r) { setTimeout(r, 2500); }); })
+        : Promise.resolve();
+      return settle.then(function () {
+        return D.observer.crawl({ max: opts.max || 40, mode: opts.mode || 'observe' });
+      }).then(function (res) {
         if (res && res.ok === false) throw new Error(res.error || 'crawl failed');
         var trace = res;
         trace.serverUrl = srv.url;
         trace.serverStartedByUs = srv.started;
+        // visual validation (§12-13): a multi-breakpoint render pass, feeds Engine.VisualCheck
+        if (opts.visual !== false && D.observer.visualProbe) {
+          return D.observer.visualProbe({}).then(function (vp) {
+            var probe = (vp && vp.ok === false) ? null : (vp && vp.data !== undefined ? vp.data : vp);
+            if (probe) {
+              try {
+                // don't persist the base64 screenshots into the evidence json
+                var slim = Object.assign({}, probe); delete slim.screenshots;
+                if (window.Engine && window.Engine.VisualCheck) window.Engine.VisualCheck.ingest(slim);
+                trace.visual = { breakpoints: (slim.breakpoints || []).map(function (b) { return b.name; }), findings: (slim.breakpoints || []).reduce(function (n, b) { return n + ((b.findings || []).length); }, 0) };
+              } catch (_) {}
+            }
+            return { ok: true, trace: trace };
+          }).catch(function () { return { ok: true, trace: trace }; });
+        }
         return { ok: true, trace: trace };
       });
     }).catch(function (e) { return { ok: false, reason: e.message }; });

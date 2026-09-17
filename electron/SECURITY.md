@@ -130,6 +130,116 @@ beyond what the user explicitly enabled.
 - `app:setTitle` truncates to 120 chars. `app:recents` returns only the user's
   own project paths.
 
+### Hardware (`hw:probe`) — read-only
+
+- Returns `os` module facts (CPU model/cores, RAM totals), Electron's own GPU
+  report, and the output of read-only vendor probes (`nvidia-smi --query-gpu`,
+  `system_profiler SPDisplaysDataType`) plus `--version` of common toolchains.
+- No writes, no downloads, no arbitrary command — `execFile` with a fixed
+  argv, 3–6 s timeout, 1 MB buffer cap. Result cached 60 s.
+- Worst case: the renderer learns the host's specs (it already gets a subset
+  via `navigator`). Accepted.
+
+### Local AI (`ai:discover`, `ai:request`) — `electron/lib/aihost.js`
+
+- `ai:discover` GETs the well-known local-runtime endpoints (Ollama 11434,
+  LM Studio 1234, vLLM 8000, llama.cpp 8080, Jan 1337) with a 2.5 s timeout and
+  lists their models. Loopback only.
+- `ai:request` is a deliberately narrow HTTP client — **not** a general fetch:
+  - `http(s)` to a **loopback** host (any port), **or** `https` to one of the
+    LLM API hosts the app already allow-lists in its CSP (openai / anthropic /
+    minimax / openrouter / together / groq / mistral / deepseek / gemini).
+  - No `file:`, no other hosts, no cross-host redirects (checked against the
+    same allowlist), 45 s timeout, 8 MB response cap.
+- Purpose: the renderer CSP blocks `localhost` and several API hosts, so
+  `Engine.LLM` routes its chat calls through this when running in Electron.
+  The surface is the allowlist + the caps — the renderer never gets `net`.
+- Keys still live only in the OS keychain (`creds:*`) / localStorage; `ai:request`
+  forwards whatever `Authorization` header the caller sets, to an allow-listed
+  host only.
+
+### OmniRoute launcher (`ai:omniroute`)
+
+- `status` reports whether OmniRoute is installed / running. `start` runs
+  `npx --yes omniroute serve` (fixed argv, `OMNIROUTE_PORT=20128`) — this
+  downloads and runs a third-party MIT package, so the **first** `start` shows a
+  confirmation dialog naming the command; approval is remembered for the session
+  only. `stop` kills the tracked pid (`taskkill /t` on Windows).
+- The spawned server binds loopback:20128; the renderer then talks to it only
+  through `ai:request` (loopback branch). Nothing new is exposed to the page.
+- Not workspace-scoped, so the trust list doesn't apply — the one-time dialog is
+  the gate.
+
+## M2 hardening — execution & observation trust boundaries
+
+The automated execution loop and runtime observer are the two biggest new trust
+boundaries. Both were hardened before the M2 merge.
+
+### Project-command execution (`proc:*`)
+
+| Control | State |
+|---|---|
+| Workspace trust | `electron/lib/trust.js` — an untrusted folder's `package.json` cannot run **anything**. First `proc:*` call shows a dialog with the **exact command + folder path**; approval calls `trust.grant()`. Trust lives in `<userData>/trusted-workspaces.json`, never in the project. |
+| No auto-run on open | opening a project runs no commands. `desktopVerifyRepair` (auto after "Repair All") is **suppressed** until the folder is trusted. |
+| Sanitized environment | `proc.sanitizedEnv()` — the child gets an explicit allowlist (`PATH`, `HOME`, `SystemRoot`, `npm_config_*`, …) only. Anything matching `TOKEN\|SECRET\|_KEY$\|PASSWORD\|CREDENTIAL\|SESSION\|AUTH` is dropped; `CI` and `NODE_OPTIONS` are blanked. The interactive shell (user-driven) keeps the real env. |
+| Timeout | every `proc:run` / `proc:spawnAllowed` has a **10-minute hard cap**; the process tree is killed on expiry (exit code `-2`). |
+| Output cap | 5 MB captured per stream, then truncated / terminated. |
+| Process-tree kill | `killTree()` — `taskkill /t` on Windows, `process.kill(-pid)` on a detached process group on Unix (SIGTERM → SIGKILL after 3 s). |
+| Cancellation | `proc:kill(id)`, `proc:killAll()`, `proc:running()`; `CSExec.stop()` in the renderer. |
+| Audit | every command (shell / run / spawn) is appended to `<userData>/command-audit.log` with timestamp, command, cwd, exit code. Viewable from the Sovereign card. |
+| Allowlist | `proc:run` / `proc:spawnAllowed` still enforce the tool allowlist; arbitrary commands only in the user-driven terminal. |
+
+### Runtime observer (`obs:*`)
+
+| Control | State |
+|---|---|
+| Isolated window | separate hidden `BrowserWindow`, **ephemeral** session partition (`observer-ephemeral`, in-memory), its own preload — the app's `window.desktop` bridge and stored credentials are never present. |
+| Third-party requests | `webRequest.onBeforeRequest` on the observer session **cancels every non-loopback request** (blocked count reported); `will-navigate` / `will-redirect` bounce anything that fails `assertAllowedUrl`. |
+| Downloads / popups / permissions | `will-download` prevented; `setWindowOpenHandler` denies; `setPermissionRequestHandler` + `setPermissionCheckHandler` deny all. |
+| Observe vs interactive mode | default **observe**: controls whose label matches the destructive/mutating pattern (`delete\|send\|pay\|submit\|publish\|deploy\|confirm\|…`), `type=submit`, and form-submit buttons are **SKIPPED, never activated**. `interactive` mode requires a confirmation dialog in main and clicks them. |
+| Action log | every activation, skip, blocked request and navigation is recorded in `runtime-trace.json` (`actionLog`). |
+
+### Ultra Mode closed loop (`dist/engine.ultramode.js`)
+
+`Engine.UltraMode` generates and verifies a project from one prompt. It adds no new
+IPC surface — it sequences engines that already carry the boundaries above. What
+it adds on top:
+
+| Concern | Control |
+|---|---|
+| Generated code is untrusted | generation only writes into the **already-open, already-trusted** workspace; `runEvidence` still goes through the trusted-workspace `proc:*` gate (exact command + cwd shown, no auto-run, credentials stripped from the child env, timeouts, process-tree kill); `observe` still uses the isolated ephemeral-session window. |
+| Unsafe requests | `Contract.deriveFromPrompt` matches a refusal list (covert behaviour, credential theft, cryptojacking, spam/DoS, DRM/paywall circumvention, coordinated deception, malware) → `verdict:'unsafe'` → the run ends `BLOCKED` **before any generation**. |
+| Out-of-scope requests | anything outside the supported stack is recorded as `unsupported`; a request whose core is out of scope ends `BLOCKED`, never faked. |
+| Secrets in the prompt | the coordinator scrubs token-shaped strings from the prompt before persisting; `Sovereign.write` also redacts `ultramode-run` / `ultramode-report` / `ultramode-plan` / `product-contract`. |
+| Deployment | `Engine.Deploy.apply` **generates** IaC + a deploy script only. Nothing is pushed — that needs the user's credentials. |
+| Bounded autonomy | `maxRepairAttempts`, overall `runTimeoutMs`, `cancel()`; `Engine.Autonomy.allows('generate'/'repair')` is checked before those side effects. |
+| Resume | state is persisted to `.sovereign/ultramode-run.json` after every transition; `resume()` skips generation if the repo is already on disk — no repeated side effects. |
+| Browser mode | generation runs; execution + observation are reported **unavailable** and the run ends `BLOCKED` — never a false `VERIFIED`. |
+
+## Parser & memory safeguards
+
+- `.sovereign/**` is excluded from every analyzer (`SELF_RE` in mockscan /
+  pipeline-parse / component inventory; explicit skip in the acorn Graph
+  upgrade). `node_modules`, `vendor`, `dist`, `build` too.
+- **Evidence redaction**: `engine.sovereign.write()` scrubs GitHub / OpenAI /
+  Anthropic / Slack / AWS tokens, JWTs, PEM keys and `key=value` secrets from
+  `execution-evidence`, `runtime-trace`, `diagnostics/*`, `known-issues`,
+  `production-readiness`, `command-audit`, `ultramode-run`, `ultramode-report`,
+  `ultramode-plan` and `product-contract` before writing. `Engine.UltraMode` also
+  scrubs the prompt itself before persisting.
+- **Atomic writes**: `workspace.writeFile`, `store.save`, `creds.saveAll` write a
+  temp file then `rename` over the target; `readTree` skips `.cs-tmp-*`.
+- **History retention**: `.sovereign/history/` keeps the last 15 snapshots;
+  `<userData>/snapshots/` keeps 25.
+- **Parser limits**: acorn skips files > 1.5 MB; js-yaml rejects files > 512 KB
+  and refuses a document with > 200 anchors/aliases or > 50 merge keys before
+  expansion; malformed files return `{ __error }`, never throw. js-yaml `load()`
+  (v4/5) has no code-execution tags.
+- **Vendored libs**: versions + licenses + the applied limits are documented in
+  `dist/vendor/README.md`.
+- **Export**: `ws:exportZip` **excludes `.sovereign/`** by default (opt in with
+  `{ includeSovereign: true }`).
+
 ## Supply chain
 
 `npm audit` is **clean (0 vulnerabilities)** as of this review:
@@ -159,3 +269,8 @@ credential key validation, snapshot id validation, the 8.3-short-path
 containment regression, and the symlink write/scan defence.
 `test/workspace.test.js` covers path normalization (`/`, `\`, `.`, `..`) and
 protected dirs.
+`test/ultramode.test.js` covers the closed-loop coordinator: repair limits,
+rollback, cancellation, resume-without-repeated-side-effects, unsafe → BLOCKED,
+unsupported → BLOCKED, browser-mode degradation, secret redaction, deterministic
+ids. `npm run acceptance:ultramode` proves the real integration end to end plus the
+resume and negative scenarios.

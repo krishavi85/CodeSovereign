@@ -17,7 +17,12 @@ function load() {
 }
 
 function save() {
-  try { fs.writeFileSync(file(), JSON.stringify(load(), null, 2)); } catch { /* ignore */ }
+  try {
+    const f = file();
+    const tmp = f + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(load(), null, 2));
+    fs.renameSync(tmp, f);
+  } catch { /* ignore */ }
 }
 
 function get(key) { return load()[key]; }

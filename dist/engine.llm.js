@@ -38,6 +38,19 @@
   // ----- Provider registry (OpenAI-compatible chat completions) -----
   const PROVIDERS = [
     {
+      id: "omniroute",
+      label: "OmniRoute — local gateway, ~150 free tiers",
+      baseUrl: "http://localhost:20128",
+      chatPath: "/v1/chat/completions",
+      defaultModel: "auto",
+      modelOptions: ["auto", "opencode-free", "kilocode-free", "siliconflow-free"],
+      supportsJson: true,
+      keyHeader: "Authorization",
+      keyPrefix: "Bearer ",
+      keyless: true,
+      notes: "Self-hosted gateway (github.com/diegosouzapw/OmniRoute) that fans out to 350+ providers incl. ~150 free tiers. Start it from the Local AI card — a brand-new instance may need no key; once it's set up with real provider connections its HTTP API needs one, free from its own dashboard (http://localhost:20128/dashboard)."
+    },
+    {
       id: "minimax",
       label: "MiniMax (recommended)",
       baseUrl: "https://api.minimaxi.chat",
@@ -152,11 +165,20 @@
   function resolveProvider(cfg) {
     let p = providerById(cfg.providerId);
     if (!p) p = PROVIDERS[0];
-    // custom base URL override for openai_compat and local gateways
-    if (cfg.baseUrl && (p.id === "openai_compat" || p.local)) {
+    // custom base URL override: openai_compat, a provider explicitly flagged
+    // local, or any loopback endpoint the router points at
+    if (cfg.baseUrl && (p.id === "openai_compat" || p.local || /^https?:\/\/(localhost|127\.0\.0\.1)/.test(cfg.baseUrl))) {
       p = Object.assign({}, p, { baseUrl: cfg.baseUrl.replace(/\/+$/, "") });
     }
     return p;
+  }
+  // A provider is usable if it has a key, OR it is keyless (OmniRoute / a local
+  // runtime), OR it points at a loopback endpoint.
+  function isConfigured(cfg) {
+    if (!cfg || !cfg.enabled) return false;
+    if (cfg.apiKey) return true;
+    const p = resolveProvider(cfg);
+    return !!p.keyless || /^https?:\/\/(localhost|127\.0\.0\.1)/.test(cfg.baseUrl || p.baseUrl || "");
   }
 
   function isLocalEndpoint(provider, cfg) {
@@ -169,6 +191,10 @@
   }
 
   function needsApiKey(provider, cfg) {
+    // a keyless provider (OmniRoute, or any provider flagged keyless) never
+    // needs one — regardless of whether it's local. Without this a keyless
+    // cloud provider would be wrongly reported as "no API key set".
+    if (provider && provider.keyless) return false;
     return !isLocalEndpoint(provider, cfg);
   }
 
@@ -284,7 +310,10 @@
       "- index.html must reference styles and scripts via /styles/... and /scripts/... paths.",
       "- Use plain HTML/CSS/JS unless the project context requires a framework.",
       "- All file paths start with /. Keep paths short and ASCII.",
-      "- Every file must be complete and runnable. Visual quality matters as much as behavior.",
+      "- Every file must be complete and runnable on its own. Visual quality matters as much as behavior.",
+      "- If the app calls an AI model, put it behind a small vendor-neutral provider",
+      "  module (local Ollama first, then an API key) — never hard-code one vendor.",
+      "- Prefer zero-cost / self-hostable services; list required keys in /.env.example.",
       "- run_command only runs workspace package jobs (install, test, build, lint, typecheck). It cannot spawn arbitrary node/python/git argv.",
       "- Prefer delegate/subagents for multi-role work. The coordinator plans; workers implement. Reuse Project brain memories.",
       "- /goal starts a persistent self-healing loop (run tests → fix → run again) with no product step cap. computer drives mouse/keyboard. web_search uses docs beyond this repo.",
@@ -294,6 +323,24 @@
       "- Checkpoints are created before major edits. Design-to-code must compare visually and re-verify. Audit a11y (contrast, semantic HTML, ARIA, keyboard, alt).",
       ctxBlk
     ].join("\n");
+  }
+
+  // ----- HTTP transport -----
+  // In the desktop app the renderer CSP blocks localhost + several API hosts;
+  // route through the vetted main-process proxy (loopback / allow-listed API
+  // hosts only). In a plain browser, use fetch directly.
+  async function httpText(url, init) {
+    const D = window.desktop;
+    if (D && D.isDesktop && D.ai && D.ai.request) {
+      const r = await D.ai.request({
+        url: url, method: (init && init.method) || "GET",
+        headers: (init && init.headers) || {}, body: (init && init.body) || null
+      });
+      if (r && r.ok) return { ok: r.status >= 200 && r.status < 300, status: r.status, text: async () => r.body };
+      throw new Error((r && r.error) || "request failed");
+    }
+    const res = await fetch(url, init);
+    return { ok: res.ok, status: res.status, text: () => res.text() };
   }
 
   // ----- HTTP call (OpenAI-compatible chat completions) -----
@@ -318,6 +365,41 @@
       body.response_format = { type: "json_object" };
     }
     return { url, headers, body };
+  }
+
+  // Raw chat completion — a plain string reply, no file-plan JSON contract.
+  // messages: string | [{role,content}]. Returns { text, model, provider }.
+  async function chat(messages, opts) {
+    opts = opts || {};
+    const cfg = loadConfig();
+    if (!isConfigured(cfg) && !opts.force) throw new Error("LLM not configured.");
+    const provider = resolveProvider(cfg);
+    if (!provider.baseUrl) throw new Error("Provider has no baseUrl.");
+    const msgs = typeof messages === "string"
+      ? [{ role: "user", content: messages }]
+      : messages;
+    const url = provider.baseUrl.replace(/\/+$/, "") + (provider.chatPath || "/v1/chat/completions");
+    const headers = { "Content-Type": "application/json" };
+    // NOTE: a keyless-flagged provider (OmniRoute's default design) sends no
+    // Authorization header at all when no key is set — there is no working
+    // placeholder token to send instead. A deployment that has been set up
+    // with real provider connections requires a real key; see the 401 hint
+    // below (the dashboard issues one).
+    if (cfg.apiKey) headers[provider.keyHeader || "Authorization"] = (provider.keyPrefix || "Bearer ") + cfg.apiKey;
+    const body = { model: cfg.model || provider.defaultModel || "auto", messages: msgs,
+      temperature: opts.temperature == null ? 0.2 : opts.temperature, max_tokens: opts.maxTokens || 2048 };
+    if (opts.json && provider.supportsJson) body.response_format = { type: "json_object" };
+    const res = await httpText(url, { method: "POST", headers, body: JSON.stringify(body) });
+    const raw = await res.text();
+    if (!res.ok) {
+      if (res.status === 401 && provider.id === "omniroute") {
+        throw new Error("OmniRoute needs an API key for its HTTP API — open " + provider.baseUrl + "/dashboard, generate a free key, and paste it in Settings.");
+      }
+      throw new Error("HTTP " + res.status + " " + (raw || "").slice(0, 240));
+    }
+    let data = null; try { data = JSON.parse(raw); } catch (_) {}
+    const text = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || raw;
+    return { text: String(text || ""), model: body.model, provider: provider.id };
   }
 
   async function listModels() {
@@ -345,15 +427,16 @@
     }
   }
 
+  // isConfigured() (not needsApiKey — that ignores keyless providers like a
+  // local runtime or OmniRoute and would wrongly demand an API key for them)
+  // gates the call; opts.force bypasses the gate for a caller that already
+  // knows what it's doing (e.g. a just-picked provider not yet persisted).
   async function complete(prompt, ctx, opts) {
     opts = opts || {};
     const cfg = liveConfig();
     const provider = resolveProvider(cfg);
-    if (!cfg.enabled && !opts.force) {
-      throw new Error("LLM not configured. Set provider + key in Settings.");
-    }
-    if (needsApiKey(provider, cfg) && !cfg.apiKey) {
-      throw new Error("LLM not configured. Set provider + key in Settings.");
+    if (!isConfigured(cfg) && !opts.force) {
+      throw new Error("LLM not configured. Pick a provider (and key, unless keyless) in Settings.");
     }
     if (!provider.baseUrl) {
       throw new Error("Provider has no baseUrl. Set a custom base URL in Settings.");
@@ -361,7 +444,10 @@
     const systemPrompt = opts.system || buildSystemPrompt(ctx || null);
     const userPrompt = String(prompt || "").trim();
     const req = buildRequest(provider, cfg, systemPrompt, userPrompt, opts);
-    const res = await fetch(req.url, {
+    // Route through the desktop proxy (httpText) rather than a bare fetch — the
+    // renderer CSP blocks localhost + most API hosts directly; the main-process
+    // proxy is the vetted bypass. In a plain browser httpText falls back to fetch.
+    const res = await httpText(req.url, {
       method: "POST",
       headers: req.headers,
       body: JSON.stringify(req.body)
@@ -1507,6 +1593,7 @@
   // ----- Connection test -----
   async function testConnection() {
     const cfg = liveConfig();
+    if (!isConfigured(cfg)) return { ok: false, error: "Not configured — pick a provider (key optional for OmniRoute / local)." };
     const provider = resolveProvider(cfg);
     if (needsApiKey(provider, cfg) && !cfg.apiKey) return { ok: false, error: "No API key set." };
     if (!provider.baseUrl) return { ok: false, error: "No base URL set." };
@@ -1517,7 +1604,7 @@
       "ping"
     );
     try {
-      const res = await fetch(req.url, {
+      const res = await httpText(req.url, {
         method: "POST",
         headers: req.headers,
         body: JSON.stringify(req.body)
@@ -1531,7 +1618,13 @@
         url: req.url,
         provider: provider.id
       };
-      if (!res.ok && res.status === 401 && isLocalEndpoint(provider, cfg)) {
+      if (!res.ok && res.status === 401 && provider.id === "omniroute") {
+        // Some OmniRoute deployments truly need no key; an instance that has
+        // been set up with real provider connections (the common case once
+        // you have used it before) requires one for its HTTP API even though
+        // `auto` itself is free. The dashboard issues one in a couple of clicks.
+        out.hint = "This OmniRoute server requires an API key for its HTTP API. Open " + provider.baseUrl + "/dashboard, generate a free key, and paste it above.";
+      } else if (!res.ok && res.status === 401 && isLocalEndpoint(provider, cfg)) {
         out.hint = cfg.localToken
           ? "The local server rejected this token. In LM Studio open Developer → Local Server and copy the current API token."
           : "This local server requires a Bearer token. Paste the LM Studio API token in the field above — it is sent only to localhost, never as your cloud key.";
@@ -1885,6 +1978,8 @@
     setConfig,
     providerById,
     resolveProvider,
+    isConfigured: () => isConfigured(loadConfig()),
+    chat,
     isLocalEndpoint,
     needsApiKey,
     authToken,

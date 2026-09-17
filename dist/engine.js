@@ -585,39 +585,72 @@ footer{padding:24px;text-align:center;color:var(--mut);border-top:1px solid var(
   const Agent = {
     run(prompt, onStep){
       const steps = [];
+      const emit = (s) => { steps.push(s); onStep && onStep(s); };
       const proj = Proj.current();
-      if (!proj){ steps.push({ kind:'error', text:'No active project. Create one first.' }); onStep && onStep(steps[steps.length-1]); return Promise.resolve(steps); }
+      if (!proj){ emit({ kind:'error', text:'No active project. Create one first.' }); return Promise.resolve(steps); }
 
-      // Step 1 — Plan
-      steps.push({ kind:'plan', text:'Analyzing the prompt and project context…' });
-      onStep && onStep(steps[steps.length-1]);
-      const plan = this._plan(prompt, proj);
-      steps.push({ kind:'plan-result', text: 'Plan: ' + plan.summary, files: plan.targets });
-      onStep && onStep(steps[steps.length-1]);
+      emit({ kind:'plan', text:'Analyzing the prompt and project context…' });
 
-      // Step 2 — Apply each file change
-      return new Promise(resolve => {
-        let i = 0;
-        const apply = () => {
-          if (i >= plan.targets.length){
-            // Step 3 — Validate
-            steps.push({ kind:'validate', text:'Running validators…' });
-            onStep && onStep(steps[steps.length-1]);
-            const v = Validator.runAll();
-            steps.push({ kind:'validate-result', issues: v });
-            onStep && onStep(steps[steps.length-1]);
-            steps.push({ kind:'done', text:'Run complete.' });
-            onStep && onStep(steps[steps.length-1]);
-            resolve(steps);
-            return;
-          }
-          const t = plan.targets[i++];
-          steps.push({ kind:'write', path:t.path, text:'Writing ' + t.path });
-          onStep && onStep(steps[steps.length-1]);
-          FS.write(t.path, t.content);
-          setTimeout(apply, 120);
-        };
-        apply();
+      // ---- unified generator ----
+      // One code-generation path. Derive a machine-readable contract; when it's
+      // a real buildable web app (multi-entity, or auth / background jobs, or a
+      // substantial requirement set) scaffold the FULL repo via the same
+      // Engine.Contract → Engine.Scaffold path Ultra Mode uses. Only a genuinely
+      // trivial single-artifact request (a chart, a timer, a calculator — no
+      // entities, no backend) falls back to the flat-SPA templates in `_plan`.
+      const C = window.Engine && window.Engine.Contract;
+      const SC = window.Engine && window.Engine.Scaffold;
+      const contractP = (C && C.deriveFromPrompt)
+        ? Promise.resolve().then(() => C.deriveFromPrompt(prompt, { useLLM: false })).catch(() => null)
+        : Promise.resolve(null);
+
+      return contractP.then((contract) => {
+        let plan = null;
+        const st = (contract && contract.supportedStack) || {};
+        const ents = (contract && contract.entities) || [];
+        const reqs = (contract && contract.requirements) || [];
+        const substantial = ents.length >= 2 || !!st.auth || !!st.jobs || reqs.length >= 8;
+        const buildable = contract && contract.verdict === 'buildable'
+          && (contract.target || 'web') === 'web'
+          && ents.length >= 1 && substantial
+          && SC && SC.specFromContract && SC.generate;
+
+        if (buildable) {
+          try {
+            emit({ kind:'contract', text:'Contract: ' + reqs.length + ' requirements · ' + ents.map(e => e.name).join(', '), requirements: reqs.length });
+            const spec = SC.specFromContract(contract);
+            const files = SC.generate(spec);
+            plan = {
+              summary: 'full-stack repo from the contract (' + files.length + ' files: backend + data layer + '
+                + (st.auth ? 'auth + ' : '') + (st.jobs ? 'jobs + ' : '') + 'tests + CI)',
+              targets: files.map(f => ({ path: f.path, content: f.content })),
+              viaContract: true
+            };
+          } catch (e) { plan = null; }
+        }
+        if (!plan) plan = this._plan(prompt, proj);
+
+        emit({ kind:'plan-result', text:'Plan: ' + plan.summary, files: plan.targets });
+
+        return new Promise(resolve => {
+          let i = 0;
+          const gap = plan.viaContract ? 20 : 120;
+          const apply = () => {
+            if (i >= plan.targets.length){
+              emit({ kind:'validate', text:'Running validators…' });
+              const v = Validator.runAll();
+              emit({ kind:'validate-result', issues: v });
+              emit({ kind:'done', text:'Run complete.' });
+              resolve(steps);
+              return;
+            }
+            const t = plan.targets[i++];
+            emit({ kind:'write', path:t.path, text:'Writing ' + t.path });
+            FS.write(t.path, t.content);
+            setTimeout(apply, gap);
+          };
+          apply();
+        });
       });
     },
     _plan(prompt, proj){
@@ -2172,9 +2205,14 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
         refs.forEach(r => {
           const m = r.match(/(?:src|href)\s*=\s*"([^"]+)"/);
           if (!m) return;
-          const url = m[1];
-          if (url.startsWith('http') || url.startsWith('data:') || url.startsWith('#') || url.startsWith('mailto:')) return;
-          if (!FS.exists(url)) issues.push({ severity:'warning', faultClass:'html.ref', file:p, message:'Broken reference: ' + url });
+          const url = (m[1] || '').split(/[?#]/)[0];
+          if (!url || url.startsWith('http') || url.startsWith('data:') || url.startsWith('#') || url.startsWith('mailto:')) return;
+          // resolve relative to the referring file's directory
+          const dir = p.slice(0, p.lastIndexOf('/'));
+          let abs = url.startsWith('/') ? url : (dir + '/' + url.replace(/^\.\//, ''));
+          let prev; do { prev = abs; abs = abs.replace(/\/\.\//g, '/').replace(/\/[^/]+\/\.\.\//g, '/'); } while (abs !== prev);
+          abs = abs.replace(/\/{2,}/g, '/');
+          if (!FS.exists(url) && !FS.exists(abs)) issues.push({ severity:'warning', faultClass:'html.ref', file:p, message:'Broken reference: ' + url });
         });
       });
       return issues;

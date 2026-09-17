@@ -1,0 +1,458 @@
+/* =====================================================================
+   app.ai.extras.js  —  Settings UI for the AI stack:
+     - Local AI card: hardware summary, discovered runtimes/models, a
+       host-aware recommendation, one-click "use this model".
+     - Cost Sovereignty card: mandatory vs optional cost + zero-cost paths.
+   Injects into the Settings screen; no-ops if the engines aren't loaded.
+   ===================================================================== */
+(function () {
+  'use strict';
+  function E() { return window.Engine || {}; }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]; }); }
+  var state = { hw: null, disc: null, rec: null, cost: null, busy: false, log: '' };
+
+  /* ---------- Local AI ---------- */
+  function fitBadge(run) {
+    if (!run) return '';
+    var c = run.ok ? (run.where === 'gpu' ? 'var(--good)' : '#22d3ee') : 'var(--muted)';
+    var txt = run.ok ? (run.where === 'gpu' ? 'GPU ' : 'CPU ') + '~' + run.estGB + ' GB' : "won't fit";
+    return '<span style="font-size:10px;color:' + c + ';border:1px solid ' + c + ';border-radius:5px;padding:1px 5px;margin-left:6px">' + txt + '</span>';
+  }
+
+  function localAiCardHtml() {
+    var AR = E().AIRouter, HW = E().Hardware, MM = E().ModelManager, AI = E().AI;
+    if (!AR || !HW || !MM) {
+      return '<div class="card" style="padding:20px;margin-bottom:18px"><h3 class="cs-h3" style="margin-bottom:14px">Local AI</h3>' +
+        '<div style="color:var(--muted);font-size:13px">AI router engines not loaded.</div></div>';
+    }
+    var hw = state.hw, disc = state.disc, rec = state.rec;
+    var st = AI ? AI.status() : { connected: false };
+
+    // active connection banner
+    var banner = '<div style="padding:9px 12px;border-radius:8px;margin-bottom:12px;font-size:12.5px;border:1px solid ' +
+      (st.connected ? 'var(--good)' : 'var(--line)') + ';background:' + (st.connected ? 'rgba(52,211,153,.06)' : 'transparent') + '">' +
+      (st.connected
+        ? '<b style="color:var(--good)">AI connected</b> — ' + esc(st.source) + (st.model ? ' · <code>' + esc(st.model) + '</code>' : '') + (st.free ? ' · <span style="color:var(--good)">free</span>' : '')
+        : '<b>Not connected</b> — the app uses its built-in deterministic generator. Connect one below.') + '</div>';
+
+    // OmniRoute — the unlimited-free option. state.omniStatus is polled on
+    // mount (read-only — never spawns anything) so the card shows the real
+    // running/stopped state before the user has clicked anything.
+    var os_ = state.omniStatus;
+    var omniRunning = !!(os_ && os_.running);
+    var omniDotColor = omniRunning ? 'var(--good)' : (os_ ? 'var(--muted)' : '#7c5cff');
+    var omniStatusText = state.omniBusy ? 'Starting…'
+      : omniRunning ? 'Running on :20128'
+      : os_ ? (os_.installed ? 'Installed, not running' : 'Not started')
+      : 'Checking…';
+    var omniBtn = omniRunning
+      ? '<button id="aiOmniStopBtn" class="btn ghost" style="padding:5px 12px;font-size:12px">' + (state.omniStopping ? 'Stopping…' : 'Stop OmniRoute') + '</button>' +
+        ' <a href="http://127.0.0.1:20128/dashboard" target="_blank" rel="noopener" style="font-size:11.5px;color:var(--accent);margin-left:8px">Open dashboard ↗</a>'
+      : '<button id="aiOmniBtn" class="btn primary" style="padding:5px 12px;font-size:12px">' + (state.omniBusy ? 'Starting…' : 'Enable free AI (OmniRoute)') + '</button>';
+    // "no key" only holds for a brand-new instance; one that has been set up
+    // with real provider connections needs a key from its own dashboard for
+    // its HTTP API even though the CLI's own auth is separate — see the 401
+    // hint on Test connection / a failed chat for the exact fix-it text.
+    var omni = '<div style="padding:10px 12px;border:1px solid #7c5cff;border-radius:8px;background:rgba(124,92,255,.06);margin-bottom:8px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
+      '<div style="font-weight:600">OmniRoute — free AI gateway <span style="font-size:10px;color:var(--muted);font-weight:400">~150 free provider tiers · MIT</span></div>' +
+      '<span style="font-size:11px;display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:' + omniDotColor + ';display:inline-block"></span><span style="color:' + omniDotColor + '">' + esc(omniStatusText) + '</span></span>' +
+      '</div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin:4px 0 8px">Runs <code>npx omniroute serve</code> locally (in-app — no terminal) and routes <code>model:"auto"</code> across free tiers with automatic fallback. A fresh instance may need no key; once it is set up with real provider connections its HTTP API needs a free key from its own dashboard.</div>' +
+      omniBtn +
+      (state.omniLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:100px;overflow:auto">' + esc(state.omniLog) + '</pre>' : '') +
+      '</div>';
+
+    // OpenClaw — a local agent gateway, installed as a real background
+    // service (not a plain child process) so it survives app restarts.
+    // Honesty note, found live: its --local agent-completion path hung well
+    // past a healthy Ollama response time in testing, so this card only
+    // offers start/stop/status — CodeSovereign does not route its own
+    // generation through it (yet). The dashboard link is where you'd
+    // configure channels/providers for OpenClaw's own agent use.
+    var ocs = state.openclawStatus;
+    var ocRunning = !!(ocs && ocs.running);
+    var ocDotColor = ocRunning ? 'var(--good)' : (ocs ? 'var(--muted)' : '#e08a3f');
+    var ocStatusText = state.openclawBusy ? 'Starting…'
+      : ocRunning ? 'Running on :18789'
+      : ocs ? (ocs.installed ? 'Installed, not running' : 'Not started')
+      : 'Checking…';
+    var ocBtn = ocRunning
+      ? '<button id="aiOpenclawStopBtn" class="btn ghost" style="padding:5px 12px;font-size:12px">' + (state.openclawStopping ? 'Stopping…' : 'Stop OpenClaw') + '</button>' +
+        ' <a href="http://127.0.0.1:18789/" target="_blank" rel="noopener" style="font-size:11.5px;color:var(--accent);margin-left:8px">Open dashboard ↗</a>'
+      : '<button id="aiOpenclawBtn" class="btn primary" style="padding:5px 12px;font-size:12px">' + (state.openclawBusy ? 'Starting…' : 'Start OpenClaw') + '</button>';
+    var openclaw = '<div style="padding:10px 12px;border:1px solid #e08a3f;border-radius:8px;background:rgba(224,138,63,.06);margin-bottom:8px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
+      '<div style="font-weight:600">OpenClaw — local agent gateway <span style="font-size:10px;color:var(--muted);font-weight:400">MIT</span></div>' +
+      '<span style="font-size:11px;display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:' + ocDotColor + ';display:inline-block"></span><span style="color:' + ocDotColor + '">' + esc(ocStatusText) + '</span></span>' +
+      '</div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin:4px 0 8px">Installs <code>npx openclaw daemon start</code> as a background service (in-app — no terminal), loopback-only, port 18789. A first-ever install needs one manual <code>openclaw configure</code> to pick providers/channels — this button cannot fill that in for you. CodeSovereign does not yet route its own generation through OpenClaw\'s agent runner: a live test found it noticeably slower than the Ollama it was calling.</div>' +
+      ocBtn +
+      (state.openclawLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:100px;overflow:auto">' + esc(state.openclawLog) + '</pre>' : '') +
+      '</div>';
+
+    // discovered running runtimes
+    var rows = '';
+    if (disc && disc.runtimes && disc.runtimes.length) {
+      rows = '<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:6px 0 4px">Running locally</div>' +
+        disc.runtimes.map(function (rt) {
+          return '<div style="padding:9px 12px;border:1px solid var(--good);border-radius:8px;background:rgba(52,211,153,.05);margin-bottom:6px">' +
+            '<span style="font-weight:600">' + esc(rt.label) + '</span> <span style="font-size:10.5px;color:var(--good)">' + rt.base + '</span>' +
+            (rt.free ? ' <span style="font-size:10px;color:var(--good)">free</span>' : '') +
+            '<div style="margin-top:4px">' +
+            (rt.models && rt.models.length ? rt.models.slice(0, 10).map(function (m) {
+              return '<button class="cs-aimodel" data-rt="' + esc(rt.id) + '" data-model="' + esc(m.id) + '" style="margin:2px 4px 2px 0;padding:3px 8px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2);color:#e6e9f2;font:11px JetBrains Mono,monospace;cursor:pointer">use ' + esc(m.id) + '</button>';
+            }).join('') : '<span style="font-size:11px;color:var(--muted)">no model loaded</span>') +
+            '</div></div>';
+        }).join('');
+    } else if (disc) {
+      rows = '<div style="font-size:12px;color:var(--muted);margin:6px 0">No local runtime running (Ollama 11434, LM Studio 1234, vLLM 8000, llama.cpp 8080, Jan 1337, OmniRoute 20128).</div>';
+    }
+
+    // model catalogue — visible even with nothing running
+    var cat = '';
+    if (hw) {
+      var installedIds = {};
+      (disc && disc.runtimes || []).forEach(function (rt) { (rt.models || []).forEach(function (m) { installedIds[String(m.id).split(':')[0]] = rt.id; }); });
+      cat = '<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin:12px 0 4px">Open models for this host (' + esc(HW.summary(hw)) + ')</div>' +
+        '<div style="max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px">' +
+        MM.CATALOG.map(function (m) {
+          var run = MM.canRun(m, hw);
+          var have = installedIds[m.id.split(':')[0]];
+          return '<div style="display:flex;align-items:center;gap:6px;padding:3px 4px;font-size:12px">' +
+            '<code style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis">' + esc(m.id) + '</code>' +
+            (m.coding ? '<span style="font-size:9.5px;color:#22d3ee">code</span>' : '') + fitBadge(run) +
+            (have ? '<button class="cs-aimodel" data-rt="' + esc(have) + '" data-model="' + esc(m.id) + '" style="padding:2px 8px;font-size:10.5px;border:1px solid var(--good);border-radius:5px;background:transparent;color:var(--good);cursor:pointer">use</button>'
+              : '<button class="cs-aipull" data-model="' + esc(m.id) + '" ' + (run.ok ? '' : 'disabled') + ' style="padding:2px 8px;font-size:10.5px;border:1px solid var(--line);border-radius:5px;background:var(--bg-2);color:#e6e9f2;cursor:pointer;opacity:' + (run.ok ? '1' : '.4') + '">pull</button>') +
+            '</div>';
+        }).join('') + '</div>';
+    }
+
+    var recHtml = '';
+    if (rec && rec.fits && rec.primary) {
+      recHtml = '<div style="margin-top:10px;padding:9px 12px;border:1px solid var(--accent);border-radius:8px;background:rgba(120,160,255,.06);font-size:12px">' +
+        '<b>Best for this host:</b> <code>' + esc(rec.primary) + '</code> @ ' + esc(rec.quant) + ' — ' + esc(rec.reason) +
+        ' <button id="aiPullRec" class="btn ghost" style="padding:3px 9px;font-size:11px;margin-left:6px">pull it</button></div>';
+    } else if (rec && !rec.fits) {
+      recHtml = '<div style="margin-top:10px;padding:9px 12px;border:1px solid var(--warn,#f59e0b);border-radius:8px;font-size:12px">' + esc(rec.reason) + ' — use OmniRoute or a cloud key.</div>';
+    }
+
+    // manual endpoint
+    var manual = '<details style="margin-top:12px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">Manual endpoint (any OpenAI-compatible URL)</summary>' +
+      '<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">' +
+      '<input id="aiManualUrl" placeholder="http://localhost:1234" value="' + esc(state.manualUrl || '') + '" style="flex:1;min-width:160px;padding:6px 9px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:7px;font:12px JetBrains Mono,monospace"/>' +
+      '<input id="aiManualModel" placeholder="model id" value="' + esc(state.manualModel || '') + '" style="width:130px;padding:6px 9px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:7px;font:12px JetBrains Mono,monospace"/>' +
+      '<input id="aiManualKey" type="password" placeholder="key (optional)" style="width:110px;padding:6px 9px;background:#0d1220;color:#e6e9f2;border:1px solid var(--line);border-radius:7px;font:12px Inter"/>' +
+      '<button id="aiManualBtn" class="btn ghost" style="padding:6px 12px;font-size:12px">Connect</button></div></details>';
+
+    return '<div class="card" style="padding:20px;margin-bottom:18px"><h3 class="cs-h3" style="margin-bottom:14px">Local AI</h3>' +
+      banner + omni + openclaw + rows + cat + recHtml + manual +
+      '<div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button id="aiScanBtn" class="btn primary" style="padding:6px 12px;font-size:12px">' + (state.busy ? 'Scanning…' : 'Scan &amp; recommend') + '</button>' +
+      '<button id="aiAutoBtn" class="btn ghost" style="padding:6px 12px;font-size:12px">Auto-connect</button>' +
+      '</div>' +
+      (state.log ? '<pre style="margin-top:10px;font:11px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:120px;overflow:auto">' + esc(state.log) + '</pre>' : '') +
+      wiringHtml() +
+      '</div>';
+  }
+
+  function wiringHtml() {
+    var AI = E().AI;
+    if (!AI || !AI.wiring) return '';
+    var w = AI.wiring();
+    return '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">AI wiring — ' + w.wiredCount + '/' + w.total + ' consumers connected</summary>' +
+      '<div style="margin-top:6px">' + w.consumers.map(function (c) {
+        return '<div style="font-size:11.5px;padding:3px 0;display:flex;gap:8px">' +
+          '<span style="color:' + (c.wired ? 'var(--good)' : 'var(--muted)') + '">' + (c.wired ? '&#x2713;' : '&#x25CB;') + '</span>' +
+          '<span style="flex:1"><b>' + esc(c.label) + '</b><br><span style="color:var(--muted)">' + esc(c.how) + '</span></span></div>';
+      }).join('') + '</div></details>';
+  }
+
+  function scan() {
+    state.busy = true; rerender();
+    return Promise.all([E().Hardware.probe(), E().AIRouter.discover()]).then(function (r) {
+      state.hw = r[0]; state.disc = r[1];
+      state.rec = E().AIRouter.recommend(state.hw, { task: 'code' });
+      state.busy = false; rerender();
+    });
+  }
+
+  // Read-only poll of whether OmniRoute is installed/running — never spawns
+  // anything itself, so it's safe to call on every Settings mount.
+  function refreshOmniStatus() {
+    var AR = E().AIRouter;
+    if (!AR || !AR.omniRouteStatus) return Promise.resolve();
+    return AR.omniRouteStatus().then(function (s) { state.omniStatus = s; rerender(); });
+  }
+
+  // Same, for OpenClaw.
+  function refreshOpenclawStatus() {
+    var AR = E().AIRouter;
+    if (!AR || !AR.openClawStatus) return Promise.resolve();
+    return AR.openClawStatus().then(function (s) { state.openclawStatus = s; rerender(); });
+  }
+
+  function bindLocalAi(host) {
+    var AR = E().AIRouter, AI = E().AI;
+
+    var sb = host.querySelector('#aiScanBtn');
+    if (sb) sb.onclick = function () { scan().then(function () { window.toast && window.toast('Scanned: ' + (state.disc.count || 0) + ' runtime(s)', '#22d3ee'); }); };
+
+    var ob = host.querySelector('#aiOmniBtn');
+    if (ob) ob.onclick = function () {
+      state.omniBusy = true; state.omniLog = 'starting OmniRoute…\n'; rerender();
+      AR.ensureOmniRoute(function (s) { state.omniLog += s + '\n'; rerender(); }).then(function (r) {
+        state.omniBusy = false;
+        state.omniLog += (r && r.ok) ? ('\nready on ' + r.base + ' — wired as `auto` (free)') : ('\nfailed: ' + ((r && r.error) || 'unknown'));
+        return refreshOmniStatus().then(function () { return scan(); });
+      }).then(function () {
+        window.toast && window.toast(AI.ready() ? 'Free AI connected via OmniRoute' : 'OmniRoute not reachable', AI.ready() ? '#34d399' : '#ef4444');
+        try { window.renderAll && window.renderAll(); } catch (_) {}
+      });
+    };
+
+    var osb = host.querySelector('#aiOmniStopBtn');
+    if (osb) osb.onclick = function () {
+      state.omniStopping = true; state.omniLog = 'stopping OmniRoute…\n'; rerender();
+      AR.stopOmniRoute().then(function (r) {
+        state.omniStopping = false;
+        state.omniLog += (r && r.ok !== false) ? '\nstopped' : ('\nfailed: ' + ((r && r.error) || 'unknown'));
+        return refreshOmniStatus().then(function () { return scan(); });
+      }).then(function () {
+        window.toast && window.toast('OmniRoute stopped', '#7c6ff5');
+        try { window.renderAll && window.renderAll(); } catch (_) {}
+      });
+    };
+
+    var ocb = host.querySelector('#aiOpenclawBtn');
+    if (ocb) ocb.onclick = function () {
+      state.openclawBusy = true; state.openclawLog = 'starting OpenClaw…\n'; rerender();
+      AR.ensureOpenClaw(function (s) { state.openclawLog += s + '\n'; rerender(); }).then(function (r) {
+        state.openclawBusy = false;
+        state.openclawLog += (r && r.ok) ? ('\nready on ' + r.base) : ('\nfailed: ' + ((r && r.error) || 'unknown'));
+        return refreshOpenclawStatus();
+      }).then(function () {
+        window.toast && window.toast(state.openclawStatus && state.openclawStatus.running ? 'OpenClaw gateway running' : 'OpenClaw not reachable', state.openclawStatus && state.openclawStatus.running ? '#34d399' : '#ef4444');
+      });
+    };
+
+    var ocsb = host.querySelector('#aiOpenclawStopBtn');
+    if (ocsb) ocsb.onclick = function () {
+      state.openclawStopping = true; state.openclawLog = 'stopping OpenClaw…\n'; rerender();
+      AR.stopOpenClaw().then(function (r) {
+        state.openclawStopping = false;
+        state.openclawLog += (r && r.ok !== false) ? '\nstopped' : ('\nfailed: ' + ((r && r.error) || 'unknown'));
+        return refreshOpenclawStatus();
+      }).then(function () {
+        window.toast && window.toast('OpenClaw stopped', '#e08a3f');
+      });
+    };
+
+    var auto = host.querySelector('#aiAutoBtn');
+    if (auto) auto.onclick = function () {
+      auto.disabled = true; state.log = 'auto-connecting…\n'; rerender();
+      AI.ensure({ onStatus: function (s) { state.log += s + '\n'; rerender(); } }).then(function (s) {
+        state.log += s.connected ? ('connected: ' + s.source) : 'no provider available';
+        rerender();
+        window.toast && window.toast(s.connected ? ('AI connected — ' + s.source) : 'Could not auto-connect', s.connected ? '#34d399' : '#f59e0b');
+        try { window.renderAll && window.renderAll(); } catch (_) {}
+      });
+    };
+
+    host.querySelectorAll('.cs-aimodel').forEach(function (b) {
+      b.onclick = function () {
+        var rt = (state.disc && state.disc.runtimes || []).find(function (x) { return x.id === b.dataset.rt; });
+        if (!rt) { window.toast && window.toast('That runtime is not running — start it or hit Scan', '#f59e0b'); return; }
+        var res = AR.apply({ runtime: rt, model: b.dataset.model });
+        window.toast && window.toast(res.ok ? ('Connected — ' + res.using + ' via ' + res.via + (res.free ? ' (free)' : '')) : ('Failed: ' + res.error), res.ok ? '#34d399' : '#ef4444');
+        rerender(); try { window.renderAll && window.renderAll(); } catch (_) {}
+      };
+    });
+
+    host.querySelectorAll('.cs-aipull').forEach(function (b) {
+      b.onclick = function () {
+        var id = b.dataset.model;
+        b.disabled = true; state.log = '$ ollama pull ' + id + '\n'; rerender();
+        E().ModelManager.pull(id, function (l) { state.log += l; }).then(function (r) {
+          state.log += '\n[exit ' + r.code + ']\n' + (r.output || '');
+          window.toast && window.toast(r.ok ? ('Pulled ' + id) : 'Pull failed — is Ollama installed & running?', r.ok ? '#34d399' : '#ef4444');
+          return scan();
+        });
+      };
+    });
+
+    var pr = host.querySelector('#aiPullRec');
+    if (pr && state.rec) pr.onclick = function () {
+      pr.disabled = true; state.log = '$ ollama pull ' + state.rec.primary + '\n'; rerender();
+      E().ModelManager.pull(state.rec.primary, function (l) { state.log += l; }).then(function (r) {
+        state.log += '\n[exit ' + r.code + ']\n' + (r.output || ''); return scan();
+      });
+    };
+
+    var mb = host.querySelector('#aiManualBtn');
+    if (mb) mb.onclick = function () {
+      var url = (host.querySelector('#aiManualUrl').value || '').trim();
+      var model = (host.querySelector('#aiManualModel').value || '').trim();
+      var key = (host.querySelector('#aiManualKey').value || '').trim();
+      state.manualUrl = url; state.manualModel = model;
+      if (!url || !model) { window.toast && window.toast('Need a base URL and a model id', '#f59e0b'); return; }
+      E().LLM.setConfig({ providerId: 'openai_compat', baseUrl: url, model: model, apiKey: key, enabled: true });
+      window.toast && window.toast('Connected to ' + url + ' (' + model + ')', '#34d399');
+      rerender(); try { window.renderAll && window.renderAll(); } catch (_) {}
+    };
+  }
+
+  /* ---------- Cost Sovereignty ---------- */
+  function costCardHtml() {
+    var C = E().Cost;
+    if (!C) return '';
+    var r = state.cost;
+    var body;
+    if (!r) {
+      body = '<div style="font-size:12.5px;color:var(--muted)">Not analysed yet.</div>';
+    } else {
+      var t = r.totals || {};
+      body =
+        '<div style="font-size:12.5px;margin-bottom:8px">' +
+        '<b style="color:' + (r.zeroCostPathAvailable ? 'var(--good)' : 'var(--warn,#f59e0b)') + '">' +
+        (r.zeroCostPathAvailable ? 'A fully zero-cost / self-hosted path exists.' : (t.mandatoryPaid + ' unavoidable paid dependenc' + (t.mandatoryPaid === 1 ? 'y' : 'ies') + '.')) + '</b></div>' +
+        (r.mandatoryCost && r.mandatoryCost.length ? '<div style="margin-bottom:8px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)">Mandatory cost</div>' +
+          r.mandatoryCost.map(function (m) { return '<div style="font-size:12.5px">• <code>' + esc(m.name) + '</code> (' + esc(m.category) + ') — ' + esc(m.note) + '</div>'; }).join('') + '</div>' : '') +
+        (r.optionalCost && r.optionalCost.length ? '<div style="margin-bottom:8px"><div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted)">Optional cost — free alternative exists</div>' +
+          r.optionalCost.map(function (m) {
+            return '<div style="font-size:12.5px;margin-top:3px">• <code>' + esc(m.name) + '</code> (' + esc(m.category) + ', ' + esc(m.tier) + ')<div style="color:var(--muted);margin-left:12px">zero-cost: ' + esc((m.zeroCostAlternative || []).join('; ') || 'drop it') + '</div></div>';
+          }).join('') + '</div>' : '') +
+        (r.free && r.free.length ? '<div style="font-size:11.5px;color:var(--muted)">Already free: ' + r.free.map(esc).join(', ') + '</div>' : '');
+    }
+    return '<div class="card" style="padding:20px;margin-bottom:18px"><h3 class="cs-h3" style="margin-bottom:14px">Cost Sovereignty</h3>' +
+      body +
+      '<div style="margin-top:12px"><button id="costRunBtn" class="btn primary" style="padding:6px 12px;font-size:12px">Analyse dependencies</button></div>' +
+      '</div>';
+  }
+  function bindCost(host) {
+    var b = host.querySelector('#costRunBtn');
+    if (b) b.onclick = function () {
+      state.cost = E().Cost.analyze({});
+      rerender();
+      window.toast && window.toast('Cost analysis written to .sovereign/cost-analysis.json', '#22d3ee');
+    };
+  }
+
+  /* ---------- Autonomy + Deployment ---------- */
+  function factoryCardHtml() {
+    var A = E().Autonomy, D = E().Deploy;
+    if (!A && !D) return '';
+    var out = '<div class="card" style="padding:20px;margin-bottom:18px"><h3 class="cs-h3" style="margin-bottom:14px">Autonomy &amp; Deployment</h3>';
+
+    if (A) {
+      var lvl = A.get();
+      var desc = A.describe();
+      out += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">How much runs without asking</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:6px">' +
+        A.LEVELS.map(function (l) {
+          var on = l === lvl;
+          return '<button class="cs-autolvl" data-lvl="' + l + '" style="padding:4px 10px;border-radius:6px;font:11.5px JetBrains Mono,monospace;cursor:pointer;border:1px solid ' +
+            (on ? 'var(--good)' : 'var(--line)') + ';background:' + (on ? 'rgba(52,211,153,.10)' : 'var(--bg-2)') + ';color:' + (on ? 'var(--good)' : '#e6e9f2') + '">' + l + '</button>';
+        }).join('') + '</div>' +
+        '<div style="font-size:12px;color:var(--muted);margin-bottom:14px">' + esc(desc.summary) +
+        ' — allows: ' + Object.keys(desc.caps).filter(function (k) { return desc.caps[k]; }).join(', ') + '</div>';
+    }
+
+    if (D) {
+      var dep = null; try { dep = E().Sovereign && E().Sovereign.read('deployment.json'); } catch (_) {}
+      out += '<div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--muted);margin-bottom:6px">Deployment target (generates IaC — never pushes)</div>' +
+        '<select id="depTarget" style="padding:5px 8px;border-radius:6px;background:var(--bg-2);color:#e6e9f2;border:1px solid var(--line);font-size:12px">' +
+        Object.keys(D.TARGETS).map(function (k) {
+          return '<option value="' + k + '"' + (dep && dep.target === k ? ' selected' : '') + '>' + esc(D.TARGETS[k].label) + ' — ' + esc(D.TARGETS[k].cost) + '</option>';
+        }).join('') + '</select> ' +
+        '<button id="depGenBtn" class="btn primary" style="padding:5px 12px;font-size:12px;margin-left:6px">Generate deploy files</button>' +
+        (dep ? '<div style="font-size:11.5px;color:var(--muted);margin-top:8px">Last: <b>' + esc(dep.target) + '</b> · preflight ' +
+          (dep.preflight && dep.preflight.ok ? '<span style="color:var(--good)">ready</span>' : '<span style="color:var(--warn,#f59e0b)">' + ((dep.preflight && dep.preflight.checks || []).filter(function (c) { return !c.ok; }).length) + ' item(s) to fix</span>') +
+          ' · ' + (dep.artifacts || []).length + ' file(s)</div>' : '') +
+        (state.depLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:120px;overflow:auto">' + esc(state.depLog) + '</pre>' : '');
+    }
+
+    return out + '</div>';
+  }
+  function bindFactory(host) {
+    host.querySelectorAll('.cs-autolvl').forEach(function (b) {
+      b.onclick = function () {
+        E().Autonomy.set(b.dataset.lvl);
+        window.toast && window.toast('Autonomy: ' + b.dataset.lvl, '#22d3ee');
+        rerender();
+      };
+    });
+    var g = host.querySelector('#depGenBtn');
+    if (g) g.onclick = function () {
+      var tgt = (host.querySelector('#depTarget') || {}).value || 'compose';
+      if (E().Autonomy && !E().Autonomy.allows('write')) { window.toast && window.toast('Autonomy level "' + E().Autonomy.get() + '" cannot write files', '#f59e0b'); return; }
+      try {
+        var r = E().Deploy.apply(tgt, {});
+        state.depLog = 'wrote:\n  ' + r.wrote.join('\n  ') + '\n\npreflight: ' + (r.preflight.ok ? 'ready' : 'fix ' + r.preflight.checks.filter(function (c) { return !c.ok; }).map(function (c) { return c.name; }).join('; '));
+        window.toast && window.toast('Deploy files for ' + tgt + ' written to the workspace', '#34d399');
+      } catch (e) { state.depLog = 'error: ' + (e && e.message || e); }
+      rerender();
+    };
+  }
+
+  /* ---------- injection ---------- */
+  function fullHtml() {
+    return '<div id="aiExtrasHost">' + localAiCardHtml() + factoryCardHtml() + costCardHtml() + '</div>';
+  }
+  function rerender() {
+    var host = document.getElementById('aiExtrasHost');
+    if (!host) return;
+    host.innerHTML = localAiCardHtml() + factoryCardHtml() + costCardHtml();
+    bindLocalAi(host); bindFactory(host); bindCost(host);
+  }
+
+  function install() {
+    if (!window.renderSettings) { setTimeout(install, 40); return; }
+    if (renderSettings.__aiInjected) return;
+    var original = window.renderSettings;
+    window.renderSettings = function () {
+      var out = original.apply(this, arguments);
+      // Find the Integrations heading *text* (icons are already interpolated
+      // by render time), then the card that contains it, and insert right
+      // before that card. A /card[\s\S]*?Integrations/ match starts at the
+      // FIRST .card/.h3 in the document and spans everything up to
+      // Integrations, landing the host at the top instead of beside it; and
+      // .replace(str, replacement) treats $-sequences in `replacement` as
+      // tokens, so slice() is used instead of String.replace.
+      var headingEnd = out.indexOf('Integrations</h3>');
+      if (headingEnd >= 0) {
+        var cardStart = out.lastIndexOf('<div class="card"', headingEnd);
+        if (cardStart >= 0) return out.slice(0, cardStart) + fullHtml() + '\n      ' + out.slice(cardStart);
+      }
+      var close = out.lastIndexOf('</div>');
+      if (close >= 0) return out.slice(0, close) + fullHtml() + '\n    ' + out.slice(close);
+      return out + fullHtml();
+    };
+    renderSettings.__aiInjected = true;
+
+    if (window.renderAll && !renderAll.__aiHooked) {
+      var ra = window.renderAll;
+      window.renderAll = function () {
+        var r = ra.apply(this, arguments);
+        try {
+          if (window.S && window.S.screen === 'settings') {
+            var host = document.getElementById('aiExtrasHost');
+            if (host && !host.__aiBound) {
+              host.__aiBound = true;
+              rerender();
+              // populate the hardware summary + model-fit column, and OmniRoute's /
+              // OpenClaw's real running/installed state, on first view
+              if (!state.hw && E().Hardware) E().Hardware.probe().then(function (hw) { state.hw = hw; rerender(); });
+              if (!state.omniStatus) refreshOmniStatus();
+              if (!state.openclawStatus) refreshOpenclawStatus();
+            }
+          }
+        } catch (_) { /* best effort */ }
+        return r;
+      };
+      renderAll.__aiHooked = true;
+    }
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install);
+  else install();
+})();

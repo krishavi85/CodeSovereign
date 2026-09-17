@@ -2806,6 +2806,13 @@ function renderRecovery(){
         </div>
       </div>
 
+      ${renderRecoveryAcceptanceGoal()}
+      ${renderRequirementsVerification()}
+      ${renderWiringTrace()}
+      ${renderBuildMatrix()}
+      ${renderFeasibility()}
+      ${renderCompletionAudit()}
+
       <div style="display:grid;grid-template-columns:2fr 1fr;gap:18px">
         <div class="card" style="padding:20px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
@@ -2861,6 +2868,8 @@ function renderRecovery(){
         ${renderSovereignMemory()}
       </div>
 
+      ${renderRuntimeAdapters()}
+
       <div class="card" style="padding:20px;margin-top:18px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <h3 class="cs-h3">Validator Suites</h3>
@@ -2894,6 +2903,15 @@ function renderRecovery(){
           <span style="font-size:12px;color:var(--muted)">symptom → affected components → causal chain → root cause</span>
         </div>
         ${renderRecoveryRootCause()}
+      </div>
+
+      <!-- §59: Blast radius / change-impact -->
+      <div class="card" style="padding:20px;margin-top:18px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <h3 class="cs-h3">Change Impact / Blast Radius</h3>
+          <span style="font-size:12px;color:var(--muted)">pick a file — see every file, test, migration and route a change touches</span>
+        </div>
+        ${renderRecoveryBlastRadius()}
       </div>
 
       <!-- Recovery Engine v2: Mock / Placeholder Detector -->
@@ -3470,6 +3488,13 @@ function bindRecovery(){
   document.querySelectorAll('[data-sovfile]').forEach(function(el){
     el.onclick = function(){ openSovereignFile(el.dataset.sovfile); };
   });
+  var bf = document.getElementById('blastFileSel');
+  if (bf) bf.onchange = function(){ S.blastFile = bf.value; renderAll(); };
+  document.querySelectorAll('[data-adapter]').forEach(function(b){ b.onclick = function(){ runAdapterVerify(b.dataset.adapter); }; });
+  if (window.desktop && window.desktop.trust && !window.__csTrustChecked) {
+    window.__csTrustChecked = true;
+    csRefreshTrust().then(function(){ if (S.screen === 'recovery') renderAll(); });
+  }
   try {
     const host = document.getElementById('crossTabHost');
     if (host && window.renderCrossTabCard) host.innerHTML = window.renderCrossTabCard();
@@ -3639,7 +3664,7 @@ function renderSettings(){
       <div class="card" style="padding:20px">
         <h3 class="cs-h3" style="margin-bottom:14px">${I.sparkle} About</h3>
         <div style="font-size:13px;color:var(--muted);line-height:1.7">
-          <b>CodeSovereign</b> is a sovereign, agentic build environment. Everything runs in your browser
+          <b>CodeSovereign</b> <span id="aboutVersion" style="font:600 12px ui-monospace,monospace;color:var(--fg)">v…</span> — a sovereign, agentic build environment. Everything runs in your browser
           via a virtual file system (<code>cs.fs.v1</code>) and project store (<code>cs.proj.v1</code>).<br>
           The agent fleet &mdash; ${(window.Engine && window.Engine.AGENTS ? window.Engine.AGENTS.map(a => a.id).join(', ') : 'Sovereign-1.5')} &mdash; plan, scaffold, implement,
           validate, and package real working code with no mock data.
@@ -3728,6 +3753,13 @@ function bindSettings(){
   document.querySelectorAll('[data-art]').forEach(el => el.onclick = () => { S.artTab = el.dataset.art; renderAll(); });
   // Tool toggles
   document.querySelectorAll('[data-tool]').forEach(el => el.onclick = () => { S.tools[el.dataset.tool] = !S.tools[el.dataset.tool]; renderAll(); });
+  // About — show the running desktop build version
+  var av = document.getElementById('aboutVersion');
+  if (av) {
+    if (window.desktop && window.desktop.info) {
+      window.desktop.info().then(function(i){ av.textContent = 'v' + ((i && i.app) || '?') + (i && i.electron ? ' · Electron ' + i.electron : ''); }).catch(function(){ av.textContent = ''; });
+    } else { av.textContent = '(web preview)'; }
+  }
 }
 
 /* ============================================================
@@ -3892,9 +3924,10 @@ function renderUniversal() {
     + '</div>'
     // CTAs
     + '<div style="display:flex;gap:10px;margin-top:18px;align-items:center">'
+    +   '<button id="buildUltraFromUniversal" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border:none;border-radius:10px;background:linear-gradient(135deg,#34d399,#22d3ee);color:#04121a;font:700 13.5px Inter,sans-serif;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex">⚡</span>Build with Ultra Mode (closed loop)</button>'
     +   '<button id="runSpecAgent" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border:none;border-radius:10px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 13.5px Inter,sans-serif;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex">' + I.run + '</span>Send to Agent (build code)</button>'
     +   '<button id="openPipelineFromUniversal" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border:1px solid rgba(34,211,238,.4);border-radius:10px;background:rgba(34,211,238,.08);color:#22d3ee;font:600 13.5px Inter,sans-serif;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex">' + I.deploy + '</span>Pick Pipeline</button>'
-    +   '<span class="cs-muted">Sends prompt + build state to the existing Agent and IDE flow.</span>'
+    +   '<span class="cs-muted">Ultra Mode derives a contract, generates the repo, runs real tests/build, observes it, repairs, and gates on the 10-criterion DoD.</span>'
     + '</div>'
   + '</div>';
 }
@@ -3915,10 +3948,15 @@ function bindUniversal() {
     renderAll();
   });
   const buildBtn = a('universalBuild');
-  if (buildBtn) buildBtn.onclick = () => {
+  if (buildBtn) buildBtn.onclick = async () => {
     const pcs = Universal.PromptComposer;
     if (!pcs.isValid()) { toast('Describe the application first', '#f59e0b'); return; }
-    const state = Universal.buildState(pcs.fields);
+    const aiOn = !!(window.Engine && window.Engine.AI && window.Engine.AI.ready && window.Engine.AI.ready());
+    if (aiOn && Universal.buildStateAsync) { buildBtn.disabled = true; buildBtn.textContent = 'Understanding with AI…'; }
+    const state = (aiOn && Universal.buildStateAsync)
+      ? await Universal.buildStateAsync(pcs.fields).catch(() => Universal.buildState(pcs.fields))
+      : Universal.buildState(pcs.fields);
+    buildBtn.disabled = false;
     Universal.writeProjectDocs(state);
     S.univ = S.univ || {};
     S.univ.state = state;
@@ -3941,6 +3979,28 @@ function bindUniversal() {
     if (!S.univ || !S.univ.state) { toast('No build plan yet', '#f59e0b'); return; }
     S.prompt = Universal.PromptComposer.fields.prompt;
     genApp();
+  };
+  const buildUltra = a('buildUltraFromUniversal');
+  if (buildUltra) buildUltra.onclick = () => {
+    const prompt = (Universal.PromptComposer.fields.prompt || '').trim();
+    if (prompt.length < 8) { toast('Describe the application first', '#f59e0b'); return; }
+    const UM = window.Engine && window.Engine.UltraMode;
+    if (!UM || !UM.start) { toast('Ultra Mode engine not loaded', '#ef4444'); return; }
+    if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
+    const st = UM.status && UM.status();
+    const go = () => {
+      buildUltra.disabled = true; buildUltra.textContent = 'Starting Ultra Mode…';
+      const useLLM = !!(window.Engine.AI && window.Engine.AI.ready && window.Engine.AI.ready());
+      UM.start({ prompt, useLLM, injectedContext: (S.univ && S.univ.state) ? { source: 'universal-composer', classification: S.univ.state.classification, stack: S.univ.state.stack } : null })
+        .then(() => { try { renderAll(); } catch (_) {} });
+      S.screen = 'ultra';
+      S.lastPrompt = prompt;
+      renderAll();
+    };
+    if (st && !st.terminal && st.state && st.state !== 'NONE') {
+      if (!confirm('An Ultra Mode run is already in progress — start a new one? The current run will be replaced.')) return;
+      (UM.reset ? UM.reset() : Promise.resolve()).then(go);
+    } else { go(); }
   };
   const openPipeline = a('openPipelineFromUniversal');
   if (openPipeline) openPipeline.onclick = () => {
@@ -4165,6 +4225,23 @@ function renderSovereignMemory(){
     ? 'Real files under <span class="cs-mono">' + esc((window.CSDesktop && CSDesktop.project && CSDesktop.project.root) || 'the open folder') + '\\.sovereign\\</span>'
     : 'In-workspace files (browser mode) — export the project to keep them';
 
+  let trustRow = '';
+  if (desktop) {
+    const tr = window.__csTrust || { trusted: false };
+    trustRow = '<div style="margin-bottom:12px;padding:9px 12px;border:1px solid ' + (tr.trusted ? 'rgba(52,211,153,.3)' : 'rgba(245,158,11,.35)')
+      + ';border-radius:9px;background:' + (tr.trusted ? 'rgba(52,211,153,.06)' : 'rgba(245,158,11,.06)') + ';font-size:12px;display:flex;align-items:center;gap:10px">'
+      + '<span style="color:' + (tr.trusted ? 'var(--good)' : 'var(--warn)') + ';font-weight:600">'
+      + (tr.trusted ? '✓ Trusted folder' : '⚠ Untrusted folder') + '</span>'
+      + '<span style="color:var(--muted);flex:1">' + (tr.trusted
+          ? 'project commands (npm test / build) may run — auto-verification enabled'
+          : 'project commands are blocked until you trust this folder') + '</span>'
+      + (tr.trusted
+          ? '<button class="btn ghost" style="padding:3px 9px;font-size:11px" onclick="csTrustRevoke()">Revoke</button>'
+          : '<button class="btn" style="padding:3px 9px;font-size:11px" onclick="csTrustGrant()">Trust</button>')
+      + '<button class="btn ghost" style="padding:3px 9px;font-size:11px" onclick="csTrustAudit()">Audit log</button>'
+      + '</div>';
+  }
+
   if (!st.initialized) {
     return '<div style="font-size:13px;color:var(--muted);line-height:1.6">'
       + 'No <span class="cs-mono">.sovereign/</span> memory yet. Run the analysis to inventory this workspace’s '
@@ -4235,7 +4312,7 @@ function renderSovereignMemory(){
   return ''
     + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">' + loc
     + (st.lastAnalysisAt ? '  ·  last analysis ' + fmtTimeAgo(st.lastAnalysisAt) : '') + '</div>'
-    + reqLine + metaLine + obsRow + execRow
+    + trustRow + reqLine + metaLine + obsRow + execRow
     + '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">'
       + stat('Health', st.health, st.health>=75?'var(--good)':st.health>=50?'var(--warn)':'var(--err)')
       + stat('Components', c.components)
@@ -4263,6 +4340,66 @@ function runSovereignAnalysis(){
   }, 60);
 }
 
+var CS_ADAPTERS = [
+  ['signing',       'Signing',        'Signing',        'SBOM + provenance + checksums; cosign sign-blob/verify-blob if present'],
+  ['observability', 'Observability',  'Observability',  'Ship a probe span to a local OpenTelemetry Collector'],
+  ['registry',      'Registry',       'Registry',       'npm pack → clean-consumer install → require() smoke (Verdaccio optional)'],
+  ['audio',         'Audio',          'Audio',          'ffmpeg normalize → whisper.cpp / faster-whisper transcription'],
+  ['vision',        'Vision',         'Vision',         'offline screenshot → component tree (runs in the browser)'],
+  ['desktop',       'Desktop',        'Desktop',        'Tauri: cargo check + cargo test; Electron: headless boot smoke'],
+  ['extension',     'Extension',      'Extension',      'MV3 static validation → pack → Playwright load-unpacked']
+];
+
+function renderRuntimeAdapters(){
+  try {
+    if (!window.Engine) return '';
+    var haveBridge = !!(window.desktop && window.desktop.isDesktop && window.CSAdapters && window.CSAdapters.run);
+    var rows = CS_ADAPTERS.filter(function (a){ return window.Engine[a[1]]; }).map(function (a){
+      var eng = window.Engine[a[1]];
+      var ev = null; try { ev = eng.load && eng.load(); } catch (_) {}
+      var st = ev && (ev.status || (ev.support ? (ev.present === false ? 'not present' : (ev.status || 'ready')) : null));
+      var col = /PASS|VERIFIED|SUPPORTED|GENERATED|VALID/i.test(st || '') ? 'var(--good)'
+        : /PARTIAL|BLOCKED|CREDENTIAL/i.test(st || '') ? 'var(--warn)'
+        : /FAIL|ERROR/i.test(st || '') ? 'var(--err)' : 'var(--muted)';
+      return '<div style="display:grid;grid-template-columns:110px 1fr auto;gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--line)">' +
+        '<span style="font:600 12px Inter">' + esc(a[2]) + '</span>' +
+        '<span style="font-size:11.5px;color:var(--muted)" title="' + esc(a[3]) + '">' + esc(a[3]) + (st ? ' · <b style="color:' + col + '">' + esc(String(st)) + '</b>' : '') + '</span>' +
+        '<button class="btn" data-adapter="' + a[0] + '" style="padding:4px 10px;font-size:11px">Verify</button>' +
+        '</div>';
+    }).join('');
+    if (!rows) return '';
+    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+      '<h3 class="cs-h3" style="margin:0">Runtime Adapters</h3>' +
+      '<span class="cs-muted" style="font-size:11.5px">' + (haveBridge ? 'local toolchain bridge available' : 'desktop app + an open folder needed to run these') + '</span></div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">Each capability routes to a local / self-hosted runtime — a missing tool → BLOCKED with the exact install command, never "unsupported".</div>' +
+      rows + '</div>';
+  } catch (e) { return ''; }
+}
+
+function runAdapterVerify(name){
+  var map = { signing: 'Signing', observability: 'Observability', registry: 'Registry', audio: 'Audio', vision: 'Vision', desktop: 'Desktop', extension: 'Extension' };
+  var eng = window.Engine && window.Engine[map[name]];
+  if (!eng || !eng.verify) { toast(name + ' engine not loaded', '#ef4444'); return; }
+  if (name === 'vision') {
+    toast('Vision analysis runs from a design reference — add one via Universal, then Analyze', '#22d3ee');
+    return;
+  }
+  toast('Verifying ' + map[name] + ' adapter…', '#a78bfa');
+  var btn = document.querySelector('[data-adapter="' + name + '"]');
+  if (btn) { btn.disabled = true; btn.textContent = '…'; }
+  Promise.resolve(eng.verify({})).then(function (r){
+    r = r || {};
+    var s = r.status || 'DONE';
+    var col = /PASS|VERIFIED/i.test(s) ? '#34d399' : /PARTIAL|BLOCKED/i.test(s) ? '#f59e0b' : '#ef4444';
+    var msg = map[name] + ': ' + s + (r.reason ? ' (' + r.reason + ')' : '') + (r.need ? ' — provide: ' + r.need : '');
+    toast(msg, col);
+    if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
+    renderAll();
+  }).catch(function (e){ toast(map[name] + ' verify error: ' + (e && e.message || e), '#ef4444'); if (btn) { btn.disabled = false; btn.textContent = 'Verify'; } });
+}
+window.runAdapterVerify = runAdapterVerify;
+
 function runSovereignEvidence(){
   if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
   if (!(window.CSExec && CSExec.available())) { toast('Open a project folder in the desktop app first', '#f59e0b'); return; }
@@ -4284,8 +4421,11 @@ function runSovereignObserve(){
   if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
   if (!(window.CSObserve && CSObserve.available())) { toast('Open a project folder in the desktop app first', '#f59e0b'); return; }
   var url = window.prompt('Runtime URL (blank = detect / start the dev server):', '') || undefined;
-  toast('Observing the running app…', '#a78bfa');
-  Engine.Sovereign.observe(url ? { url: url } : {}).then(function(r){
+  var interactive = window.confirm('Interactive mode?\n\nOK = also click controls that submit forms / trigger actions (dev env with test data only).\nCancel = observation-only (safe: destructive controls are skipped).');
+  var opts = { mode: interactive ? 'interactive' : 'observe' };
+  if (url) opts.url = url;
+  toast('Observing the running app (' + opts.mode + ')…', '#a78bfa');
+  Engine.Sovereign.observe(opts).then(function(r){
     if (!r.ok) { toast(r.reason || 'observation failed', '#f59e0b'); return; }
     var t = r.trace;
     toast('Observed ' + t.controlsExercised + ' controls — ' + JSON.stringify(t.byStatus)
@@ -4305,6 +4445,28 @@ function sovereignSnapshot(){
   } catch (e) { toast('Snapshot failed: ' + e.message, '#ef4444'); }
   renderAll();
 }
+
+function csRefreshTrust(){
+  if (!(window.desktop && window.desktop.trust)) return Promise.resolve();
+  return window.desktop.trust.status().then(function(s){ window.__csTrust = s || { trusted:false }; });
+}
+function csTrustGrant(){
+  if (!(window.desktop && window.desktop.trust)) return;
+  window.desktop.trust.grant().then(function(){ toast('Folder trusted — project commands enabled', '#34d399'); csRefreshTrust().then(renderAll); });
+}
+function csTrustRevoke(){
+  if (!(window.desktop && window.desktop.trust)) return;
+  window.desktop.trust.revoke().then(function(){ toast('Trust revoked', '#f59e0b'); csRefreshTrust().then(renderAll); });
+}
+function csTrustAudit(){
+  if (!(window.desktop && window.desktop.trust)) return;
+  window.desktop.trust.audit(100).then(function(rows){
+    var body = (rows||[]).slice(-40).reverse().map(function(r){ return r.at + '  ' + (r.kind||'?') + '  ' + (r.cmd || r.pid || '') + (r.code!=null?'  ('+r.code+')':''); }).join('\n');
+    if (window.Engine && Engine.Sovereign) { Engine.Sovereign.write('command-audit.txt', body || '(no commands run yet)'); openSovereignFile('command-audit.txt'); }
+    else alert(body || 'no commands run yet');
+  });
+}
+window.csTrustGrant = csTrustGrant; window.csTrustRevoke = csTrustRevoke; window.csTrustAudit = csTrustAudit;
 
 function openSovereignFile(f){
   const path = (Engine.Sovereign.ROOT + '/' + String(f).replace(/^\/+/, ''));
@@ -4420,6 +4582,192 @@ function renderRecoveryWeightedHealth(){
   } catch (e) {
     return '<div style="color:var(--err);font-size:13px">weighted-health error: ' + esc(String(e && e.message || e)) + '</div>';
   }
+}
+
+function renderWiringTrace(){
+  try {
+    var w = null;
+    try { w = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('wiring-trace.json'); } catch (_) {}
+    if (!w || !w.present || !w.entities) return '';
+    var tt = w.totals || {};
+    var sc = tt.brokenChains === 0 ? 'var(--good)' : 'var(--err)';
+    var rows = w.entities.map(function (e){
+      var chain = (e.chain || []).map(function (c){
+        var col = c.ok ? 'var(--good)' : 'var(--err)';
+        return '<span style="color:' + col + '" title="' + esc(c.detail || (c.ok ? '' : 'missing')) + '">' + (c.ok ? '●' : '○') + ' ' + esc(c.link) + '</span>';
+      }).join(' <span style="color:var(--muted)">→</span> ');
+      return '<div style="font-size:11.5px;padding:4px 0;border-top:1px solid var(--line)">' +
+        '<b>' + esc(e.entity) + '</b>' + (e.complete ? '' : ' <span style="color:var(--err)">— ' + esc((e.breaks || [])[0] || 'broken') + '</span>') +
+        '<div style="margin-top:3px">' + chain + '</div></div>';
+    }).join('');
+    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+      '<h3 class="cs-h3" style="margin:0">Wiring Trace <span class="cs-muted" style="font-weight:400;font-size:12px">control → fetch → route → service → data layer → table</span></h3>' +
+      '<span style="font:800 15px Inter;color:' + sc + '">' + (tt.fullyWired || 0) + '/' + (tt.entities || 0) + '</span></div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">' + esc(w.summary || '') + '</div>' + rows + '</div>';
+  } catch (e) { return ''; }
+}
+
+function renderRequirementsVerification(){
+  try {
+    var rec = null;
+    try { rec = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('requirements-verification.json'); } catch (_) {}
+    if (!rec || !rec.requirements) return '';
+    var tt = rec.totals || {};
+    var sc = tt.coverage >= 85 ? 'var(--good)' : tt.coverage >= 55 ? 'var(--warn)' : 'var(--err)';
+    var dot = function (s){ return s === 'verified' ? 'var(--good)' : s === 'partial' ? 'var(--warn)' : (s === 'failing' || s === 'unmet') ? 'var(--err)' : 'var(--muted)'; };
+    var rows = rec.requirements.slice(0, 24).map(function (r){
+      return '<div style="display:grid;grid-template-columns:60px 70px 1fr;gap:8px;align-items:baseline;font-size:11.5px;padding:3px 0">' +
+        '<span style="font:600 10.5px ui-monospace,monospace">' + esc(r.id) + '</span>' +
+        '<span style="color:' + dot(r.status) + ';font-weight:600">' + esc(r.status) + '</span>' +
+        '<span style="color:var(--muted)">' + esc(String(r.statement).slice(0, 90)) + (r.origin === 'implied' ? ' <i>(implied)</i>' : '') + '</span></div>';
+    }).join('');
+    var missing = (rec.missing || []).length
+      ? '<div style="margin-top:8px;font-size:11.5px;color:var(--warn)">Missing (domain-implied): ' + rec.missing.map(function (m){ return esc(m.requirement); }).join(', ') + '</div>' : '';
+    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+      '<h3 class="cs-h3" style="margin:0">Requirements — verification record <span class="cs-muted" style="font-weight:400;font-size:12px">requested · implied · missing · verified</span></h3>' +
+      '<span style="font:800 15px Inter;color:' + sc + '">' + (tt.verified || 0) + '/' + (tt.total || 0) + '</span></div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">' + esc(rec.summary || '') + '</div>' +
+      rows + missing + '</div>';
+  } catch (e) { return ''; }
+}
+
+function renderBuildMatrix(){
+  try {
+    var BM = window.Engine && window.Engine.BuildMatrix;
+    var m = null;
+    try { m = (Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('build-matrix.json')) || (BM && BM.compute && BM.compute()); } catch (_) { m = BM && BM.compute && BM.compute(); }
+    if (!m || !m.rows) return '';
+    var col = function (s){ return /PASS|VERIFIED/.test(s) ? 'var(--good)' : /PARTIAL|GENERATED/.test(s) ? 'var(--warn)' : /BLOCKED/.test(s) ? 'var(--warn)' : /FAIL/.test(s) ? 'var(--err)' : 'var(--muted)'; };
+    var rows = m.rows.filter(function (r){ return r.status !== 'NOT_REQUESTED'; }).map(function (r){
+      var b = (r.blockers || []).slice(0, 1).join('; ');
+      return '<div style="display:grid;grid-template-columns:150px 90px 1fr;gap:10px;align-items:baseline;font-size:11.5px;padding:4px 0;border-top:1px solid var(--line)">' +
+        '<span style="font-weight:600">' + esc(r.label) + (r.target === m.requestedTarget ? ' <span style="color:var(--accent)">◀ requested</span>' : '') + '</span>' +
+        '<span style="color:' + col(r.status) + ';font-weight:700">' + esc(r.status) + '</span>' +
+        '<span style="color:var(--muted)">' + esc(b || (r.stages && Object.keys(r.stages).map(function (k){ return k + ':' + r.stages[k]; }).join(' · ')) || '') + '</span></div>';
+    }).join('');
+    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
+      '<h3 class="cs-h3" style="margin:0">Build Matrix <span class="cs-muted" style="font-weight:400;font-size:12px">truthful per-target status</span></h3></div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">' + esc(m.summary || '') + '</div>' + rows + '</div>';
+  } catch (e) { return ''; }
+}
+
+function renderFeasibility(){
+  try {
+    var f = null;
+    try { f = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('feasibility.json'); } catch (_) {}
+    if (!f || !f.effort) return '';
+    var hc = f.host && f.host.ready === 'ready' ? 'var(--good)' : f.host && f.host.ready === 'missing-tools' ? 'var(--err)' : 'var(--muted)';
+    var missing = (f.host && f.host.checks || []).filter(function (c){ return c.present === false; });
+    return '<div class="card" style="padding:16px 20px;margin-top:18px">' +
+      '<h3 class="cs-h3" style="margin:0 0 6px">Feasibility <span class="cs-muted" style="font-weight:400;font-size:12px">host toolchain · effort · cost</span></h3>' +
+      '<div style="font-size:12px;color:var(--fg)">' + esc(f.summary || '') + '</div>' +
+      (missing.length ? '<div style="margin-top:6px;font-size:11.5px;color:' + hc + '">Install on this machine: ' + missing.map(function (c){ return '<code>' + esc(c.tool) + '</code> (' + esc(c.install) + ')'; }).join(' · ') + '</div>' : '') +
+      ((f.contradictions || []).length ? '<ul style="margin:8px 0 0;padding-left:18px;font-size:11.5px;color:var(--warn)">' + f.contradictions.map(function (c){ return '<li>' + esc(c.conflict) + ' — ' + esc(c.resolution) + '</li>'; }).join('') + '</ul>' : '') +
+      '</div>';
+  } catch (e) { return ''; }
+}
+
+function renderCompletionAudit(){
+  try {
+    var A = window.Engine && window.Engine.Audit;
+    if (!A || !A.run) return '';
+    var a = null;
+    try { a = (Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('completion-audit.json')) || A.run(); } catch (_) { a = A.run(); }
+    if (!a || !a.dimensions) return '';
+    var oc = a.overall >= 85 ? 'var(--good)' : a.overall >= 60 ? 'var(--warn)' : 'var(--err)';
+    var bar = function (d){
+      var c = !d.measured ? 'var(--line)' : d.pct >= 85 ? 'var(--good)' : d.pct >= 55 ? 'var(--warn)' : 'var(--err)';
+      var w = d.measured ? Math.max(2, d.pct) : 100;
+      return '<div style="display:grid;grid-template-columns:130px 1fr 44px;gap:10px;align-items:center;font-size:12px;margin:5px 0">' +
+        '<span title="' + esc(d.basis) + '">' + esc(d.name) + '</span>' +
+        '<span style="height:8px;border-radius:5px;background:var(--bg-2);overflow:hidden"><span style="display:block;height:100%;width:' + w + '%;background:' + c + (d.measured ? '' : ';opacity:.3') + '"></span></span>' +
+        '<span style="text-align:right;color:var(--muted)">' + (d.measured ? d.pct + '%' : '—') + '</span></div>';
+    };
+    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+      '<h3 class="cs-h3" style="margin:0">Completion Audit <span class="cs-muted" style="font-weight:400;font-size:12px">— evidence-backed, per dimension</span></h3>' +
+      '<span style="font:800 18px Inter;color:' + oc + '">' + a.overall + '%</span></div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">' + esc(a.summary) + '</div>' +
+      a.dimensions.map(bar).join('') + '</div>';
+  } catch (e) { return ''; }
+}
+
+function renderRecoveryAcceptanceGoal(){
+  try {
+    var AG = window.Engine && window.Engine.AcceptanceGoal;
+    if (!AG || !AG.evaluate) return '';
+    var g = AG.evaluate({ rebuild: false });
+    var lastLoop = null;
+    try { lastLoop = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('recovery-loop.json'); } catch (_) {}
+    var col = g.met ? 'var(--good)' : (g.hasContract ? 'var(--warn)' : 'var(--muted)');
+    var label = g.met ? 'ACCEPTANCE CRITERIA MET' : (g.hasContract ? (g.satisfied + '/' + g.total + ' REQUIREMENTS VERIFIED') : 'NO CONTRACT — TARGETING VALIDATOR HEALTH');
+    var html = '<div class="card" style="padding:16px 20px;margin-top:18px;border-left:3px solid ' + col + '">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center">' +
+      '<h3 class="cs-h3" style="margin:0">Recovery target — the contract’s acceptance criteria</h3>' +
+      '<span style="font:700 11px Inter;color:' + col + '">' + esc(label) + '</span></div>' +
+      '<div style="font-size:12px;color:var(--muted);margin-top:6px">The autonomous loop stops when these are satisfied against real evidence (Evidence Ledger + Definition-of-Done) — not merely when the validator is clean.</div>';
+    if ((g.gaps || []).length) {
+      html += '<ul style="margin:10px 0 0;padding-left:18px;font-size:12px;color:var(--fg)">' +
+        g.gaps.slice(0, 8).map(function (x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>';
+    }
+    if (lastLoop && lastLoop.acceptance) {
+      var a = lastLoop.acceptance;
+      html += '<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Last loop: ' + esc(lastLoop.status) +
+        ' · ' + (lastLoop.cycles || 0) + ' cycle(s) · ' + (lastLoop.repairedCount || 0) + ' repaired' +
+        (a.improvedFrom ? ' · criteria ' + esc(a.improvedFrom) + ' → ' + (a.criteriaSatisfied != null ? a.criteriaSatisfied + '/' + a.criteriaTotal : '?') : '') + '</div>';
+      if ((lastLoop.hypotheses || []).length) {
+        var held = lastLoop.hypotheses.filter(function (h){ return h.held === true; }).length;
+        html += '<div style="font-size:11.5px;color:var(--muted)">Hypotheses tested: ' + lastLoop.hypotheses.length + ' · held: ' + held + '</div>';
+      }
+    }
+    var prev = null;
+    try { prev = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('recovery-prevention.json'); } catch (_) {}
+    if (prev && (prev.items || []).length) {
+      html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;font-weight:600">Prevention — stop these classes recurring (' + prev.items.length + ')</summary>' +
+        '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--fg)">' +
+        prev.items.map(function (p){ return '<li><b>' + esc(p.code) + '</b> (' + esc(p.class) + '): ' + esc(p.guidance) + '</li>'; }).join('') + '</ul></details>';
+    }
+    return html + '</div>';
+  } catch (e) { return ''; }
+}
+
+function renderRecoveryBlastRadius(){
+  try {
+    var G = window.Engine && window.Engine.Graph;
+    if (!G || !G.blastRadius) return '<div style="color:var(--muted);font-size:13px">Engine.Graph not loaded</div>';
+    G.build();
+    var files = (G.files || []).filter(function(p){ return /\.(js|mjs|ts|jsx|tsx|sql|json|ya?ml)$/.test(p) && !/\/(node_modules|\.sovereign)\//.test(p); }).sort();
+    if (!files.length) return '<div style="color:var(--muted);font-size:13px">No project files yet — generate or open a project.</div>';
+    var sel = (S.blastFile && files.indexOf(S.blastFile) >= 0) ? S.blastFile : files[0];
+    var r = G.blastRadius(sel);
+    var riskColor = r.risk === 'high' ? 'var(--err)' : r.risk === 'medium' ? 'var(--warn)' : 'var(--good)';
+    var chip = function(label, arr, col){
+      if (!arr || !arr.length) return '';
+      return '<div style="margin-top:8px"><div style="font:600 10.5px Inter;color:' + col + ';text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">' + label + ' (' + arr.length + ')</div>' +
+        '<div style="display:flex;flex-wrap:wrap;gap:4px">' + arr.map(function(x){ return '<span style="font:11px ui-monospace,monospace;padding:2px 7px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px">' + esc(x) + '</span>'; }).join('') + '</div></div>';
+    };
+    var html = '<label style="font-size:12px;color:var(--muted)">File changed</label>' +
+      '<select id="blastFileSel" style="display:block;width:100%;max-width:520px;margin:6px 0 12px;padding:7px 9px;background:var(--bg);border:1px solid var(--line);border-radius:7px;color:var(--fg);font:12px ui-monospace,monospace">' +
+      files.map(function(f){ return '<option value="' + esc(f) + '"' + (f === sel ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('') + '</select>';
+    html += '<div style="padding:12px;border-left:3px solid ' + riskColor + ';background:rgba(124,92,255,.04);border-radius:4px">' +
+      '<div style="font-size:13px;line-height:1.6">' + esc(r.summary) + '</div>' +
+      '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' +
+      '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;background:' + riskColor + ';color:#0a0e1a">RISK: ' + esc(r.risk.toUpperCase()) + '</span>' +
+      (r.needsMigration ? '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;border:1px solid var(--warn);color:var(--warn)">MIGRATION</span>' : '') +
+      (r.needsRebuild ? '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;border:1px solid var(--accent);color:var(--accent)">REBUILD</span>' : '') +
+      (r.needsRedeploy ? '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;border:1px solid var(--info);color:var(--info)">REDEPLOY</span>' : '') +
+      '</div></div>';
+    html += chip('Source files', r.buckets.sourceFiles, 'var(--fg)');
+    html += chip('Tests to re-run', r.buckets.tests, 'var(--good)');
+    html += chip('Migrations', r.buckets.migrations, 'var(--warn)');
+    html += chip('Routes affected', r.routesTouched, 'var(--accent)');
+    html += chip('DB tables', r.tablesTouched, 'var(--info)');
+    html += chip('Config / build', r.buckets.config, 'var(--muted)');
+    return html;
+  } catch (e) { return '<div style="color:var(--err);font-size:13px">Blast radius failed: ' + esc(e && e.message || e) + '</div>'; }
 }
 
 function renderRecoveryRootCause(){
@@ -5043,6 +5391,13 @@ function repairWorkspace(){
 // alone. On failure, offer to roll the working tree back via git.
 function desktopVerifyRepair(run){
   if (!(window.CSExec && CSExec.available())) return;
+  // Do not run project commands automatically in a folder the user hasn't trusted.
+  CSExec.trusted().then(function(ok){
+    if (!ok) { toast('Repair applied. Trust this folder (Sovereign card) to auto-verify with real test + build.', '#f59e0b'); return; }
+    _desktopVerifyRepairRun(run);
+  });
+}
+function _desktopVerifyRepairRun(run){
   toast('Verifying repair with real test + build…', '#a78bfa');
   Promise.resolve()
     .then(() => CSExec.test())

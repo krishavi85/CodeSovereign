@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co https://api.openai.com https://api.minimaxi.chat https://api.minimax.chat https://api.anthropic.com https://api.github.com https://github.com https://api.vercel.com https://www.googleapis.com https://gmail.googleapis.com https://oauth2.googleapis.com https://accounts.google.com https://mcp.context7.com https://mcp.supabase.com https://mcp.sentry.dev http://127.0.0.1:8080 http://localhost:8080 http://127.0.0.1:8081 http://localhost:8081 http://127.0.0.1:1234 http://localhost:1234 http://127.0.0.1:3100 http://localhost:3100 http://127.0.0.1:54321 http://localhost:54321; frame-src 'self' data: blob:">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:1234 http://localhost:1234 http://127.0.0.1:1337 http://localhost:1337 http://127.0.0.1:3100 http://localhost:3100 http://127.0.0.1:8000 http://localhost:8000 http://127.0.0.1:8080 http://localhost:8080 http://127.0.0.1:8081 http://localhost:8081 http://127.0.0.1:11434 http://localhost:11434 http://127.0.0.1:20128 http://localhost:20128 http://127.0.0.1:18789 http://localhost:18789 http://127.0.0.1:54321 http://localhost:54321 https://*.supabase.co https://api.openai.com https://api.minimaxi.chat https://api.minimax.chat https://api.anthropic.com https://api.github.com https://github.com https://api.vercel.com https://www.googleapis.com https://gmail.googleapis.com https://oauth2.googleapis.com https://accounts.google.com https://mcp.context7.com https://mcp.supabase.com https://mcp.sentry.dev https://openrouter.ai https://api.together.xyz https://api.groq.com https://api.mistral.ai https://api.deepseek.com https://generativelanguage.googleapis.com; frame-src 'self' data: blob:">
 <meta name="referrer" content="strict-origin-when-cross-origin">
 <meta name="x-content-type-options" content="nosniff">
 <title>CodeSovereign — AI App Factory</title>
@@ -191,6 +191,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="engine.recovery.js"></script>
 <script src="engine.recovery.v4.js"></script>
 <script src="engine.ast.js"></script>
+<script src="engine.refactor.js"></script>
+<script src="engine.upgrade.js"></script>
 <script src="engine.mockscan.js"></script>
 <script src="engine.pipeline-parse.js"></script>
 <script src="engine.requirements.js"></script>
@@ -221,7 +223,79 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="app.ratings.js"></script>
 <script src="app.actions.js"></script>
 <script src="app.oauth.js"></script>
+<!-- AI: hardware intelligence -> local model lifecycle -> local inference router -> facade -> cost sovereignty -->
+<script src="engine.hardware.js"></script>
+<script src="engine.modelmanager.js"></script>
+<script src="engine.airouter.js"></script>
+<script src="engine.ai.js"></script>
+<script src="engine.cost.js"></script>
+<!-- Repo-scale generation: schema/migrations/data-layer -> auth -> async infra -> REST backend -> full-repo scaffold -->
+<script src="engine.schema.js"></script>
+<script src="engine.auth.js"></script>
+<script src="engine.jobs.js"></script>
+<script src="engine.graphql.js"></script>
+<script src="engine.realtime.js"></script>
+<script src="engine.frontends.js"></script>
+<script src="engine.pybackend.js"></script>
+<script src="engine.microservices.js"></script>
+<script src="engine.backend.js"></script>
+<script src="engine.localize.js"></script>
+<script src="engine.scaffold.js"></script>
+<!-- product security scan + testing factory + deployment IaC -->
+<script src="engine.security.js"></script>
+<script src="engine.archrules.js"></script>
+<script src="engine.privacy.js"></script>
+<script src="engine.a11y.js"></script>
+<script src="engine.visualcheck.js"></script>
+<script src="engine.design.js"></script>
+<script src="engine.depintel.js"></script>
+<script src="engine.perfcheck.js"></script>
+<script src="engine.testgen.js"></script>
+<script src="engine.deploy.js"></script>
+<script src="engine.cicd.js"></script>
+<script src="engine.bootstrap.js"></script>
+<script src="engine.release.js"></script>
+<script src="engine.docs.js"></script>
+<script src="engine.delivery.js"></script>
+<!-- graduated autonomy + specialist agents -->
+<script src="engine.autonomy.js"></script>
+<script src="engine.agents.js"></script>
+<!-- P0 pipeline: product contract -> evidence ledger -> definition-of-done gate -> orchestrator -->
+<script src="engine.intake.js"></script>
+<script src="engine.intent.js"></script>
+<script src="engine.contract.js"></script>
+<script src="engine.feasibility.js"></script>
+<script src="engine.ledger.js"></script>
+<script src="engine.quality.js"></script>
+<script src="engine.dod.js"></script>
+<script src="engine.audit.js"></script>
+<script src="engine.journeys.js"></script>
+<script src="engine.features.js"></script>
+<script src="engine.decisions.js"></script>
+<script src="engine.conventions.js"></script>
+<script src="engine.orchestrator.js"></script>
+<!-- Runtime adapters: native mobile / ML training / blockchain via target-specific execution + verification -->
+<script src="engine.runtime-router.js"></script>
+<script src="engine.blockchain.js"></script>
+<script src="engine.mobile.ios.js"></script>
+<script src="engine.mobile.js"></script>
+<script src="engine.ml.js"></script>
+<!-- Offline capability adapters: audio / vision / registry / signing / observability / extension / desktop -->
+<script src="engine.audio.js"></script>
+<script src="engine.vision.js"></script>
+<script src="engine.registry.js"></script>
+<script src="engine.packaging.js"></script>
+<script src="engine.signing.js"></script>
+<script src="engine.observability.js"></script>
+<script src="engine.extension.js"></script>
+<script src="engine.desktop.js"></script>
+<script src="engine.buildmatrix.js"></script>
+<script src="engine.wiring.js"></script>
+<!-- Ultra Mode closed loop: prompt -> contract -> plan -> generate -> execute -> observe -> repair -> DoD -> VERIFIED -->
+<script src="engine.ultramode.js"></script>
 <script src="app.js"></script>
+<script src="app.ai.extras.js"></script>
+<script src="app.ultramode.js"></script>
 <script src="app.stack.js"></script>
 <script src="app.orchestra.js"></script>
 <script src="app.runtime.js"></script>
@@ -232,6 +306,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="desktop/desktop-terminal.js"></script>
 <script src="desktop/desktop-git.js"></script>
 <script src="desktop/desktop-exec.js"></script>
+<script src="desktop/desktop-adapters.js"></script>
 <script src="desktop/desktop-mcp.js"></script>
 <script src="desktop/desktop-observe.js"></script>
 <script src="desktop/desktop-app.js"></script>

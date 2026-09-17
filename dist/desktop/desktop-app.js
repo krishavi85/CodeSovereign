@@ -65,6 +65,8 @@
     window.S.screen = 'ide';
     try { window.syncBuildFromFS && window.syncBuildFromFS(); } catch (_) {}
     refreshRecents();
+    window.__csTrustChecked = false;       // re-check trust for the newly opened folder
+    if (window.csRefreshTrust) window.csRefreshTrust();
     rerender();
     if (res.truncated) toast('Large project — only the first files were loaded into the editor', '#f59e0b');
     return true;

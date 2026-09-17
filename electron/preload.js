@@ -33,7 +33,8 @@ contextBridge.exposeInMainWorld('desktop', {
     createProject: (opts) => invoke('ws:createProject', opts),
     readTree: () => invoke('ws:readTree'),
     reveal: (rel) => invoke('ws:reveal', rel),
-    exportZip: () => invoke('ws:exportZip')
+    exportZip: () => invoke('ws:exportZip'),
+    exportDelivery: () => invoke('ws:exportDelivery')
   },
 
   fs: {
@@ -49,8 +50,17 @@ contextBridge.exposeInMainWorld('desktop', {
     spawnAllowed: (opts) => invoke('proc:spawnAllowed', opts),
     write: (id, data) => invoke('proc:write', id, data),
     kill: (id) => invoke('proc:kill', id),
+    killAll: () => invoke('proc:killAll'),
+    running: () => invoke('proc:running'),
     run: (opts) => invoke('proc:run', opts),
     onData: (cb) => subscribe('proc:data', cb)
+  },
+
+  trust: {
+    status: () => invoke('trust:status'),
+    grant: () => invoke('trust:grant'),
+    revoke: () => invoke('trust:revoke'),
+    audit: (limit) => invoke('trust:audit', limit)
   },
 
   mcp: {
@@ -74,6 +84,7 @@ contextBridge.exposeInMainWorld('desktop', {
     read: () => invoke('obs:read'),
     crawl: (opts) => invoke('obs:crawl', opts),
     screenshot: () => invoke('obs:screenshot'),
+    visualProbe: (opts) => invoke('obs:visualProbe', opts),
     stop: () => invoke('obs:stop')
   },
 
@@ -94,5 +105,21 @@ contextBridge.exposeInMainWorld('desktop', {
     list: () => invoke('snap:list'),
     create: (reason) => invoke('snap:create', reason),
     restore: (id) => invoke('snap:restore', id)
+  },
+
+  hardware: {
+    probe: () => invoke('hw:probe')
+  },
+
+  adapters: {
+    probe: () => invoke('adapter:probe'),
+    run: (kind, opts) => invoke('adapter:run', { kind, opts })
+  },
+
+  ai: {
+    discover: () => invoke('ai:discover'),
+    request: (opts) => invoke('ai:request', opts),
+    omniroute: (action) => invoke('ai:omniroute', action),
+    openclaw: (action) => invoke('ai:openclaw', action)
   }
 });

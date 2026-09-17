@@ -1,0 +1,13 @@
+{
+  "name": "acceptance-taskboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A tiny full-stack task board — the CodeSovereign end-to-end acceptance fixture.",
+  "scripts": {
+    "dev": "node server.js --port=4319",
+    "start": "node server.js --port=4319",
+    "build": "node scripts/build.js",
+    "test": "node --test",
+    "lint": "node scripts/lint.js"
+  }
+}
