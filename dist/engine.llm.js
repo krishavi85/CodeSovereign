@@ -39,7 +39,7 @@
   const PROVIDERS = [
     {
       id: "omniroute",
-      label: "OmniRoute — local gateway, free (no key)",
+      label: "OmniRoute — local gateway, ~150 free tiers",
       baseUrl: "http://localhost:20128",
       chatPath: "/v1/chat/completions",
       defaultModel: "auto",
@@ -48,7 +48,7 @@
       keyHeader: "Authorization",
       keyPrefix: "Bearer ",
       keyless: true,
-      notes: "Self-hosted gateway (github.com/diegosouzapw/OmniRoute) that fans out to 350+ providers incl. ~150 free tiers. `auto` needs no key. Start it from the Local AI card."
+      notes: "Self-hosted gateway (github.com/diegosouzapw/OmniRoute) that fans out to 350+ providers incl. ~150 free tiers. Start it from the Local AI card — a brand-new instance may need no key; once it's set up with real provider connections its HTTP API needs one, free from its own dashboard (http://localhost:20128/dashboard)."
     },
     {
       id: "minimax",
@@ -380,14 +380,23 @@
       : messages;
     const url = provider.baseUrl.replace(/\/+$/, "") + (provider.chatPath || "/v1/chat/completions");
     const headers = { "Content-Type": "application/json" };
+    // NOTE: a keyless-flagged provider (OmniRoute's default design) sends no
+    // Authorization header at all when no key is set — there is no working
+    // placeholder token to send instead. A deployment that has been set up
+    // with real provider connections requires a real key; see the 401 hint
+    // below (the dashboard issues one).
     if (cfg.apiKey) headers[provider.keyHeader || "Authorization"] = (provider.keyPrefix || "Bearer ") + cfg.apiKey;
-    else if (provider.keyless) headers["Authorization"] = "Bearer omniroute";
     const body = { model: cfg.model || provider.defaultModel || "auto", messages: msgs,
       temperature: opts.temperature == null ? 0.2 : opts.temperature, max_tokens: opts.maxTokens || 2048 };
     if (opts.json && provider.supportsJson) body.response_format = { type: "json_object" };
     const res = await httpText(url, { method: "POST", headers, body: JSON.stringify(body) });
     const raw = await res.text();
-    if (!res.ok) throw new Error("HTTP " + res.status + " " + (raw || "").slice(0, 240));
+    if (!res.ok) {
+      if (res.status === 401 && provider.id === "omniroute") {
+        throw new Error("OmniRoute needs an API key for its HTTP API — open " + provider.baseUrl + "/dashboard, generate a free key, and paste it in Settings.");
+      }
+      throw new Error("HTTP " + res.status + " " + (raw || "").slice(0, 240));
+    }
     let data = null; try { data = JSON.parse(raw); } catch (_) {}
     const text = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || raw;
     return { text: String(text || ""), model: body.model, provider: provider.id };
@@ -1609,7 +1618,13 @@
         url: req.url,
         provider: provider.id
       };
-      if (!res.ok && res.status === 401 && isLocalEndpoint(provider, cfg)) {
+      if (!res.ok && res.status === 401 && provider.id === "omniroute") {
+        // Some OmniRoute deployments truly need no key; an instance that has
+        // been set up with real provider connections (the common case once
+        // you have used it before) requires one for its HTTP API even though
+        // `auto` itself is free. The dashboard issues one in a couple of clicks.
+        out.hint = "This OmniRoute server requires an API key for its HTTP API. Open " + provider.baseUrl + "/dashboard, generate a free key, and paste it above.";
+      } else if (!res.ok && res.status === 401 && isLocalEndpoint(provider, cfg)) {
         out.hint = cfg.localToken
           ? "The local server rejected this token. In LM Studio open Developer → Local Server and copy the current API token."
           : "This local server requires a Bearer token. Paste the LM Studio API token in the field above — it is sent only to localhost, never as your cloud key.";

@@ -46,14 +46,19 @@
       : os_ ? (os_.installed ? 'Installed, not running' : 'Not started')
       : 'Checking…';
     var omniBtn = omniRunning
-      ? '<button id="aiOmniStopBtn" class="btn ghost" style="padding:5px 12px;font-size:12px">' + (state.omniStopping ? 'Stopping…' : 'Stop OmniRoute') + '</button>'
+      ? '<button id="aiOmniStopBtn" class="btn ghost" style="padding:5px 12px;font-size:12px">' + (state.omniStopping ? 'Stopping…' : 'Stop OmniRoute') + '</button>' +
+        ' <a href="http://127.0.0.1:20128/dashboard" target="_blank" rel="noopener" style="font-size:11.5px;color:var(--accent);margin-left:8px">Open dashboard ↗</a>'
       : '<button id="aiOmniBtn" class="btn primary" style="padding:5px 12px;font-size:12px">' + (state.omniBusy ? 'Starting…' : 'Enable free AI (OmniRoute)') + '</button>';
+    // "no key" only holds for a brand-new instance; one that has been set up
+    // with real provider connections needs a key from its own dashboard for
+    // its HTTP API even though the CLI's own auth is separate — see the 401
+    // hint on Test connection / a failed chat for the exact fix-it text.
     var omni = '<div style="padding:10px 12px;border:1px solid #7c5cff;border-radius:8px;background:rgba(124,92,255,.06);margin-bottom:8px">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
-      '<div style="font-weight:600">OmniRoute — free AI gateway <span style="font-size:10px;color:var(--muted);font-weight:400">no key · ~150 free provider tiers · MIT</span></div>' +
+      '<div style="font-weight:600">OmniRoute — free AI gateway <span style="font-size:10px;color:var(--muted);font-weight:400">~150 free provider tiers · MIT</span></div>' +
       '<span style="font-size:11px;display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:' + omniDotColor + ';display:inline-block"></span><span style="color:' + omniDotColor + '">' + esc(omniStatusText) + '</span></span>' +
       '</div>' +
-      '<div style="font-size:11.5px;color:var(--muted);margin:4px 0 8px">Runs <code>npx omniroute serve</code> locally (in-app — no terminal) and routes <code>model:"auto"</code> across free tiers with automatic fallback.</div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin:4px 0 8px">Runs <code>npx omniroute serve</code> locally (in-app — no terminal) and routes <code>model:"auto"</code> across free tiers with automatic fallback. A fresh instance may need no key; once it is set up with real provider connections its HTTP API needs a free key from its own dashboard.</div>' +
       omniBtn +
       (state.omniLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:100px;overflow:auto">' + esc(state.omniLog) + '</pre>' : '') +
       '</div>';
