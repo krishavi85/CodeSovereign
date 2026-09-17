@@ -18,7 +18,9 @@
   var CSDesktop = {
     info: null,
     project: null,          // { id, name, template, root, createdAt }
-    recents: []
+    recents: [],
+    booting: true,          // true until the automatic "reopen last project" settles
+    pendingBoot: []
   };
   window.CSDesktop = CSDesktop;
 
@@ -346,19 +348,50 @@
   window.createProjectFromTemplate = function (name, templateId) { newProjectFlow({ name: name, templateId: templateId }); };
   window.openProject = function (id) { openFolder(id); };
 
+  // Guard genApp/runAgent against the boot-time race: the last project is
+  // reopened asynchronously (refreshRecents -> openFolder -> applyTree). If a
+  // prompt runs before that settles, Engine.Proj.current() sees no project,
+  // genApp/runAgent spin up a scratch project via Engine.Proj.create(), the
+  // Agent writes real files into memory-only FS._data (nothing disk-backed
+  // yet), and then the in-flight reopen finishes and FS.__loadFromDisk()
+  // wholesale-replaces FS._data with the old folder's contents — silently
+  // discarding everything the agent just built, with no error and no trace.
+  // Defer instead of racing: queue the call and run it once boot settles.
+  function guardAgentEntry(name) {
+    var orig = window[name];
+    window[name] = function () {
+      if (!CSDesktop.booting) return orig.apply(this, arguments);
+      var args = arguments;
+      var self = this;
+      toast('Loading your last project — running this as soon as it’s ready…', '#a78bfa');
+      CSDesktop.pendingBoot.push(function () { window[name].apply(self, args); });
+    };
+  }
+  guardAgentEntry('genApp');
+  guardAgentEntry('runAgent');
+
   function boot() {
     D.info().then(function (i) { CSDesktop.info = i; });
     migrateLlmKey();
     D.app.onMenu(handleMenu);
 
+    function finishBoot() {
+      if (!CSDesktop.booting) return;
+      CSDesktop.booting = false;
+      var q = CSDesktop.pendingBoot;
+      CSDesktop.pendingBoot = [];
+      q.forEach(function (fn) { try { fn(); } catch (_) {} });
+    }
+
     refreshRecents().then(function () {
       var last = CSDesktop.recents[0];
       if (last && last.path) {
-        openFolder(last.path).then(function () { ensureBanner(); });
+        openFolder(last.path).then(function () { ensureBanner(); finishBoot(); }).catch(finishBoot);
       } else {
         ensureBanner();
+        finishBoot();
       }
-    });
+    }, finishBoot);
 
     // Keep the banner in sync after every render.
     var _ra = window.renderAll;
