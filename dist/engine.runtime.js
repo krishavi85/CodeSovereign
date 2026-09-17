@@ -299,11 +299,16 @@
     const time = raw.match(/^(\d+\s*(m|h|min|minutes|hours))\b/i) || raw.match(/\b(\d+\s*(m|h))\b/i);
     let objective = raw.replace(/^\s*\/goal\b/i, '').trim();
     let notice = null;
+    let deadlineMs = null;
     if (time) {
-      notice = 'time-limited goals are not supported yet';
+      const n = parseInt(time[1], 10);
+      const unit = String(time[2] || time[0]).toLowerCase();
+      const hours = /^h/.test(unit);
+      deadlineMs = n * (hours ? 3600000 : 60000);
+      notice = 'time-limited goal · deadline ' + n + (hours ? 'h' : 'm');
       objective = objective.replace(time[0], '').replace(/^\s*[-:]\s*/, '').trim() || objective;
     }
-    return { ok: !!objective, objective: objective, recurringHint: every, notice: notice };
+    return { ok: !!objective, objective: objective, recurringHint: every, notice: notice, deadlineMs: deadlineMs };
   }
 
   async function healOnce(g, onStep) {
@@ -343,6 +348,8 @@
       id: uid('goal'),
       objective: parsed.objective,
       notice: parsed.notice,
+      deadlineMs: parsed.deadlineMs || null,
+      deadlineAt: parsed.deadlineMs ? (now() + parsed.deadlineMs) : null,
       status: 'active',
       rounds: 0,
       steps: [],
@@ -352,10 +359,15 @@
     onStep && onStep({ kind: 'goal', text: 'GOAL: ' + g.objective });
     const cap = (Engine.Loop && Engine.Loop.SAFETY_CAP) || 48;
     for (let i = 0; i < cap && g.status === 'active'; i++) {
+      if (g.deadlineAt && now() >= g.deadlineAt) {
+        g.status = 'expired';
+        onStep && onStep({ kind: 'goal', text: 'Deadline reached — stopping the healer' });
+        break;
+      }
       await healOnce(g, onStep);
       if (g.status === 'satisfied') break;
     }
-    if (g.status !== 'satisfied') g.status = 'capped';
+    if (g.status === 'active') g.status = 'capped';
     goals[g.id] = g;
     const s = rtState();
     s.lastGoal = { id: g.id, objective: g.objective, status: g.status, rounds: g.rounds };
@@ -368,7 +380,17 @@
     create(objective) {
       const parsed = parseGoal(objective);
       if (!parsed.ok) return parsed;
-      const g = { id: uid('goal'), objective: parsed.objective, notice: parsed.notice, status: 'active', rounds: 0, steps: [], created: now() };
+      const g = {
+        id: uid('goal'),
+        objective: parsed.objective,
+        notice: parsed.notice,
+        deadlineMs: parsed.deadlineMs || null,
+        deadlineAt: parsed.deadlineMs ? (now() + parsed.deadlineMs) : null,
+        status: 'active',
+        rounds: 0,
+        steps: [],
+        created: now()
+      };
       goals[g.id] = g;
       return g;
     },

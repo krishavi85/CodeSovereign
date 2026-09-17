@@ -394,16 +394,13 @@ tier: 'recovery',
   }
 
   async function _runExternal(p, args) {
-    // External plugins are not literally callable in the browser sandbox
-    // without a host bridge.  We give a deterministic "ping" result
-    // that includes the install command, capabilities, and a synthetic
-    // latency.  This is enough for the user to confirm the plugin is
-    // wired into the Recovery Engine and that install/detect/run flow works.
-    await new Promise(r => setTimeout(r, 30 + Math.random() * 60));
+    if (window.Engine && Engine.MCP && Engine.MCP.invoke) {
+      return Engine.MCP.invoke(p.id, args || {});
+    }
     return {
-      ok: true,
-      capability: 'ping',
-      output: '[external] ' + p.name + ' :: install="' + (p.install || '(none)') + '" :: cap=' + (p.capabilities || []).length
+      ok: false,
+      capability: 'mcp',
+      output: 'external MCP requires desktop stdio or a live HTTP/SSE URL'
     };
   }
 

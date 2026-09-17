@@ -50,6 +50,71 @@
     writePath(path, JSON.stringify(obj, null, 2));
     return obj;
   }
+
+  function cred(key) {
+    try {
+      if (window.EngineExtras && EngineExtras.CredentialBroker && EngineExtras.CredentialBroker.get) {
+        const v = EngineExtras.CredentialBroker.get(key);
+        if (v) return v;
+      }
+    } catch (_) {}
+    try {
+      const v = localStorage.getItem('cs.cred.' + key);
+      if (v) return v;
+    } catch (_) {}
+    return '';
+  }
+  async function credAsync(key) {
+    try {
+      if (window.desktop && desktop.creds && desktop.creds.get) {
+        const r = await desktop.creds.get(key);
+        if (r && r.value) return r.value;
+      }
+    } catch (_) {}
+    return cred(key);
+  }
+  function accessToken(rec) {
+    if (!rec) return '';
+    if (typeof rec === 'string') return rec;
+    return rec.access_token || rec.token || rec.value || '';
+  }
+  async function liveHttp(url, opts) {
+    opts = opts || {};
+    const headers = Object.assign({}, opts.headers || {});
+    const method = String(opts.method || 'GET').toUpperCase();
+    let body = opts.body;
+    if (body && typeof body !== 'string') {
+      body = JSON.stringify(body);
+      if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+    }
+    try {
+      const r = await fetch(url, { method: method, headers: headers, body: body });
+      const text = await r.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch (_) {}
+      return { ok: r.ok, status: r.status, json: json, text: text, live: true, via: 'fetch' };
+    } catch (e) {
+      try {
+        if (window.desktop && desktop.net && desktop.net.fetch) {
+          const r = await desktop.net.fetch({ url: url, method: method, headers: headers, body: body, timeoutMs: opts.timeoutMs });
+          return {
+            ok: !!(r && r.ok),
+            status: r && r.status,
+            json: r && r.json,
+            text: r && r.text,
+            live: true,
+            via: 'desktop',
+            error: r && r.error
+          };
+        }
+      } catch (e2) {
+        return { ok: false, live: true, error: String(e2 && e2.message || e2), via: 'desktop' };
+      }
+      return { ok: false, live: true, error: String(e && e.message || e), via: 'fetch', blocked: true };
+    }
+  }
+
+  const stdioSessions = {};
   function snapshotFs() {
     const out = {};
     listPaths().forEach(function (p) {
@@ -226,15 +291,22 @@
       at: now()
     };
     if (transport === 'stdio') {
-      rec.connected = !!(window.CSExec && CSExec.available && CSExec.available());
+      rec.connected = !!(window.CSMcp && CSMcp.available && CSMcp.available()) || !!(window.desktop && desktop.mcp);
       rec.note = rec.connected
-        ? 'stdio spawn allowed on desktop host'
+        ? 'stdio JSON-RPC spawn on the desktop host'
         : 'stdio requires the desktop host; config is recorded';
     } else {
-      rec.connected = !!(rec.url && oauthFor(rec.id));
-      rec.note = rec.connected
-        ? (transport + ' + OAuth token present')
-        : (transport + ' remote; OAuth token missing — authorize to call the live server');
+      const tok = oauthFor(rec.id);
+      if (!rec.url) {
+        rec.connected = false;
+        rec.note = 'URL required for live ' + transport;
+      } else if (rec.auth === 'oauth' && !tok) {
+        rec.connected = false;
+        rec.note = transport + ' URL set; OAuth token missing for private servers';
+      } else {
+        rec.connected = true;
+        rec.note = transport + ' live HTTP' + (tok ? ' + OAuth' : '');
+      }
     }
     const s = mcpState();
     s.servers[rec.id] = rec;
@@ -303,6 +375,82 @@
     return { ok: false, tool: name, error: 'unknown MCP tool' };
   }
 
+  function parseStdioCmd(server) {
+    const raw = String((server && (server.command || server.install)) || '').trim();
+    if (!raw) return null;
+    const parts = raw.split(/\s+/);
+    const cmd = parts[0];
+    const args = parts.slice(1);
+    if (args[0] === '-y' || cmd === 'npx') {
+      return { cmd: cmd, args: args };
+    }
+    return { cmd: cmd, args: args };
+  }
+
+  async function mcpStdioCall(server, tool, args) {
+    const api = (window.CSMcp && CSMcp.available && CSMcp.available()) ? window.CSMcp
+      : (window.desktop && desktop.mcp ? desktop.mcp : null);
+    if (!api || !api.start) {
+      return { attempted: false };
+    }
+    const spec = parseStdioCmd(server) || { cmd: 'npx', args: ['-y', '@modelcontextprotocol/server-filesystem', '.'] };
+    try {
+      let sid = stdioSessions[server.id];
+      if (!sid) {
+        const started = await api.start({ cmd: spec.cmd, command: spec.cmd, args: spec.args, cwd: '.' });
+        if (!started || started.ok === false) {
+          return { attempted: true, ok: false, live: true, transport: 'stdio', error: (started && started.error) || 'stdio spawn failed' };
+        }
+        sid = started.id;
+        stdioSessions[server.id] = sid;
+        await api.request(sid, 'initialize', {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'CodeSovereign', version: '1' }
+        });
+      }
+      const rpc = await api.request(sid, 'tools/call', { name: tool || 'ping', arguments: args || {} });
+      const msg = rpc && (rpc.rpc || rpc.message || rpc);
+      return {
+        attempted: true,
+        ok: !(msg && msg.error),
+        live: true,
+        transport: 'stdio',
+        result: msg && (msg.result || msg)
+      };
+    } catch (e) {
+      return { attempted: true, ok: false, live: true, transport: 'stdio', error: String(e && e.message || e) };
+    }
+  }
+
+  async function mcpHttpCall(server, tool, args) {
+    if (!server || !server.url) return { attempted: false };
+    const headers = { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' };
+    const tok = accessToken(oauthFor(server.id));
+    if (tok) headers.Authorization = 'Bearer ' + tok;
+    const payload = {
+      jsonrpc: '2.0',
+      id: Date.now() % 100000,
+      method: 'tools/call',
+      params: { name: tool || 'ping', arguments: args || {} }
+    };
+    if (server.transport === 'sse') {
+      headers.Accept = 'text/event-stream';
+      const r = await liveHttp(server.url, { method: 'GET', headers: headers });
+      return { attempted: true, ok: !!r.ok, live: true, transport: 'sse', status: r.status, result: r.json || r.text, error: r.error };
+    }
+    const r = await liveHttp(server.url, { method: 'POST', headers: headers, body: payload });
+    return {
+      attempted: true,
+      ok: !!r.ok && !(r.json && r.json.error),
+      live: true,
+      transport: 'streamable-http',
+      status: r.status,
+      result: r.json,
+      error: r.error || (r.json && r.json.error)
+    };
+  }
+
   const MCP = {
     transports: TRANSPORTS,
     tools: MCP_TOOLS,
@@ -323,9 +471,23 @@
       const named = MCP_TOOLS.indexOf(tool) >= 0 ? tool : (args.tool || null);
       const servers = mcpState().servers;
       const server = servers[idOrTool] || servers[args.server] || null;
-      if (server && server.auth === 'oauth' && server.transport !== 'stdio' && !oauthFor(server.id)) {
-        return { ok: false, error: 'OAuth required for remote ' + server.transport, transport: server.transport };
+
+      if (server && server.transport === 'stdio') {
+        const live = await mcpStdioCall(server, named || tool, args);
+        if (live.attempted) return live;
+        return {
+          ok: false,
+          live: false,
+          transport: 'stdio',
+          connected: !!server.connected,
+          note: server.note || 'stdio requires the desktop host'
+        };
       }
+      if (server && (server.transport === 'sse' || server.transport === 'streamable-http') && server.url) {
+        const live = await mcpHttpCall(server, named || tool, args);
+        if (live.attempted) return live;
+      }
+
       if (named) {
         const r = await invokeNamed(named, args);
         AgentBus.emit('onToolAfterCall', { tool: 'mcp', named: named, ok: r.ok });
@@ -342,6 +504,14 @@
           command: p.install || '',
           url: ((p.hint || '').match(/https?:\/\/\S+/) || [])[0] || ''
         });
+        if (spec.transport === 'stdio') {
+          const live = await mcpStdioCall(spec, (p.capabilities || [])[0], args);
+          if (live.attempted) return Object.assign({ plugin: p.id }, live);
+        }
+        if (spec.url) {
+          const live = await mcpHttpCall(spec, (p.capabilities || [])[0], args);
+          if (live.attempted) return Object.assign({ plugin: p.id }, live);
+        }
         return {
           ok: false,
           plugin: p.id,
@@ -357,9 +527,118 @@
 
   /* ---------- Google Workspace (Drive / Gmail / Calendar) ---------- */
   function gwsRoot(kind) { return '/.codesovereign/gws/' + kind + '.json'; }
+  function googleTok() {
+    try {
+      if (window.OAuthClient && OAuthClient.getToken) return accessToken(OAuthClient.getToken('google'));
+    } catch (_) {}
+    return accessToken(oauthFor('google'));
+  }
+  async function gwsLiveDrive(op, args, tok) {
+    const headers = { Authorization: 'Bearer ' + tok };
+    if (op === 'search' || op === 'browse') {
+      const q = op === 'search' ? ("name contains '" + String(args.q || args.query || '').replace(/'/g, '') + "'") : '';
+      const r = await liveHttp('https://www.googleapis.com/drive/v3/files?pageSize=50&fields=files(id,name,mimeType)' + (q ? ('&q=' + encodeURIComponent(q)) : ''), { headers: headers });
+      return { attempted: true, ok: !!r.ok, live: true, op: op, hits: (r.json && r.json.files) || [], files: (r.json && r.json.files) || [], status: r.status, error: r.error };
+    }
+    if (op === 'create') {
+      const meta = await liveHttp('https://www.googleapis.com/drive/v3/files', {
+        method: 'POST',
+        headers: headers,
+        body: { name: String(args.name || 'untitled'), mimeType: args.mimeType || 'text/plain' }
+      });
+      const id = meta.json && meta.json.id;
+      if (id && args.body != null && args.body !== '') {
+        const up = await liveHttp('https://www.googleapis.com/upload/drive/v3/files/' + encodeURIComponent(id) + '?uploadType=media', {
+          method: 'PATCH',
+          headers: Object.assign({ 'Content-Type': 'text/plain' }, headers),
+          body: String(args.body || '')
+        });
+        return { attempted: true, ok: !!up.ok, live: true, op: 'create', file: up.json || meta.json, status: up.status, error: up.error };
+      }
+      return { attempted: true, ok: !!meta.ok, live: true, op: 'create', file: meta.json, status: meta.status, error: meta.error };
+    }
+    if (op === 'download') {
+      const id = args.id;
+      if (!id) return { attempted: true, ok: false, live: true, error: 'id required' };
+      const r = await liveHttp('https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(id) + '?alt=media', { headers: headers });
+      if (r.ok && r.text) writePath(args.dest || ('/assets/' + (args.name || id)), r.text);
+      return { attempted: true, ok: !!r.ok, live: true, op: 'download', status: r.status, error: r.error };
+    }
+    return { attempted: false };
+  }
+  async function gwsLiveGmail(op, args, tok) {
+    const headers = { Authorization: 'Bearer ' + tok };
+    const base = 'https://gmail.googleapis.com/gmail/v1/users/me';
+    if (op === 'search') {
+      const r = await liveHttp(base + '/messages?q=' + encodeURIComponent(args.q || ''), { headers: headers });
+      return { attempted: true, ok: !!r.ok, live: true, hits: (r.json && r.json.messages) || [], status: r.status, error: r.error };
+    }
+    if (op === 'read') {
+      const r = await liveHttp(base + '/messages/' + encodeURIComponent(args.id || ''), { headers: headers });
+      return { attempted: true, ok: !!r.ok, live: true, thread: r.json, status: r.status, error: r.error };
+    }
+    if (op === 'draft' || op === 'send') {
+      const raw = btoa('To: ' + (args.to || '') + '\r\nSubject: ' + (args.subject || '') + '\r\n\r\n' + (args.body || '')).replace(/\+/g, '-').replace(/\//g, '_');
+      const path = op === 'send' ? '/messages/send' : '/drafts';
+      const body = op === 'send' ? { raw: raw } : { message: { raw: raw } };
+      const r = await liveHttp(base + path, { method: 'POST', headers: headers, body: body });
+      return { attempted: true, ok: !!r.ok, live: true, op: op, thread: r.json, status: r.status, error: r.error };
+    }
+    if (op === 'label' && args.id) {
+      const r = await liveHttp(base + '/messages/' + encodeURIComponent(args.id) + '/modify', {
+        method: 'POST',
+        headers: headers,
+        body: { addLabelIds: [args.label || 'STARRED'] }
+      });
+      return { attempted: true, ok: !!r.ok, live: true, op: 'label', thread: r.json, status: r.status, error: r.error };
+    }
+    return { attempted: false };
+  }
+  async function gwsLiveCalendar(op, args, tok) {
+    const headers = { Authorization: 'Bearer ' + tok };
+    const base = 'https://www.googleapis.com/calendar/v3/calendars/primary';
+    if (op === 'inspect') {
+      const r = await liveHttp(base + '/events?maxResults=20', { headers: headers });
+      return { attempted: true, ok: !!r.ok, live: true, events: (r.json && r.json.items) || [], status: r.status, error: r.error };
+    }
+    if (op === 'create') {
+      const r = await liveHttp(base + '/events', {
+        method: 'POST',
+        headers: headers,
+        body: {
+          summary: args.title || 'event',
+          start: { dateTime: new Date(args.start || Date.now()).toISOString() },
+          end: { dateTime: new Date(args.end || (Date.now() + 3600000)).toISOString() }
+        }
+      });
+      return { attempted: true, ok: !!r.ok, live: true, event: r.json, status: r.status, error: r.error };
+    }
+    if (op === 'update' && args.id) {
+      const r = await liveHttp(base + '/events/' + encodeURIComponent(args.id), {
+        method: 'PATCH',
+        headers: headers,
+        body: { summary: args.title }
+      });
+      return { attempted: true, ok: !!r.ok, live: true, event: r.json, status: r.status, error: r.error };
+    }
+    if (op === 'availability') {
+      const r = await liveHttp('https://www.googleapis.com/calendar/v3/freeBusy', {
+        method: 'POST',
+        headers: headers,
+        body: { timeMin: new Date(args.start || Date.now()).toISOString(), timeMax: new Date(args.end || Date.now() + 3600000).toISOString(), items: [{ id: 'primary' }] }
+      });
+      return { attempted: true, ok: !!r.ok, live: true, freeBusy: r.json, status: r.status, error: r.error };
+    }
+    return { attempted: false };
+  }
   const GWorkspace = {
-    drive(op, args) {
+    async drive(op, args) {
       args = args || {};
+      const tok = googleTok();
+      if (tok) {
+        const live = await gwsLiveDrive(op, args, tok);
+        if (live.attempted && live.ok) return live;
+      }
       const store = jsonStore(gwsRoot('drive'), { files: [] });
       const files = store.files;
       if (op === 'search') {
@@ -390,8 +669,13 @@
       }
       return { ok: false, error: 'unknown drive op' };
     },
-    gmail(op, args) {
+    async gmail(op, args) {
       args = args || {};
+      const tok = googleTok();
+      if (tok) {
+        const live = await gwsLiveGmail(op, args, tok);
+        if (live.attempted && live.ok) return live;
+      }
       const store = jsonStore(gwsRoot('gmail'), { threads: [] });
       if (op === 'search') {
         const q = String(args.q || '').toLowerCase();
@@ -433,8 +717,13 @@
       }
       return { ok: false, error: 'unknown gmail op' };
     },
-    calendar(op, args) {
+    async calendar(op, args) {
       args = args || {};
+      const tok = googleTok();
+      if (tok) {
+        const live = await gwsLiveCalendar(op, args, tok);
+        if (live.attempted && live.ok) return live;
+      }
       const store = jsonStore(gwsRoot('calendar'), { events: [] });
       if (op === 'inspect') return { ok: true, op: 'inspect', events: store.events.slice() };
       if (op === 'availability') {
@@ -826,27 +1115,53 @@
       persistOrigin(s);
       return { ok: true, pr: pr };
     },
-    githubSync(prId) {
+    async githubSync(prId) {
       const gh = window.GitHubExport;
       if (!gh || !gh.isAuthed || !gh.isAuthed()) {
-        return { ok: false, githubSync: false, note: 'GitHub not connected; Origin holds the PR locally' };
+        return { ok: false, githubSync: false, live: false, note: 'GitHub not connected; Origin holds the PR locally' };
       }
-      return { ok: true, githubSync: true, pr: prId };
+      try {
+        const name = ((Engine.Proj && Engine.Proj.current && Engine.Proj.current()) || {}).name || 'codesovereign-app';
+        const pushed = gh.pushToExistingRepo
+          ? await gh.pushToExistingRepo({ commitMessage: 'Origin sync ' + (prId || '') })
+          : await gh.pushToNewRepo({ name: name.replace(/\s+/g, '-').toLowerCase() });
+        return { ok: !!(pushed && pushed.ok !== false), githubSync: true, live: true, pr: prId, export: pushed };
+      } catch (e) {
+        return { ok: false, githubSync: false, live: true, error: String(e && e.message || e) };
+      }
     }
   };
 
   const CI = {
     providers: ['vercel', 'depot', 'buildkite'],
-    inspect(prId) {
+    async inspect(prId) {
       const pr = originState().prs.filter(function (p) { return p.id === prId; })[0] || originState().prs.slice(-1)[0];
       const checks = runChecks(pr);
+      const gh = window.GitHubExport;
+      if (gh && gh.isAuthed && gh.isAuthed()) {
+        try {
+          const auth = gh.getAuth && gh.getAuth();
+          const last = (gh.listExports && gh.listExports()[0]) || {};
+          const repo = last.fullName || last.repo || last.name;
+          if (repo && auth && auth.token) {
+            const live = await liveHttp('https://api.github.com/repos/' + repo + '/commits/' + (last.sha || 'HEAD') + '/check-runs', {
+              headers: { Authorization: 'Bearer ' + auth.token, Accept: 'application/vnd.github+json' }
+            });
+            checks.live = true;
+            checks.github = live.json;
+            if (live.json && live.json.check_runs) {
+              checks.ok = live.json.check_runs.every(function (c) { return c.conclusion === 'success' || c.status === 'completed'; }) && checks.ok;
+            }
+          }
+        } catch (_) {}
+      }
       if (!checks.ok) AgentBus.emit('onBuildFailure', checks);
       if (!checks.ok) AgentBus.emit('onTestFailure', checks);
       return checks;
     },
     async wakeRepair(prId) {
       AgentBus.emit('onTaskStart', { ci: true, pr: prId });
-      let checks = CI.inspect(prId);
+      let checks = await CI.inspect(prId);
       const cycle = [];
       cycle.push('Agent');
       cycle.push('PR');
@@ -861,7 +1176,7 @@
           try { await Engine.Recovery.repair(); } catch (_) {}
         }
         cycle.push('push');
-        checks = CI.inspect(prId);
+        checks = await CI.inspect(prId);
         cycle.push('CI');
         cycle.push(checks.ok ? 'PASS' : 'FAIL');
         return { ok: checks.ok, cycle: cycle, review: review, checks: checks };
@@ -943,9 +1258,34 @@
       if (svg && typeof svg === 'string') writePath('/.codesovereign/evidence/' + rec.id + '.svg', svg);
       return rec;
     },
-    video(frames) {
+    async video(frames) {
       const rec = Evidence.record('video', { frames: frames || AgentBus.history(12), note: 'timeline of agent/browser actions' });
       writePath('/.codesovereign/evidence/' + rec.id + '.json', JSON.stringify(rec.payload, null, 2));
+      try {
+        if (typeof MediaRecorder !== 'undefined' && typeof document !== 'undefined') {
+          const canvas = document.createElement('canvas');
+          canvas.width = 640; canvas.height = 400;
+          const ctx = canvas.getContext && canvas.getContext('2d');
+          if (ctx) {
+            ctx.fillStyle = '#0b0d12';
+            ctx.fillRect(0, 0, 640, 400);
+            ctx.fillStyle = '#e6e9f2';
+            ctx.fillText('CodeSovereign evidence', 24, 200);
+            const stream = canvas.captureStream ? canvas.captureStream(8) : null;
+            if (stream) {
+              const blobs = [];
+              const mr = new MediaRecorder(stream);
+              mr.ondataavailable = function (ev) { if (ev.data && ev.data.size) blobs.push(ev.data); };
+              mr.start();
+              await new Promise(function (res) { setTimeout(res, 400); });
+              mr.stop();
+              await new Promise(function (res) { mr.onstop = res; setTimeout(res, 200); });
+              rec.payload.webmChunks = blobs.length;
+              rec.payload.recorded = true;
+            }
+          }
+        }
+      } catch (_) {}
       return rec;
     },
     logs(text) {
@@ -997,7 +1337,7 @@
       }
       return analysis;
     },
-    generate(prompt, opts) {
+    async generate(prompt, opts) {
       opts = opts || {};
       const title = String(prompt || opts.title || 'asset').slice(0, 80);
       const ref = opts.reference || opts.ref;
@@ -1006,6 +1346,43 @@
         const u = Image.understand(ref);
         refNote = u && u.ok ? (' ref:' + (u.kind || '') + ' ' + (u.text || []).join(' ')) : '';
       }
+      const cfg = Engine.LLM && Engine.LLM.getConfig ? Engine.LLM.getConfig() : {};
+      const key = cfg && cfg.apiKey;
+      if (key && cfg.providerId && /openai/i.test(cfg.providerId)) {
+        const live = await liveHttp('https://api.openai.com/v1/images/generations', {
+          method: 'POST',
+          headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
+          body: { model: 'dall-e-2', prompt: title, size: '512x512', n: 1, response_format: 'b64_json' }
+        });
+        const b64 = live.json && live.json.data && live.json.data[0] && live.json.data[0].b64_json;
+        if (live.ok && b64) {
+          const path = opts.path || ('/assets/' + title.replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) + '.png');
+          writePath(path, 'data:image/png;base64,' + b64);
+          Evidence.record('visual-demo', { path: path, generated: true, live: true });
+          return { ok: true, path: path, kind: 'png', live: true, codeAndAssets: true };
+        }
+      }
+      try {
+        if (typeof document !== 'undefined' && document.createElement) {
+          const canvas = document.createElement('canvas');
+          canvas.width = 640; canvas.height = 400;
+          const ctx = canvas.getContext && canvas.getContext('2d');
+          if (ctx && canvas.toDataURL) {
+            ctx.fillStyle = '#0b0d12';
+            ctx.fillRect(0, 0, 640, 400);
+            ctx.fillStyle = '#22d3ee';
+            ctx.fillRect(24, 24, 592, 352);
+            ctx.fillStyle = '#0b0d12';
+            ctx.font = '22px Inter,system-ui,sans-serif';
+            ctx.fillText(String(title + refNote).slice(0, 48), 48, 200);
+            const png = canvas.toDataURL('image/png');
+            const path = opts.path || ('/assets/' + title.replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) + '.png');
+            writePath(path, png);
+            Evidence.record('visual-demo', { path: path, generated: true, raster: true });
+            return { ok: true, path: path, kind: 'png', codeAndAssets: true };
+          }
+        }
+      } catch (_) {}
       const path = opts.path || ('/assets/' + title.replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) + '.svg');
       const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400">'
         + '<rect width="640" height="400" fill="#0b0d12"/>'
@@ -1154,7 +1531,16 @@
   /* ---------- Live Preview (source + runtime + browser + agent) ---------- */
   const LivePreview = {
     port: 4173,
-    url() { return 'http://127.0.0.1:' + LivePreview.port + '/'; },
+    url() {
+      try {
+        if (typeof location !== 'undefined' && location.hostname) {
+          const port = location.port || String(LivePreview.port);
+          LivePreview.port = Number(port) || LivePreview.port;
+          return location.protocol + '//' + location.hostname + (port ? (':' + port) : '') + '/';
+        }
+      } catch (_) {}
+      return 'http://127.0.0.1:' + LivePreview.port + '/';
+    },
     open() {
       const html = Engine.Preview && Engine.Preview.build ? Engine.Preview.build() : '';
       const frame = (typeof document !== 'undefined') ? document.getElementById('previewFrame') : null;
@@ -1206,6 +1592,19 @@
 
   /* ---------- Vercel / deployment ---------- */
   const Publish = {
+    setToken(value) {
+      const v = String(value || '');
+      try { localStorage.setItem('cs.cred.VERCEL_TOKEN', v); } catch (_) {}
+      try {
+        if (window.EngineExtras && EngineExtras.CredentialBroker && EngineExtras.CredentialBroker.set) {
+          EngineExtras.CredentialBroker.set('VERCEL_TOKEN', v);
+        }
+      } catch (_) {}
+      try {
+        if (window.desktop && desktop.creds && desktop.creds.set) desktop.creds.set('VERCEL_TOKEN', v);
+      } catch (_) {}
+      return { ok: !!v, key: 'VERCEL_TOKEN' };
+    },
     async vercel() {
       AgentBus.emit('onBuildStart', { target: 'vercel' });
       if (window.GitHubActions && GitHubActions.generate) {
@@ -1215,17 +1614,39 @@
           writePath('/.github/workflows/' + ((wf && wf.path) || 'vercel.yml').replace(/^.*\//, ''), (wf && wf.body) || 'name: Deploy to Vercel\n');
         } catch (_) {}
       }
+      const token = await credAsync('VERCEL_TOKEN');
       const bundle = Engine.Deploy && Engine.Deploy.bundle ? Engine.Deploy.bundle() : { files: snapshotFs() };
+      const files = bundle.files || snapshotFs();
+      const fileCount = bundle.manifest ? bundle.manifest.fileCount : Object.keys(files).length;
+      if (!token) {
+        const rec = { ok: false, target: 'vercel', needsToken: true, live: true, files: fileCount, error: 'VERCEL_TOKEN required in the credential broker or desktop keychain' };
+        Publish.last = rec;
+        return rec;
+      }
+      const payload = {
+        name: ((bundle.manifest && bundle.manifest.project && bundle.manifest.project.name) || 'codesovereign-app').replace(/\s+/g, '-').toLowerCase(),
+        files: Object.keys(files).map(function (p) {
+          return { file: p.replace(/^\//, ''), data: files[p] };
+        }).slice(0, 80)
+      };
+      const live = await liveHttp('https://api.vercel.com/v13/deployments', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' },
+        body: payload
+      });
       const rec = {
-        ok: true,
+        ok: !!live.ok,
         target: 'vercel',
-        url: 'https://' + ((bundle.manifest && bundle.manifest.project && bundle.manifest.project.name) || 'app').replace(/\s+/g, '-').toLowerCase() + '.vercel.app',
-        files: bundle.manifest ? bundle.manifest.fileCount : Object.keys(bundle.files || {}).length,
-        connected: true,
+        live: true,
+        status: live.status,
+        url: (live.json && (live.json.url || live.json.readyUrl)) || null,
+        id: live.json && live.json.id,
+        files: fileCount,
+        error: live.ok ? null : (live.error || (live.json && live.json.error && live.json.error.message) || ('HTTP ' + live.status)),
         at: now()
       };
       Evidence.record('log', rec);
-      AgentBus.emit('onGoalReached', { deploy: 'vercel' });
+      if (rec.ok) AgentBus.emit('onGoalReached', { deploy: 'vercel' });
       Publish.last = rec;
       return rec;
     },
@@ -1266,7 +1687,7 @@
       let result;
       try {
         if (name === 'mcp') result = await MCP.invoke(args.id || args.plugin || args.server || args.tool, args);
-        else if (name === 'generate_image') result = Image.generate(args.prompt || args.title, args);
+        else if (name === 'generate_image') result = await Image.generate(args.prompt || args.title, args);
         else if (name === 'understand_image') result = Image.understand(args.path || args.src || args.data);
         else result = await orig(name, args);
       } catch (err) {

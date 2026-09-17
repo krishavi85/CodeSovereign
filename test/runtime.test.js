@@ -64,7 +64,7 @@ module.exports = async function (t) {
   const empty = E.Goal.parse('');
   t.ok('empty /goal shows usage', /Usage: \/goal/.test(empty.error || ''));
   const timed = E.Goal.parse('/goal 30m fix all flaky tests');
-  t.ok('time-limited goals are rejected as a limit but still created', /not supported/.test(timed.notice) && /flaky/.test(timed.objective));
+  t.ok('time-limited goals parse a deadline', timed.deadlineMs === 30 * 60000 && /deadline/.test(timed.notice) && /flaky/.test(timed.objective));
   t.ok('every is flagged as recurring not a goal', E.Goal.parse('/goal every hour ping').recurringHint === true);
 
   E.FS.write('/index.html', '<!DOCTYPE html><html><head><title>App</title></head><body><h1>App</h1><button id="save">Save</button></body></html>');

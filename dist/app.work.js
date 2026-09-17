@@ -76,6 +76,10 @@
       + '</div>'
       + '<div class="cs-eyebrow" style="margin-top:14px">MCP transports</div>'
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
+      + '<input id="workMcpUrl" placeholder="stdio command or https:// MCP URL" style="flex:1;min-width:180px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;font-size:12px">'
+      + '<input id="workMcpOAuth" type="password" placeholder="OAuth token" style="width:140px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;font-size:12px">'
+      + '</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
       + MCP.transports.map(function (t) {
         return '<button class="btn ghost" data-work-action="mcp-connect" data-work-id="' + t + '" style="padding:4px 10px;font-size:11px">' + esc(t) + '</button>';
       }).join('')
@@ -132,6 +136,10 @@
       + '<button class="btn primary" data-work-action="greenfield" style="padding:4px 10px;font-size:11px">Start from scratch</button>'
       + '<button class="btn ghost" data-work-action="origin-repo" style="padding:4px 10px;font-size:11px">Create Origin repo</button>'
       + '<button class="btn ghost" data-work-action="preview" style="padding:4px 10px;font-size:11px">Live Preview :' + L.port + '</button>'
+      + '</div>'
+      + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
+      + '<input id="workVercelToken" type="password" placeholder="VERCEL_TOKEN" style="flex:1;min-width:160px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;font-size:12px">'
+      + '<button class="btn ghost" data-work-action="vercel-token" style="padding:4px 10px;font-size:11px">Save token</button>'
       + '<button class="btn ghost" data-work-action="vercel" style="padding:4px 10px;font-size:11px">Publish to Vercel</button>'
       + '</div>'
       + '<div id="workGreenOut" style="font-size:11px;color:var(--muted);margin-top:8px">'
@@ -152,6 +160,7 @@
       + '<div style="font-size:12.5px;color:var(--muted);margin:6px 0 10px">CODE CREATOR is separate from CODE REVIEWER. Agent → PR → CI → failure → Agent wakes → inspect → fix → push → PASS. Integrations: ' + O.integrations.join(', ') + '.</div>'
       + '<div style="display:flex;gap:6px;flex-wrap:wrap">'
       + '<button class="btn primary" data-work-action="pr" style="padding:4px 10px;font-size:11px">Open PR</button>'
+      + '<button class="btn ghost" data-work-action="github-sync" style="padding:4px 10px;font-size:11px">GitHub sync</button>'
       + '<button class="btn ghost" data-work-action="ci" style="padding:4px 10px;font-size:11px">Watch CI</button>'
       + '<button class="btn ghost" data-work-action="bugbot" style="padding:4px 10px;font-size:11px">Run Bugbot</button>'
       + '<button class="btn ghost" data-work-action="checkpoint" style="padding:4px 10px;font-size:11px">Checkpoint</button>'
@@ -229,14 +238,20 @@
         toast((on ? 'Mode off · ' : 'Mode on · ') + id);
         rerender();
       } else if (action === 'mcp-connect') {
+        const endpoint = ((document.getElementById('workMcpUrl') || {}).value || '').trim();
+        const oauth = ((document.getElementById('workMcpOAuth') || {}).value || '').trim();
+        if (oauth) E.MCP.setOAuth('mcp-' + id, oauth);
         const rec = E.MCP.connect({
           id: 'mcp-' + id,
           name: id + ' MCP',
           transport: id,
-          url: id === 'stdio' ? '' : 'https://mcp.example.invalid/mcp',
+          command: id === 'stdio' ? (endpoint || 'npx -y @modelcontextprotocol/server-filesystem .') : '',
+          args: [],
+          url: id === 'stdio' ? '' : endpoint,
+          auth: id === 'stdio' ? 'none' : (oauth ? 'oauth' : (endpoint ? 'none' : 'oauth')),
           tools: E.MCP.tools
         });
-        setOut('workMcpOut', rec.transport + ' · ' + rec.note);
+        setOut('workMcpOut', rec.transport + ' · ' + rec.note + (endpoint ? (' · ' + endpoint) : ''));
         toast('MCP ' + rec.transport, rec.connected ? '#34d399' : '#f59e0b');
       } else if (action === 'steer') {
         const inp = document.getElementById('workSteerInput');
@@ -269,19 +284,29 @@
         const r = E.LivePreview.open();
         setOut('workGreenOut', 'Live Preview ' + r.url);
         toast('Preview forwarded :' + r.port);
+      } else if (action === 'vercel-token') {
+        const v = ((document.getElementById('workVercelToken') || {}).value || '').trim();
+        const r = E.Publish.setToken(v);
+        setOut('workGreenOut', r.ok ? 'VERCEL_TOKEN saved in credential broker' : 'paste a VERCEL_TOKEN');
+        toast(r.ok ? 'VERCEL_TOKEN saved' : 'Token empty', r.ok ? '#34d399' : '#f59e0b');
       } else if (action === 'vercel') {
         const r = await E.Publish.vercel();
-        setOut('workGreenOut', 'Vercel · ' + r.files + ' files');
-        toast('Published to Vercel target');
+        setOut('workGreenOut', r.ok ? ('Vercel · ' + (r.url || r.id)) : (r.needsToken ? 'needs VERCEL_TOKEN' : (r.error || 'deploy failed')));
+        toast(r.ok ? 'Published to Vercel' : (r.needsToken ? 'Add VERCEL_TOKEN' : 'Vercel live call failed'), r.ok ? '#34d399' : '#f59e0b');
       } else if (action === 'pr') {
         E.Checkpoints.auto('before-pr');
         const r = E.Origin.openPR({ title: (window.S && window.S.agentPrompt) || 'Agent changes' });
         setOut('workOriginOut', 'PR ' + r.pr.id + ' · ' + r.files + ' files');
         toast('PR opened on Origin');
+      } else if (action === 'github-sync') {
+        const prs = E.Origin.listPRs();
+        const r = await E.Origin.githubSync(prs[0] && prs[0].id);
+        setOut('workOriginOut', r.ok ? ('GitHub sync live · ' + (r.pr || 'ok')) : (r.note || r.error || 'GitHub not connected'));
+        toast(r.ok ? 'Pushed to GitHub' : 'Connect GitHub to sync', r.ok ? '#34d399' : '#f59e0b');
       } else if (action === 'ci') {
         const prs = E.Origin.listPRs();
         const r = await E.CI.wakeRepair(prs[0] && prs[0].id);
-        setOut('workOriginOut', r.cycle.join(' → '));
+        setOut('workOriginOut', r.cycle.join(' → ') + (r.checks && r.checks.live ? ' · live check-runs' : ''));
         toast(r.ok ? 'CI PASS' : 'CI repaired / still failing', r.ok ? '#34d399' : '#f59e0b');
       } else if (action === 'bugbot') {
         const r = E.Bugbot.review();
@@ -299,7 +324,7 @@
       } else if (action === 'evidence') {
         E.Evidence.screenshot();
         E.Evidence.logs((E.Browser && E.Browser.console && JSON.stringify(E.Browser.console())) || 'agent log');
-        E.Evidence.video();
+        await E.Evidence.video();
         const g = E.Evidence.require();
         setOut('workProofOut', g.ok ? ('evidence ok · ' + g.artifacts.length + ' artifacts') : g.error);
         toast(g.ok ? 'Evidence recorded' : 'Need proof', g.ok ? '#34d399' : '#f59e0b');
@@ -317,12 +342,12 @@
         setOut('workProofOut', 'forms ' + r.forms + ' · inputs ' + r.inputs + ' · console ' + (r.console || []).length);
         toast('Live form test');
       } else if (action === 'gws') {
-        E.GWorkspace.drive('create', { name: 'notes.txt', body: 'workspace file' });
-        const found = E.GWorkspace.drive('search', { q: 'notes' });
-        E.GWorkspace.gmail('draft', { subject: 'Status', body: 'Working' });
-        E.GWorkspace.calendar('create', { title: 'Review' });
-        setOut('workProofOut', 'Drive hits ' + found.hits.length + ' · Gmail/Calendar stores updated');
-        toast('Google Workspace tools ran');
+        await E.GWorkspace.drive('create', { name: 'notes.txt', body: 'workspace file' });
+        const found = await E.GWorkspace.drive('search', { q: 'notes' });
+        await E.GWorkspace.gmail('draft', { subject: 'Status', body: 'Working' });
+        await E.GWorkspace.calendar('create', { title: 'Review' });
+        setOut('workProofOut', 'Drive hits ' + found.hits.length + ' · Gmail/Calendar ' + (found.live ? 'live' : 'workspace store'));
+        toast(found.live ? 'Google APIs' : 'Google Workspace store');
       }
     } catch (err) {
       toast(String(err && err.message || err), '#ef4444');

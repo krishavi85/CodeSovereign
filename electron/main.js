@@ -14,6 +14,8 @@ const fsp = require('fs/promises');
 
 const workspace = require('./lib/workspace');
 const proc = require('./lib/proc');
+const mcp = require('./lib/mcp');
+const net = require('./lib/net');
 const observer = require('./lib/observer');
 const git = require('./lib/git');
 const creds = require('./lib/creds');
@@ -322,6 +324,27 @@ function registerIpc() {
       if (typeof o.cmd !== 'string' || !Array.isArray(o.args)) return fail('cmd/args required');
       return ok(await proc.runManaged({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.' }));
     } catch (e) { return fail(e); }
+  });
+
+  /* ---- MCP stdio (allowlisted spawn + JSON-RPC) ---- */
+  ipcMain.handle('mcp:start', (_e, opts) => {
+    try { return ok(mcp.start(opts || {})); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('mcp:request', async (_e, opts) => {
+    try {
+      const o = opts || {};
+      if (typeof o.id !== 'string') return fail('id required');
+      const rpc = await mcp.request(o.id, o.method, o.params);
+      return { ok: !(rpc && rpc.error), rpc: rpc };
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('mcp:stop', (_e, id) => {
+    try { return ok(mcp.stop(String(id || ''))); } catch (e) { return fail(e); }
+  });
+
+  /* ---- HTTPS / localhost HTTP (desktop bypasses renderer CSP) ---- */
+  ipcMain.handle('net:fetch', async (_e, opts) => {
+    try { return ok(await net.fetchUrl(opts || {})); } catch (e) { return fail(e); }
   });
 
   /* ---- runtime observer (hidden BrowserWindow, localhost/workspace only) ---- */

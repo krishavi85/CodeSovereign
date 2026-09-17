@@ -54,6 +54,10 @@ module.exports = async function (t) {
   const ui = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.work.js'), 'utf8');
   t.ok('no new work-agent nav page', !/S\.screen\s*=\s*['"]work['"]/.test(ui));
   t.ok('injects into existing screens', /renderSettings/.test(ui) && /renderAgent/.test(ui) && /renderFactory/.test(ui) && /renderPipelines/.test(ui) && /renderRecovery/.test(ui));
+  t.ok('factory card has VERCEL_TOKEN field', /VERCEL_TOKEN/.test(ui) && /vercel-token/.test(ui));
+  t.ok('settings card has MCP URL input', /workMcpUrl/.test(ui) && /workMcpOAuth/.test(ui));
+  t.ok('pipelines card has GitHub sync', /github-sync/.test(ui));
+  t.ok('MCP connect does not use a fake URL', !/mcp\.example\.invalid/.test(ui));
 
   const appSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.js'), 'utf8');
   t.ok('jsonplaceholder mock API is gone', !/jsonplaceholder/.test(appSrc));
@@ -83,12 +87,17 @@ module.exports = async function (t) {
     t.ok('MCP tool ' + tool, E.MCP.tools.indexOf(tool) >= 0);
   });
   const stdio = E.MCP.connect({ id: 'local-fs', transport: 'stdio', command: 'npx' });
+  t.ok('index.html loads desktop MCP bridge', /desktop\/desktop-mcp\.js/.test(html));
   t.ok('stdio MCP is recorded without fake success', stdio.transport === 'stdio' && stdio.connected === false);
   const remote = E.MCP.connect({ id: 'remote-mcp', transport: 'streamable-http', url: 'https://mcp.example.invalid/mcp', auth: 'oauth' });
   t.ok('remote MCP requires OAuth', /OAuth/.test(remote.note) && remote.connected === false);
   E.MCP.setOAuth('remote-mcp', 'tok');
   const authed = E.MCP.connect({ id: 'remote-mcp', transport: 'streamable-http', url: 'https://mcp.example.invalid/mcp', auth: 'oauth' });
   t.ok('OAuth token marks remote connected', authed.connected === true);
+  const liveHttp = await E.MCP.invoke('remote-mcp', { tool: 'ping' });
+  t.ok('streamable HTTP MCP is attempted live', liveHttp.attempted && liveHttp.live);
+  const stdioCall = await E.MCP.invoke('local-fs', { tool: 'ping' });
+  t.ok('stdio invoke without host does not fake success', stdioCall.ok === false && stdioCall.transport === 'stdio');
 
   const q = await E.MCP.invoke('database.query', { tool: 'database.query', table: 'items', row: { sku: 'A1' } });
   t.ok('database.query writes workspace rows', q.ok && q.count >= 1);
@@ -104,11 +113,11 @@ module.exports = async function (t) {
   t.ok('Custom Mode stays active', mode.persistent && mode.active.indexOf('security-auditor') >= 0);
   t.ok('skill catalog includes React/Debug/Release/QA/Architecture', E.Skills.catalog().map(function (s) { return s.id; }).join(',').indexOf('react-expert') >= 0);
 
-  const drive = E.GWorkspace.drive('create', { name: 'spec.md', body: 'real file' });
+  const drive = await E.GWorkspace.drive('create', { name: 'spec.md', body: 'real file' });
   t.ok('Drive create is empty-store CRUD not canned rows', drive.ok && drive.file.name === 'spec.md');
-  t.ok('Drive search finds created file', E.GWorkspace.drive('search', { q: 'spec' }).hits.length === 1);
-  t.ok('Gmail draft works', E.GWorkspace.gmail('draft', { subject: 'hi' }).ok);
-  t.ok('Calendar create+availability', E.GWorkspace.calendar('create', { title: 'sync' }).ok);
+  t.ok('Drive search finds created file', (await E.GWorkspace.drive('search', { q: 'spec' })).hits.length === 1);
+  t.ok('Gmail draft works', (await E.GWorkspace.gmail('draft', { subject: 'hi' })).ok);
+  t.ok('Calendar create+availability', (await E.GWorkspace.calendar('create', { title: 'sync' })).ok);
 
   const st = E.Steer.push('use semantic HTML and continue');
   t.ok('steering queues without stopping', st.ok && st.atBoundary);
@@ -148,7 +157,7 @@ module.exports = async function (t) {
   E.Evidence.logs('runtime observer');
   t.ok('evidence gate passes after artifacts', E.Evidence.require().ok === true);
 
-  const img = E.Image.generate('hero mark', { path: '/assets/hero.svg' });
+  const img = await E.Image.generate('hero mark', { path: '/assets/hero.svg' });
   t.ok('image generation writes an asset', img.ok && /hero/.test(E.FS.read('/assets/hero.svg')));
   t.ok('image understanding reads SVG', E.Image.understand('/assets/hero.svg').kind === 'svg');
 
@@ -167,6 +176,9 @@ module.exports = async function (t) {
   const repo = E.Greenfield.createRepository();
   t.ok('Origin repo can be created after preview', repo.ok && repo.repo.hosted);
   const pub = await E.Publish.vercel();
-  t.ok('Vercel publish records a deploy', pub.ok && pub.target === 'vercel');
+  t.ok('Vercel publish requires a token', pub.ok === false && pub.needsToken && pub.target === 'vercel');
+  win.localStorage.setItem('cs.cred.VERCEL_TOKEN', 'test-token');
+  const pubLive = await E.Publish.vercel();
+  t.ok('Vercel live POST is attempted with token', pubLive.live && pubLive.needsToken !== true && !pubLive.url);
   t.ok('Live Preview couples source/runtime/browser/agent', E.LivePreview.open().coupled.length === 4);
 };
