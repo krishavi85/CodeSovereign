@@ -315,7 +315,17 @@
     },
 
     get online() { return _remoteOnline; },
-    get _defaults() { return DEFAULTS.slice(); }
+    get _defaults() { return DEFAULTS.slice(); },
+
+    /** Register an official default (used by the Building Stack catalog). */
+    registerDefault(t) {
+      if (!t || !t.id) return { ok: false, reason: 'id required' };
+      const idx = DEFAULTS.findIndex(d => d.id === t.id);
+      if (idx >= 0) DEFAULTS[idx] = Object.assign({}, DEFAULTS[idx], t);
+      else DEFAULTS.push(t);
+      _merged = null;
+      return { ok: true, id: t.id };
+    }
   };
 
   // Initialize once (best-effort; offline-safe)

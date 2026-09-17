@@ -296,11 +296,51 @@
 
   // ---- auto-register demo services so the user can try the round-trip
   // without writing a single line of code ----
+  function projectSnapshot() {
+    try {
+      const FS = window.Engine && window.Engine.FS;
+      const files = FS && FS._data
+        ? Object.keys(FS._data).filter(function (p) { return FS.isFile(p); })
+        : [];
+      const proj = (window.Engine && window.Engine.Proj && window.Engine.Proj.current)
+        ? window.Engine.Proj.current()
+        : null;
+      const Sref = (typeof S !== 'undefined' && S) ? S : window.S;
+      return {
+        ok: true,
+        screen: Sref && Sref.screen,
+        lastPrompt: Sref && Sref.lastPrompt,
+        agentRuns: ((Sref && Sref.agentRuns) || []).slice(-10),
+        agentBuilt: !!(Sref && Sref.agentBuilt),
+        files: files.slice(0, 40),
+        fileCount: files.length,
+        project: proj ? { id: proj.id, name: proj.name } : null
+      };
+    } catch (e) {
+      return { ok: false, error: e && e.message };
+    }
+  }
+
+  function runFollowUpFromBus(p) {
+    const prompt = (p && (p.prompt || p.text || p.message)) || '';
+    if (!prompt) return { ok: false, error: 'missing prompt' };
+    try {
+      if (typeof S !== 'undefined' && S) {
+        S.agentPrompt = prompt;
+        S.screen = 'agent';
+      }
+      if (typeof window.runAgent === 'function') window.runAgent();
+      else if (typeof runAgent === 'function') runAgent();
+      return { ok: true, action: 'followUp', prompt: prompt };
+    } catch (e) { return { ok: false, error: e.message }; }
+  }
+
   function registerDemoServices() {
     if (!window.TabBus) return;
     // Welcome
     window.TabBus.register('welcome', {
       ping: function (p) { return { ok: true, action: 'ping', echo: p }; },
+      snapshot: projectSnapshot,
       getStarted: function () {
         try { if (typeof S !== 'undefined') S.screen = 'universal'; if (typeof renderAll === 'function') renderAll(); } catch (_) {}
         return { ok: true, navigated: 'universal' };
@@ -309,9 +349,10 @@
     // Universal
     window.TabBus.register('universal', {
       ping: function (p) { return { ok: true, action: 'ping', echo: p }; },
+      snapshot: projectSnapshot,
       listProjects: function () {
         try {
-          const list = (window.Engine && window.Engine.Projects && window.Engine.Projects.list) ? window.Engine.Projects.list() : [];
+          const list = (window.Engine && window.Engine.Proj && window.Engine.Proj.list) ? window.Engine.Proj.list() : [];
           return { ok: true, count: list.length, projects: list.slice(0, 10).map(function (p) { return p.name || p.id; }) };
         } catch (e) { return { ok: false, error: e.message }; }
       }
@@ -319,16 +360,16 @@
     // Agent
     window.TabBus.register('agent', {
       ping: function (p) { return { ok: true, action: 'ping', echo: p, ts: Date.now() }; },
-      chat: function (p) {
-        try {
-          if (typeof S !== 'undefined' && S) { S.screen = 'agent'; if (typeof renderAll === 'function') renderAll(); }
-          return { ok: true, navigated: 'agent', prompt: p && p.prompt };
-        } catch (e) { return { ok: false, error: e.message }; }
-      }
+      snapshot: projectSnapshot,
+      chat: function (p) { return runFollowUpFromBus(p); },
+      followUp: function (p) { return runFollowUpFromBus(p); },
+      run: function (p) { return runFollowUpFromBus(p); }
     });
     // IDE
     window.TabBus.register('ide', {
       ping: function (p) { return { ok: true, action: 'ping', echo: p }; },
+      snapshot: projectSnapshot,
+      followUp: function (p) { return runFollowUpFromBus(p); },
       openFile: function (p) {
         try {
           if (typeof S !== 'undefined' && S) {
@@ -343,11 +384,12 @@
     // Factory
     window.TabBus.register('factory', {
       ping: function (p) { return { ok: true, action: 'ping', echo: p }; },
+      snapshot: projectSnapshot,
       listPipelines: function () {
         try {
           if (window.PipelineBuilder && window.PipelineBuilder.list) {
             const list = window.PipelineBuilder.list();
-            return { ok: true, count: list.length, names: list.slice(0, 10).map(function (x) { return x.name || x.id; }) };
+            return { ok: true, count: list.length, names: list.slice(0, 10).map(function (x) { return typeof x === 'string' ? x : (x.name || x.id); }) };
           }
           return { ok: true, count: 0, names: [] };
         } catch (e) { return { ok: false, error: e.message }; }
@@ -356,6 +398,7 @@
     // Pipelines
     window.TabBus.register('pipelines', {
       ping: function (p) { return { ok: true, action: 'ping', echo: p }; },
+      snapshot: projectSnapshot,
       run: function (p) {
         try {
           if (typeof S !== 'undefined' && S) { S.screen = 'pipelines'; if (typeof renderAll === 'function') renderAll(); }
@@ -366,11 +409,11 @@
     // Recovery
     window.TabBus.register('recovery', {
       ping: function (p) { return { ok: true, action: 'ping', echo: p }; },
+      snapshot: projectSnapshot,
       runValidatorScan: function () {
         try {
-          if (window.Engine && window.Engine.Validator && window.Engine.Validator.scan) {
-            const r = window.Engine.Validator.scan();
-            const issues = r && r.issues ? r.issues : [];
+          if (window.Engine && window.Engine.Validator && window.Engine.Validator.runAll) {
+            const issues = window.Engine.Validator.runAll() || [];
             return { ok: true, issues: issues.length, byClass: countBy(issues, 'faultClass') };
           }
           return { ok: true, issues: 0, note: 'Validator not loaded' };
@@ -380,10 +423,18 @@
     // Settings
     window.TabBus.register('settings', {
       ping: function (p) { return { ok: true, action: 'ping', echo: p }; },
-      get: function (p) {
+      snapshot: projectSnapshot,
+      get: function () {
         try {
-          if (typeof S !== 'undefined' && S) { S.screen = 'settings'; if (typeof renderAll === 'function') renderAll(); }
-          return { ok: true, navigated: 'settings' };
+          const llm = (window.Engine && window.Engine.LLM && window.Engine.LLM.getConfig)
+            ? window.Engine.LLM.getConfig()
+            : {};
+          return {
+            ok: true,
+            llm: { providerId: llm.providerId, model: llm.model, enabled: llm.enabled, baseUrl: llm.baseUrl },
+            lastPrompt: (typeof S !== 'undefined' && S && S.lastPrompt) || '',
+            agentBuilt: !!(typeof S !== 'undefined' && S && S.agentBuilt)
+          };
         } catch (e) { return { ok: false, error: e.message }; }
       }
     });

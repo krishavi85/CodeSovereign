@@ -94,7 +94,7 @@
         label: 'Google',
         authorize: 'https://accounts.google.com/o/oauth2/v2/auth',
         token: 'https://oauth2.googleapis.com/token',
-        scope: 'openid email profile',
+        scope: 'openid email profile https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/calendar.events',
         profileUrl: 'https://www.googleapis.com/oauth2/v2/userinfo',
         supportsPKCE: true
       },

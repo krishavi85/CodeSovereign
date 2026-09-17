@@ -78,6 +78,10 @@
   // clear() must never wipe the real folder — only the in-memory mirror.
   FS.clear = function () { this._data = {}; };
   FS.clearAll = function () { this._data = {}; };
+  if (window.Engine && Engine.Recovery && Engine.Recovery.installFsHooks) {
+    FS.__recoveryResetWrapped = false;
+    Engine.Recovery.installFsHooks(FS);
+  }
 
   /* ---------- bulk load from a workspace tree ---------- */
   // tree.files: [{ path:'/x', content:string|null, binary:bool, size:number }]

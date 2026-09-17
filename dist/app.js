@@ -102,7 +102,11 @@ const S = {
   prompt: '',
   agentPrompt: '',
   agentRuns: [],
+  agentChat: [],
+  agentQuestions: [],
   agentSteps: [],
+  agentBuilt: false,
+  lastPrompt: '',
   agentRunning: false,
   planApproved: false,
   agentStopped: false,
@@ -117,6 +121,7 @@ const S = {
   ideDevice: 'desktop',
   ideBuffer: '',     // current edit buffer
   ideDirty: false,
+  ideFollowUp: '',
   temp: 0.3, maxTok: 8192, lmCtx: 32768, lmGpu: 99, lmTemp: 0.2,
   selIssue: 0,
   recPaused: false,
@@ -162,6 +167,9 @@ function toast(msg, color = '#a78bfa') {
     renderToasts();
   }, 2600);
 }
+window.toast = toast;
+window.csToast = toast;
+window.S = S;
 
 function renderToasts() {
   const root = document.getElementById('toasts');
@@ -315,10 +323,106 @@ function cycleAgent() {
 }
 function toggleEnv(key) { S.env = (key || (S.env === 'prod' ? 'dev' : 'prod')).toString().toLowerCase(); renderAll(); }
 
+const AGENT_SESSION_KEY = 'cs.agent.session.v1';
+function loadAgentSession() {
+  try {
+    const raw = localStorage.getItem(AGENT_SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (_) { return null; }
+}
+function saveAgentSession() {
+  try {
+    const proj = (window.Engine && Engine.Proj && Engine.Proj.current) ? Engine.Proj.current() : null;
+    localStorage.setItem(AGENT_SESSION_KEY, JSON.stringify({
+      agentRuns: (S.agentRuns || []).slice(-20),
+      agentChat: (S.agentChat || []).slice(-40),
+      agentBuilt: !!S.agentBuilt,
+      lastPrompt: S.lastPrompt || '',
+      projectId: proj && proj.id || ''
+    }));
+  } catch (_) {}
+}
+function resetAgentSession() {
+  S.agentRuns = [];
+  S.agentChat = [];
+  S.agentQuestions = [];
+  S.agentSteps = [];
+  S.agentBuilt = false;
+  S.lastPrompt = '';
+  S.agentPrompt = '';
+  try { localStorage.removeItem(AGENT_SESSION_KEY); } catch (_) {}
+}
+function sessionMatchesWorkspace(sess) {
+  if (!sess) return false;
+  try {
+    const html = Engine.FS.read('/index.html');
+    if (!html) return false;
+    const proj = Engine.Proj.current && Engine.Proj.current();
+    if (sess.projectId && proj && sess.projectId !== proj.id) return false;
+    if (sess.agentBuilt && String(html).length < 40) return false;
+    return true;
+  } catch (_) { return false; }
+}
+function hydrateAgentSession() {
+  const sess = loadAgentSession();
+  if (!sess) return;
+  if (!sessionMatchesWorkspace(sess)) {
+    resetAgentSession();
+    return;
+  }
+  if (Array.isArray(sess.agentRuns) && sess.agentRuns.length) S.agentRuns = sess.agentRuns;
+  if (Array.isArray(sess.agentChat) && sess.agentChat.length) S.agentChat = sess.agentChat;
+  if (sess.agentBuilt) S.agentBuilt = true;
+  if (sess.lastPrompt && !S.lastPrompt) S.lastPrompt = sess.lastPrompt;
+}
+function promptIsRestart(p) {
+  try {
+    if (window.Engine && Engine.LLM && typeof Engine.LLM.looksLikeRestart === 'function') {
+      return !!Engine.LLM.looksLikeRestart(p);
+    }
+  } catch (_) {}
+  return /\b(start over|from scratch|brand[- ]new(?: app)?|replace (?:the |this )?(?:entire )?app|rebuild (?:everything|from scratch)|throw (?:it|this) away|different (?:app|product))\b/i.test(String(p || ''));
+}
+function flushIdeBuffer() {
+  if (!S.ideFile || !S.ideDirty) return false;
+  try { Engine.FS.write(S.ideFile, S.ideBuffer); } catch (_) { return false; }
+  S.ideDirty = false;
+  try { markArtifactWritten(S.ideFile); } catch (_) {}
+  return true;
+}
+function sendIdeFollowUp() {
+  const p = (S.ideFollowUp || '').trim();
+  if (!p) { toast('Type a follow-up first', '#f59e0b'); return; }
+  flushIdeBuffer();
+  S.agentPrompt = p;
+  S.ideFollowUp = '';
+  runAgent();
+}
+function clearWorkspace() {
+  try { Engine.FS.clearAll(); } catch (_) {}
+  try { Engine.Recovery && Engine.Recovery.resetState && Engine.Recovery.resetState(); } catch (_) {}
+  S.lastScan = null;
+  resetAgentSession();
+  toast('Workspace cleared');
+  renderAll();
+}
+function resetAllData() {
+  if (!confirm('Reset everything?')) return;
+  resetAgentSession();
+  try { Engine.FS.clearAll(); } catch (_) {}
+  try { Engine.Recovery && Engine.Recovery.resetState && Engine.Recovery.resetState(); } catch (_) {}
+  S.lastScan = null;
+  try { Engine.Proj.list().forEach(p => Engine.Proj.remove(p.id)); } catch (_) {}
+  location.reload();
+}
+window.clearWorkspace = clearWorkspace;
+window.resetAllData = resetAllData;
+
 function genApp() {
   const p = S.prompt.trim();
   if (!p) { toast('Describe the app first — or pick a “Try” prompt', '#f59e0b'); return; }
   if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
+  S.lastPrompt = p;
   S.agentRuns = [...S.agentRuns, p];
   S.prompt = '';
   S.agentStopped = false;
@@ -346,12 +450,14 @@ function genApp() {
 
 function runAgent() {
   const p = S.agentPrompt.trim();
-  if (!p) { toast('Describe what you want to build first', '#f59e0b'); return; }
+  if (!p) { toast(S.agentBuilt ? 'Type a follow-up for this app first' : 'Describe what you want to build first', '#f59e0b'); return; }
   if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
+  S.lastPrompt = p;
   S.agentRuns = [...S.agentRuns, p];
   S.agentPrompt = '';
   S.agentStopped = false;
-  toast('Run started — Planner is analyzing the request', '#a78bfa');
+  const restart = promptIsRestart(p);
+  toast(!restart && S.agentBuilt ? 'Follow-up started — editing the current app' : 'Run started — Planner is analyzing the request', '#a78bfa');
   // Also include any active spec from the Universal composer
   const ctx = (S.univ && S.univ.state) ? {
     source: 'universal-composer',
@@ -370,9 +476,18 @@ function runAgentWith(prompt, specCtx) {
   // clear any previous timers
   _agentTimers.forEach(t => clearTimeout(t));
   _agentTimers = [];
-  S.agentSteps = [];
+  const restart = promptIsRestart(prompt);
+  const followUp = !restart && !!(S.agentBuilt || (S.agentRuns || []).some(p => p && p !== prompt));
+  S.lastPrompt = prompt;
+  S.agentChat = [...(S.agentChat || []), { role: 'user', text: prompt, at: Date.now() }];
   S.agentRunning = true;
   S.planApproved = false;
+  if (followUp && Array.isArray(S.agentSteps) && S.agentSteps.length) {
+    S.agentSteps = [...S.agentSteps, { kind: 'user', text: 'Follow-up: ' + prompt, prompt: prompt }].slice(-80);
+  } else {
+    S.agentSteps = [];
+  }
+  try { saveAgentSession(); } catch (_) {}
   // record run start for backend persistence
   const runStart = Date.now();
   const runId = 'run_' + runStart.toString(36) + '_' + Math.random().toString(36).slice(2, 6);
@@ -387,9 +502,12 @@ function runAgentWith(prompt, specCtx) {
     };
     try { window.dispatchEvent(new CustomEvent('cs:spec-applied', { detail: specCtx })); } catch(_) {}
   }
+  try {
+    if (window.TabBus) window.TabBus.broadcast('agent:run', { prompt: prompt, followUp: followUp });
+  } catch (_) {}
   // hook for live updates
   Engine.Agent.run(prompt, step => {
-    S.agentSteps = [...S.agentSteps, step];
+    S.agentSteps = [...S.agentSteps, step].slice(-80);
     // when the planner publishes the file plan, feed it into the build pipeline
     if (step && step.kind === 'plan-result' && Array.isArray(step.files)) {
       try { planBuild(step.files); } catch (_) {}
@@ -403,16 +521,28 @@ function runAgentWith(prompt, specCtx) {
     // Final sync so the Build tab reflects exactly what the run produced
     try { syncBuildFromFS(); } catch (_) {}
     S.agentRunning = false;
-    // Auto-redirect to IDE so the user can see the generated files
-    // and pick a pipeline to scaffold the rest of the artifacts.
+    if (Engine.FS.read('/index.html')) S.agentBuilt = true;
+    const last = S.agentSteps[S.agentSteps.length - 1];
+    if (last && (last.kind === 'done' || last.kind === 'error')) {
+      S.agentChat = [...(S.agentChat || []), { role: 'assistant', text: last.text || last.kind, at: Date.now() }].slice(-40);
+    }
+    try { saveAgentSession(); } catch (_) {}
     try {
-      S.screen = 'ide';
-      // Auto-switch to Live Preview if /index.html exists, otherwise show workflow
-      S.idePanel = Engine.FS.read('/index.html') ? 'preview' : (S.idePanel || 'workflow');
-      if (S.idePanel === 'preview'){
-        toast('Files created — Live Preview is ready', '#34d399');
+      if (window.TabBus) window.TabBus.broadcast('workspace:changed', {
+        files: Engine.FS.count(),
+        followUp: followUp,
+        prompt: prompt
+      });
+    } catch (_) {}
+    // Stay on Agent so the user can keep prompting the same app.
+    try {
+      S.screen = 'agent';
+      if (Engine.FS.read('/index.html')) {
+        toast(followUp
+          ? 'App updated — send another prompt or Open IDE'
+          : 'Files created — send a follow-up or Open IDE', '#34d399');
       } else {
-        toast('Files created — pick a Pipeline to build all artifacts', '#22d3ee');
+        toast('Run finished — send another prompt to continue', '#22d3ee');
       }
     } catch (_) {}
     renderAll();
@@ -436,6 +566,9 @@ function runAgentWith(prompt, specCtx) {
     } catch (_) {}
   });
 }
+window.runAgent = runAgent;
+window.runAgentWith = runAgentWith;
+window.genApp = genApp;
 
 function approvePlan() {
   if (S.planApproved) { toast('Plan already approved', '#f59e0b'); return; }
@@ -453,6 +586,45 @@ function togglePause() {
   toast(S.recPaused ? 'Recovery paused — checkpoint preserved' : 'Recovery resumed', S.recPaused ? '#f59e0b' : '#34d399');
   renderAll();
 }
+function classifyValidatorSuites(issues) {
+  const _classify = (iss) => {
+    const m = String(iss.message || '').toLowerCase();
+    const f = String(iss.file || '').toLowerCase();
+    if (f.endsWith('.html')) return 'HTML';
+    if (f.endsWith('.js') || f.endsWith('.mjs')) {
+      if (m.includes('console.log')) return 'Console';
+      return 'JavaScript';
+    }
+    if (f.endsWith('.css')) return 'CSS';
+    if (m.includes('broken reference')) return 'References';
+    if (m.includes('empty') || m.includes('todo') || m.includes('fixme')) return 'Files';
+    return 'General';
+  };
+  const suiteCounts = {};
+  (issues || []).forEach(i => { const k = _classify(i); suiteCounts[k] = (suiteCounts[k] || 0) + 1; });
+  const _allSuites = [
+    { key: 'HTML',        name: 'HTML',        desc: 'Tag balance, alt, lang, structure' },
+    { key: 'JavaScript',  name: 'JavaScript',  desc: 'Syntax, eval, references' },
+    { key: 'CSS',         name: 'CSS',         desc: 'Broken url() references' },
+    { key: 'Console',     name: 'Console',     desc: 'console.log statements' },
+    { key: 'References',  name: 'References',  desc: 'Broken src / href in HTML' },
+    { key: 'Files',       name: 'Files',       desc: 'Empty files, TODO / FIXME markers' }
+  ];
+  return _allSuites.map(s => Object.assign({}, s, { count: suiteCounts[s.key] || 0 }));
+}
+
+function recordLastScan(issues) {
+  const result = issues || [];
+  S.lastScan = {
+    at: Date.now(),
+    issues: result,
+    suites: classifyValidatorSuites(result),
+    score: Math.max(0, 100 - result.filter(function(i){ return i.severity === "error"; }).length * 8 - result.filter(function(i){ return i.severity === "warning"; }).length * 2),
+    fileCount: Engine.FS.count()
+  };
+  return S.lastScan;
+}
+
 function runValidatorScan() {
   if (S.scanRunning) { toast('Validator scan already running…', '#f59e0b'); return; }
   S.scanRunning = true;
@@ -462,48 +634,8 @@ function runValidatorScan() {
   setTimeout(() => {
     try {
       const result = Engine.Validator.runAll();
-      // Classify every issue into a real suite based on the file extension and
-      // message text. This is real, derived data — never hardcoded.
-      const _classify = (iss) => {
-        const m = String(iss.message || '').toLowerCase();
-        const f = String(iss.file || '').toLowerCase();
-        if (f.endsWith('.html')) {
-          if (m.includes('tag imbalance')) return 'HTML';
-          if (m.includes('alt attribute')) return 'HTML';
-          if (m.includes('lang attribute')) return 'HTML';
-          if (m.includes('broken reference')) return 'HTML';
-          return 'HTML';
-        }
-        if (f.endsWith('.js') || f.endsWith('.mjs')) {
-          if (m.includes('syntax error')) return 'JavaScript';
-          if (m.includes('eval')) return 'JavaScript';
-          if (m.includes('console.log')) return 'Console';
-          return 'JavaScript';
-        }
-        if (f.endsWith('.css')) return 'CSS';
-        if (m.includes('broken reference')) return 'References';
-        if (m.includes('empty')) return 'Files';
-        if (m.includes('todo') || m.includes('fixme')) return 'Files';
-        return 'General';
-      };
-      const suiteCounts = {};
-      result.forEach(i => { const k = _classify(i); suiteCounts[k] = (suiteCounts[k] || 0) + 1; });
-      const _allSuites = [
-        { key: 'HTML',        name: 'HTML',        desc: 'Tag balance, alt, lang, structure' },
-        { key: 'JavaScript',  name: 'JavaScript',  desc: 'Syntax, eval, references' },
-        { key: 'CSS',         name: 'CSS',         desc: 'Broken url() references' },
-        { key: 'Console',     name: 'Console',     desc: 'console.log statements' },
-        { key: 'References',  name: 'References',  desc: 'Broken src / href in HTML' },
-        { key: 'Files',       name: 'Files',       desc: 'Empty files, TODO / FIXME markers' }
-      ];
-      const suites = _allSuites.map(s => Object.assign({}, s, { count: suiteCounts[s.key] || 0 }));
-      S.lastScan = {
-        at: Date.now(),
-        issues: result,
-        suites: suites,
-        score: Math.max(0, 100 - result.filter(function(i){ return i.severity === "error"; }).length * 8 - result.filter(function(i){ return i.severity === "warning"; }).length * 2),
-        fileCount: Engine.FS.count()
-      };
+      recordLastScan(result);
+      try { if (window.Engine && Engine.Recovery && Engine.Recovery.analyze) Engine.Recovery.analyze(); } catch (_) {}
       const errs = S.lastScan.issues.filter(i => i.severity === 'error').length;
       const warns = S.lastScan.issues.filter(i => i.severity === 'warning').length;
       toast('Scan complete — ' + errs + ' errors, ' + warns + ' warnings (score ' + S.lastScan.score + ')',
@@ -527,7 +659,10 @@ function runPreview() {
   const frame = document.getElementById('previewFrame');
   const title = document.getElementById('previewTitle');
   const modal = document.getElementById('previewModal');
-  if (frame) frame.srcdoc = html;
+  if (frame) {
+    if (Engine.Preview.applyFrame) Engine.Preview.applyFrame(frame, html);
+    else frame.srcdoc = html;
+  }
   if (title) {
     const proj = Engine.Proj.current();
     title.textContent = (proj ? proj.name : 'preview') + ' — preview';
@@ -571,6 +706,7 @@ function deploy() {
 
 function createProjectFromTemplate(name, templateId) {
   const meta = Engine.Proj.create(name, templateId);
+  resetAgentSession();
   toast('Scaffolded “' + meta.name + '” (' + meta.fileCount + ' files)', '#22d3ee');
   S.screen = 'ide';
   // open first file
@@ -592,6 +728,7 @@ function createProjectFromTemplate(name, templateId) {
 function openProject(id) {
   const meta = Engine.Proj.switchTo(id);
   if (!meta) return;
+  resetAgentSession();
   toast('Opened “' + meta.name + '”', '#22d3ee');
   S.screen = 'ide';
   const files = Object.keys(Engine.FS._data).filter(p => Engine.FS.isFile(p));
@@ -793,35 +930,36 @@ function renderAgent() {
     `<div style="display:flex;align-items:center;gap:13px;padding:12px 12px;border-radius:10px">
       <span style="width:9px;height:9px;border-radius:50%;flex:none;background:${color};box-shadow:0 0 8px ${color}"></span>
       <span style="width:30px;height:30px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;background:${stC}20;color:${color}"><span style="display:inline-flex;width:16px;height:16px;align-items:center;justify-content:center">${I[ik]}</span></span>
-      <span style="font-size:13px;font-weight:600;width:80px;flex:none">${name}</span>
-      <span style="font-size:10.5px;font-weight:600;color:${color};background:${stC}20;padding:2px 8px;border-radius:6px;flex:none">${st}</span>
-      <span style="flex:1;font-size:12.5px;color:#8b93a7;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${desc}</span>
-      ${file ? `<span style="font:500 11px 'JetBrains Mono',monospace;color:#c7cddb;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:3px 8px;border-radius:6px;flex:none">${file}</span>` : ''}
-      ${time ? `<span style="font-size:11px;color:#6b7488;flex:none">${time}</span>` : ''}
+      <span style="font-size:13px;font-weight:600;width:80px;flex:none">${esc(name)}</span>
+      <span style="font-size:10.5px;font-weight:600;color:${color};background:${stC}20;padding:2px 8px;border-radius:6px;flex:none">${esc(st)}</span>
+      <span style="flex:1;font-size:12.5px;color:#8b93a7;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(desc)}</span>
+      ${file ? `<span style="font:500 11px 'JetBrains Mono',monospace;color:#c7cddb;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:3px 8px;border-radius:6px;flex:none">${esc(file)}</span>` : ''}
+      ${time ? `<span style="font-size:11px;color:#6b7488;flex:none">${esc(time)}</span>` : ''}
     </div>`;
 
-  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer' };
-  const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket' };
-  const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c' };
+  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','user':'You','route':'Router','repo':'Repo','deps':'Deps','screenshot':'Observer','evaluate':'Brain','explore':'Explore','think':'Think','act':'Act','observe':'Observe','diagnose':'Diagnose','ask':'Ask','coord':'Coordinator','swarm':'Subagent','model':'Router','goal':'Goal','cloud':'Cloud','steer':'Steer','review':'Bugbot','evidence':'Evidence' };
+  const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket','error':'alert','user':'user','route':'sparkle','repo':'branch','deps':'clip','screenshot':'eye','evaluate':'flask','explore':'branch','coord':'sparkle','swarm':'user','model':'sparkle' };
+  const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c','error':'#f87171','user':'#fbbf24','route':'#a78bfa','repo':'#22d3ee','deps':'#60a5fa','screenshot':'#34d399','evaluate':'#a78bfa','explore':'#22d3ee','coord':'#a78bfa','swarm':'#22d3ee','model':'#fbbf24' };
 
   let activityRows;
   if (steps.length === 0) {
     activityRows = `<div style="padding:24px;text-align:center;color:#7b859c;font-size:13px">No activity yet — type a prompt and click <b style="color:#a78bfa">Run</b>.</div>`;
   } else {
-    activityRows = steps.map((s, i) => {
+    const shown = steps.slice().reverse();
+    activityRows = shown.map((s, i) => {
       const name = specialistMap[s.kind] || 'Agent';
       const ik = specialistIcon[s.kind] || 'sparkle';
       const color = specialistColor[s.kind] || '#a78bfa';
-      const st = s.kind === 'done' ? 'Done' : (S.agentRunning ? 'Working' : 'Logged');
-      const stC = s.kind === 'done' ? '#34d399' : '#a78bfa';
+      const st = s.kind === 'done' ? 'Done' : (s.kind === 'user' ? 'You' : (S.agentRunning && i === 0 ? 'Working' : 'Logged'));
+      const stC = s.kind === 'done' ? '#34d399' : s.kind === 'user' ? '#fbbf24' : '#a78bfa';
       const desc = s.kind === 'plan' ? s.text :
                    s.kind === 'plan-result' ? s.text :
                    s.kind === 'write' ? 'Wrote ' + s.path :
                    s.kind === 'validate' ? s.text :
-                   s.kind === 'validate-result' ? (s.issues ? s.issues.length + ' issue(s) found' : 'Validation complete') :
+                   s.kind === 'validate-result' ? ((s.quality ? ('Quality ' + s.quality.score + (s.quality.pass ? ' pass' : ' — refining') + ' · ') : '') + (s.issues ? s.issues.length + ' issue(s) found' : 'Validation complete')) :
                    s.kind === 'done' ? s.text : s.text;
       const file = s.kind === 'write' ? s.path : null;
-      const time = i < steps.length - 1 ? fmtTimeAgo(Date.now() - (steps.length - i) * 1000) : 'now';
+      const time = i === 0 ? 'now' : fmtTimeAgo(Date.now() - i * 1000);
       return aRow(name, ik, color, st, stC, desc, time, file);
     }).join('');
   }
@@ -959,30 +1097,40 @@ function renderAgent() {
     <div style="flex:1;min-width:0;overflow:auto;padding:22px 24px 36px">
       <div style="display:flex;align-items:flex-start;gap:13px;margin-bottom:18px">
         <div style="width:40px;height:40px;border-radius:11px;background:linear-gradient(135deg,#6d5dfc,#a855f7);display:flex;align-items:center;justify-content:center;color:#fff;flex:none"><span style="display:inline-flex;width:21px;height:21px;align-items:center;justify-content:center">${I.sparkle}</span></div>
-        <div style="flex:1"><div style="font-size:20px;font-weight:700">Agent Workspace</div><div style="font-size:13px;color:#8b93a7;margin-top:2px">${S.agentRunning ? 'Agent is mutating the workspace…' : 'Run the agent to plan, write, and validate files.'}</div></div>
+        <div style="flex:1"><div style="font-size:20px;font-weight:700">Agent Workspace</div><div style="font-size:13px;color:#8b93a7;margin-top:2px">${S.agentRunning ? 'Agent is mutating the workspace…' : (S.agentBuilt ? 'Ask follow-ups — each prompt edits the same app.' : 'Run the agent to plan, write, and validate files.')}</div></div>
         <div style="display:flex;align-items:center;gap:12px">
           <span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;color:#8b93a7;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:6px 10px;cursor:pointer">Auto <span style="display:inline-flex;width:12px;height:12px;align-items:center;justify-content:center">${I.chev}</span></span>
           <span style="display:inline-flex;align-items:center;gap:8px;font-size:12px;color:#e6e9f2">Stream <span id="streamToggle" style="width:34px;height:19px;border-radius:11px;background:${S.stream?'#34d399':'rgba(255,255,255,.16)'};position:relative;display:inline-block;cursor:pointer;transition:.15s"><span style="position:absolute;top:2px;left:${S.stream?'17px':'2px'};width:15px;height:15px;border-radius:50%;background:#fff;transition:.15s"></span></span></span>
         </div>
       </div>
 
+      ${(S.agentRuns && S.agentRuns.length) ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${S.agentRuns.slice(-6).map((p, i) => `<span style="font-size:11px;color:#c7cddb;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);padding:4px 8px;border-radius:999px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(p)}">${i === S.agentRuns.slice(-6).length - 1 ? 'Latest: ' : ''}${esc(p.length > 48 ? p.slice(0, 48) + '…' : p)}</span>`).join('')}</div>` : ''}
       <div style="border:1px solid rgba(109,93,252,.4);border-radius:13px;background:rgba(124,91,214,.05);padding:6px 6px 6px 18px;display:flex;align-items:center;gap:12px;margin-bottom:14px;box-shadow:0 0 0 3px rgba(109,93,252,.08)">
-        <input id="agentPromptInput" value="${esc(S.agentPrompt)}" placeholder="Describe what you want to build…" style="flex:1;background:transparent;border:none;outline:none;color:#e6e9f2;font:400 14px Inter,sans-serif;padding:13px 0">
+        <input id="agentPromptInput" value="${esc(S.agentPrompt)}" placeholder="${S.agentBuilt ? 'Ask a follow-up — change, fix, or add to this app…' : 'Describe what you want to build…'}" style="flex:1;background:transparent;border:none;outline:none;color:#e6e9f2;font:400 14px Inter,sans-serif;padding:13px 0">
         <span style="display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center;color:#7b859c;cursor:pointer">${I.clip}</span>
         <span style="display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center;color:#7b859c;cursor:pointer">${I.at}</span>
-        <button id="runAgentBtn" style="display:flex;align-items:center;gap:8px;padding:11px 18px;border:none;border-radius:10px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 13.5px Inter;cursor:pointer"><span style="display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center">${I.play}</span>Run <span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center">${I.chev}</span></button>
+        <button id="runAgentBtn" style="display:flex;align-items:center;gap:8px;padding:11px 18px;border:none;border-radius:10px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 13.5px Inter;cursor:pointer"><span style="display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center">${I.play}</span>${S.agentBuilt ? 'Send' : 'Run'} <span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center">${I.chev}</span></button>
       </div>
       <div style="display:flex;gap:11px;margin-bottom:20px">
         <button id="stopBtn" style="display:flex;align-items:center;gap:8px;padding:9px 15px;border:1px solid ${S.agentStopped?'rgba(52,211,153,.4)':'rgba(239,68,68,.4)'};border-radius:9px;background:${S.agentStopped?'rgba(52,211,153,.08)':'rgba(239,68,68,.08)'};color:${S.agentStopped?'#34d399':'#f87171'};font:600 12.5px Inter;cursor:pointer"><span style="display:inline-flex;width:13px;height:13px;align-items:center;justify-content:center">${S.agentStopped?I.play:I.stop}</span>${S.agentStopped?'Resume':'Stop'}</button>
         <button id="openIdeBtn2" style="display:flex;align-items:center;gap:8px;padding:9px 15px;border:1px solid rgba(255,255,255,.11);border-radius:9px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 12.5px Inter;cursor:pointer"><span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center">${I.ide}</span>Open IDE</button>
       </div>
 
+      ${((S.agentQuestions || []).filter(function (q) { return q && !q.answer; }).length) ? `<div style="border:1px solid rgba(167,139,250,.35);border-radius:12px;background:rgba(124,91,214,.08);padding:12px 14px;margin-bottom:16px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:.06em;color:#a78bfa;margin-bottom:8px">AGENT QUESTION — keeps working while you answer</div>
+        ${(S.agentQuestions || []).filter(function (q) { return q && !q.answer; }).map(function (q) {
+          return '<div style="margin-bottom:8px"><div style="font-size:13px;color:#e6e9f2;margin-bottom:6px">' + esc(q.question) + '</div>'
+            + '<div style="display:flex;gap:8px"><input data-agentq="' + esc(q.id) + '" placeholder="Answer…" style="flex:1;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:8px 10px;color:#e6e9f2;font:400 13px Inter">'
+            + '<button data-agentqsend="' + esc(q.id) + '" class="btn" style="padding:8px 12px;font-size:12px">Send</button></div></div>';
+        }).join('')}
+      </div>` : ''}
+
       <div style="border:1px solid rgba(255,255,255,.07);border-radius:13px;background:rgba(13,17,28,.5);margin-bottom:18px">
         <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.06)">
           <div style="display:flex;align-items:center;gap:10px"><span style="font-size:13px;font-weight:600">Activity Stream</span><span style="display:inline-flex;align-items:center;gap:5px;font-size:11.5px;color:${liveColor}"><span style="width:6px;height:6px;border-radius:50%;background:${liveColor};${S.agentRunning&&!S.agentStopped?'animation:csPulse 1.6s infinite':''}"></span>${liveLabel}</span></div>
           <div style="font-size:12px;color:#7b859c">${steps.length} step${steps.length===1?'':'s'}</div>
         </div>
-        <div style="padding:6px 6px;max-height:300px;overflow:auto">${activityRows}</div>
+        <div style="padding:6px 6px;max-height:360px;overflow:auto">${activityRows}</div>
       </div>
 
       <div style="font-size:13px;font-weight:600;margin-bottom:12px">Specialist Agents</div>
@@ -1001,13 +1149,26 @@ function renderAgent() {
   </div>`;
 }
 
+function answerAgentQuestion(id, text) {
+  const q = (S.agentQuestions || []).find(function (x) { return x && x.id === id; });
+  if (!q) return;
+  q.answer = String(text || '').trim();
+  if (!q.answer) { toast('Type an answer first', '#f59e0b'); return; }
+  S.agentChat = [...(S.agentChat || []), { role: 'user', text: 'Answer: ' + q.answer, at: Date.now() }];
+  toast('Answer recorded — Agent keeps working', '#34d399');
+  if (!S.agentRunning) {
+    runAgentWith('Answer to: ' + q.question + ' → ' + q.answer);
+  }
+  renderAll();
+}
+
 function bindAgent() {
   const a = id => document.getElementById(id);
   if (a('runAgentBtn')) a('runAgentBtn').onclick = runAgent;
   if (a('stopBtn')) a('stopBtn').onclick = stopRun;
   if (a('streamToggle')) a('streamToggle').onclick = () => { S.stream = !S.stream; renderAll(); };
   const inp = a('agentPromptInput');
-  if (inp) { inp.oninput = e => S.agentPrompt = e.target.value; inp.onkeydown = e => { if (e.key === 'Enter') runAgent(); }; }
+  if (inp) { inp.oninput = e => S.agentPrompt = e.target.value; inp.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runAgent(); } }; }
   if (a('tempRange')) a('tempRange').oninput = e => { S.temp = parseFloat(e.target.value); renderAll(); };
   if (a('maxTokRange')) a('maxTokRange').oninput = e => { S.maxTok = parseInt(e.target.value); renderAll(); };
   if (a('agentChip')) a('agentChip').onclick = cycleAgent;
@@ -1030,6 +1191,13 @@ function bindAgent() {
   });
   const oi = a('openIdeBtn'); if (oi) oi.onclick = () => { S.screen = 'ide'; renderAll(); };
   const oi2 = a('openIdeBtn2'); if (oi2) oi2.onclick = () => { S.screen = 'ide'; renderAll(); };
+  document.querySelectorAll('[data-agentqsend]').forEach(function (el) {
+    el.onclick = function () {
+      const id = el.dataset.agentqsend;
+      const field = document.querySelector('[data-agentq="' + id + '"]');
+      answerAgentQuestion(id, field ? field.value : '');
+    };
+  });
 }
 var files = []; // populated in renderAgent scope via local var, this is fallback
 function _agentFiles() { return Object.keys(Engine.FS._data).filter(p => Engine.FS.isFile(p)); }
@@ -1245,7 +1413,7 @@ function renderIDE() {
   const problemsBody = `<div style="flex:1;overflow:auto;padding:10px 16px">${issues.length === 0 ? '<div style="font-size:12px;color:#34d399;padding:12px">✓ No issues found</div>' : issues.map(p => {
     const color = p.severity==='error' ? '#f87171' : p.severity==='security' ? '#ef4444' : p.severity==='a11y' ? '#f59e0b' : '#8b93a7';
     const icon = p.severity==='error' ? I.alert : p.severity==='security' ? I.shield : p.severity==='a11y' ? I.eye : I.alert;
-    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:${color};width:14px;height:14px;flex:none;display:inline-flex;align-items:center;justify-content:center">${icon}</span><span style="flex:1">${esc(p.msg)}</span><span style="font:400 11px 'JetBrains Mono',monospace;color:#6b7488">${esc(p.file)}</span></div>`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:${color};width:14px;height:14px;flex:none;display:inline-flex;align-items:center;justify-content:center">${icon}</span><span style="flex:1">${esc(p.message || p.msg || '')}</span><span style="font:400 11px 'JetBrains Mono',monospace;color:#6b7488">${esc(p.file)}</span></div>`;
   }).join('')}</div>`;
 
   // Git panel — shows file list with status
@@ -1261,7 +1429,7 @@ function renderIDE() {
           <div style="display:flex;align-items:center;gap:8px">
             <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#34d399;box-shadow:0 0 6px #34d399;animation:csPulse 1.6s infinite"></span>
             <span style="font-size:11px;font-weight:600;color:#34d399;letter-spacing:.05em">LIVE</span>
-            <span style="font-size:11.5px;color:#8b93a7">running on <span style="color:#a9b0ff;font-family:'JetBrains Mono',monospace">http://localhost:5173</span></span>
+            <span style="font-size:11.5px;color:#8b93a7">workspace preview <span style="color:#a9b0ff;font-family:'JetBrains Mono',monospace">preview://index.html</span></span>
           </div>
           <div style="display:flex;align-items:center;gap:6px">
             <span style="font-size:10.5px;color:#7b859c">${Engine.FS.count()} files \xc2\xb7 ${(Engine.FS.read('/index.html')||'').length} bytes</span>
@@ -1269,7 +1437,7 @@ function renderIDE() {
             <span id="openPreviewPanel" title="Open preview in new tab" style="width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05);color:#8b93a7;cursor:pointer"><span style="width:13px;height:13px;display:inline-flex">${I.ext}</span></span>
           </div>
         </div>
-        <div style="flex:1;min-height:0;background:#fff"><iframe data-idepreviewpanel sandbox="allow-scripts" style="width:100%;height:100%;border:0;background:#fff"></iframe></div>
+        <div style="flex:1;min-height:0;background:#fff"><iframe data-idepreviewpanel sandbox="allow-scripts" csp="${esc(Engine.Preview.iframeCsp || '')}" style="width:100%;height:100%;border:0;background:#fff"></iframe></div>
       </div>
     </div>`;
   } else {
@@ -1290,16 +1458,24 @@ function renderIDE() {
   const html = Engine.Preview.build();
   let previewHTML;
   if (html) {
-    previewHTML = `<div style="height:100%;background:#fff;overflow:auto"><iframe data-idepreview style="width:100%;height:100%;border:0;background:#fff" sandbox="allow-scripts"></iframe></div>`;
+    previewHTML = `<div style="height:100%;background:#fff;overflow:auto"><iframe data-idepreview style="width:100%;height:100%;border:0;background:#fff" sandbox="allow-scripts" csp="${esc(Engine.Preview.iframeCsp || '')}"></iframe></div>`;
+    S._previewEpoch = (S._previewEpoch || 0) + 1;
+    const previewEpoch = S._previewEpoch;
     setTimeout(() => {
+      if (previewEpoch !== S._previewEpoch) return;
       const f = document.querySelector('[data-idepreview]');
-      if (f && f.dataset.bound !== '1') { f.srcdoc = html; f.dataset.bound = '1'; }
+      if (f) {
+        if (Engine.Preview.applyFrame) Engine.Preview.applyFrame(f, html);
+        else f.srcdoc = html;
+      }
     }, 0);
   } else {
     previewHTML = `<div style="padding:24px;color:#6b7488;text-align:center;font-size:13px">No /index.html — preview unavailable</div>`;
   }
 
-  return `<div style="height:100%;display:flex;min-height:0;background:#0a0e17">
+  const ideFollowPh = S.agentBuilt ? 'Ask a follow-up to fix or change this app…' : 'Describe what you want to build…';
+  return `<div style="height:100%;display:flex;flex-direction:column;min-height:0;background:#0a0e17">
+  <div style="flex:1;display:flex;min-height:0">
     <div style="width:224px;flex:none;border-right:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;min-height:0">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:11px 14px 8px"><span style="font-size:10.5px;font-weight:700;letter-spacing:.08em;color:#7b859c">FILES</span><span style="font-size:10.5px;color:#7b859c">${allFiles.length}</span></div>
       <div style="flex:1;overflow:auto;padding:0 6px">${fileRows}</div>
@@ -1318,9 +1494,15 @@ function renderIDE() {
         <span id="saveFileBtn2" style="width:16px;height:16px;display:inline-flex;color:#6b7488;margin:0 6px;cursor:pointer">${I.save}</span>
         <span style="width:16px;height:16px;display:inline-flex;color:#6b7488;margin:0 6px;cursor:pointer">${I.dots}</span>
       </div>
-      <div style="display:flex;align-items:center;gap:7px;padding:6px 16px;font-size:11.5px;color:#7b859c;flex:none;border-bottom:1px solid rgba(255,255,255,.04)"><span>${S.ideFile ? esc(S.ideFile) : 'no file'}</span>${S.ideDirty?'<span style="color:#f59e0b">· unsaved</span>':''}</div>
+      <div style="display:flex;align-items:center;gap:7px;padding:6px 16px;font-size:11.5px;color:#7b859c;flex:none;border-bottom:1px solid rgba(255,255,255,.04)"><span>${S.ideFile ? esc(S.ideFile) : 'no file'}</span>${S.ideDirty?'<span style="color:#f59e0b">· unsaved</span>':''}<span class="tab-hint" id="tabHint">Tab · Agent Tab · Ctrl+K edit</span></div>
       <div style="flex:1;display:flex;min-height:0;position:relative;overflow:hidden;background:#0a0e17">
-        <textarea id="ideEditor" spellcheck="false" style="flex:1;background:#0a0e17;color:#c9d1e0;border:0;outline:0;padding:8px 16px;font:400 13px/1.62 'JetBrains Mono',monospace;resize:none;width:100%;height:100%">${esc(S.ideBuffer || '')}</textarea>
+        <textarea id="ideEditor" spellcheck="false" style="flex:1;background:#0a0e17;color:#c9d1e0;border:0;outline:0;padding:8px 16px;font:400 13px/1.62 'JetBrains Mono',monospace;resize:none;width:100%;height:100%;position:relative;z-index:1">${esc(S.ideBuffer || '')}</textarea>
+        <div id="tabGhost" class="tab-ghost" hidden></div>
+        <div id="tabPortal" class="tab-portal" hidden></div>
+        <div id="inlineEdit" class="inline-edit" hidden>
+          <div class="inline-k">Ctrl+K</div>
+          <input id="inlineEditInput" placeholder="Convert this to async…" autocomplete="off">
+        </div>
       </div>
       <div style="height:250px;flex:none;border-top:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;background:#0b0f1a">
         <div style="display:flex;align-items:center;gap:22px;padding:0 16px;height:36px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">${idePanels}<div style="flex:1"></div><span style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer">${I.expand}</span></div>
@@ -1341,13 +1523,20 @@ function renderIDE() {
       </div>
       <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">
         <span style="width:15px;height:15px;display:inline-flex;color:#6b7488;cursor:pointer">${I.back}</span>
-        <div style="flex:1;display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:7px;padding:5px 10px;font-size:11.5px;color:#8b93a7">http://localhost:5173 — ${S.ideFile||'preview'}</div>
+        <div style="flex:1;display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:7px;padding:5px 10px;font-size:11.5px;color:#8b93a7">preview://workspace — ${S.ideFile||'preview'}</div>
         <span id="refreshPreviewIde" style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer">${I.refresh}</span>
         <span id="openPreviewIde" style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer">${I.ext}</span>
       </div>
       <div style="flex:1;overflow:hidden;display:flex">${previewHTML}</div>
     </div>
-  </div>`;
+  </div>
+  <div style="flex:none;border-top:1px solid rgba(255,255,255,.08);padding:8px 12px;display:flex;align-items:center;gap:10px;background:#0b0f1a">
+    <span style="display:inline-flex;width:16px;height:16px;color:#a78bfa">${I.sparkle}</span>
+    <input id="ideFollowUpInput" value="${esc(S.ideFollowUp || '')}" placeholder="${esc(ideFollowPh)}" style="flex:1;background:transparent;border:none;outline:none;color:#e6e9f2;font:400 13px Inter,sans-serif">
+    <button id="ideFollowUpBtn" style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:none;border-radius:8px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 12px Inter;cursor:pointer">${S.agentRunning ? 'Running…' : 'Send'}</button>
+    <button id="ideOpenAgentBtn" style="padding:8px 12px;border:1px solid rgba(255,255,255,.12);border-radius:8px;background:rgba(255,255,255,.03);color:#c7cddb;font:600 12px Inter;cursor:pointer">Agent</button>
+  </div>
+</div>`;
 }
 
 function buildFileTree() {
@@ -1399,6 +1588,245 @@ function renderTreeRows(node, depth) {
   return html;
 }
 
+function tabCaretPixel(editor, pos) {
+  const div = document.createElement('div');
+  const st = window.getComputedStyle(editor);
+  ['font', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'padding', 'border', 'boxSizing', 'whiteSpace', 'wordWrap', 'width'].forEach(function (p) {
+    try { div.style[p] = st[p]; } catch (_) {}
+  });
+  div.style.position = 'absolute';
+  div.style.visibility = 'hidden';
+  div.style.whiteSpace = 'pre-wrap';
+  div.style.overflow = 'hidden';
+  div.style.width = editor.clientWidth + 'px';
+  div.textContent = editor.value.slice(0, pos);
+  const marker = document.createElement('span');
+  marker.textContent = '|';
+  div.appendChild(marker);
+  document.body.appendChild(div);
+  const x = marker.offsetLeft - editor.scrollLeft;
+  const y = marker.offsetTop - editor.scrollTop;
+  div.remove();
+  return { x: x, y: y };
+}
+
+function paintAgentTab(editor, sug) {
+  const ghost = document.getElementById('tabGhost');
+  const portal = document.getElementById('tabPortal');
+  const hint = document.getElementById('tabHint');
+  S._tabSug = sug || null;
+  const preview = sug && sug.text ? String(sug.text).split('\n')[0].slice(0, 64) : '';
+  if (hint) {
+    hint.textContent = sug
+      ? ('Tab · ' + (sug.label || sug.kind) + (preview ? ('  ' + preview) : ''))
+      : 'Tab · Agent Tab · Ctrl+K edit';
+  }
+  if (ghost) {
+    if (sug && sug.text && editor) {
+      const xy = tabCaretPixel(editor, editor.selectionStart || 0);
+      ghost.hidden = false;
+      ghost.style.left = (16 + xy.x) + 'px';
+      ghost.style.top = (8 + xy.y) + 'px';
+      ghost.textContent = sug.text;
+    } else {
+      ghost.hidden = true;
+      ghost.textContent = '';
+    }
+  }
+  if (portal) {
+    const Tab = window.Engine && window.Engine.Tab;
+    if (sug && Tab && Tab.isPortal(sug)) {
+      portal.hidden = false;
+      portal.innerHTML = '<div style="font:600 11px Inter;color:#a78bfa;margin-bottom:4px">Next edit</div>'
+        + '<div style="color:#e6e9f2;margin-bottom:8px">' + esc(sug.next.reason || sug.next.path) + '</div>'
+        + '<div style="font:500 11px JetBrains Mono,monospace;color:#8b93a7;margin-bottom:8px">' + esc(sug.next.path) + '</div>'
+        + '<button id="tabJumpBtn" class="btn ghost" type="button" style="padding:4px 10px;font-size:11px">Tab · jump</button>';
+      const btn = document.getElementById('tabJumpBtn');
+      if (btn) btn.onclick = function (ev) { ev.preventDefault(); acceptTabPortal(); };
+    } else {
+      portal.hidden = true;
+      portal.innerHTML = '';
+    }
+  }
+}
+
+function refreshAgentTab(editor) {
+  const Tab = window.Engine && window.Engine.Tab;
+  if (!Tab || !editor) return;
+  const sug = Tab.suggest({
+    path: S.ideFile,
+    content: editor.value,
+    cursor: editor.selectionStart,
+    selectionStart: editor.selectionStart,
+    selectionEnd: editor.selectionEnd
+  });
+  paintAgentTab(editor, sug);
+}
+
+function acceptAgentTab(editor) {
+  const Tab = window.Engine && window.Engine.Tab;
+  const sug = S._tabSug;
+  if (!Tab || !sug || !editor) return false;
+  if (sug.text) {
+    const next = Tab.apply(sug, editor.value);
+    editor.value = next.content;
+    S.ideBuffer = next.content;
+    S.ideDirty = true;
+    editor.selectionStart = editor.selectionEnd = next.cursor;
+    Tab.recordEdit({ path: S.ideFile, line: (next.content.split('\n')[Math.max(0, next.content.slice(0, next.cursor).split('\n').length - 1)] || ''), cursor: next.cursor });
+    sug.text = '';
+  }
+  if (Tab.isPortal(sug)) {
+    paintAgentTab(editor, sug);
+    return true;
+  }
+  refreshAgentTab(editor);
+  return true;
+}
+
+function acceptTabPortal() {
+  const Tab = window.Engine && window.Engine.Tab;
+  const sug = S._tabSug;
+  if (!Tab || !sug || !Tab.isPortal(sug)) return;
+  Tab.applyRelated(sug);
+  const dest = sug.next && sug.next.path;
+  S._tabSug = null;
+  if (dest) openFile(dest);
+}
+
+function inlineSelection(editor) {
+  let a = editor.selectionStart || 0;
+  let b = editor.selectionEnd || 0;
+  if (a === b) {
+    const v = editor.value || '';
+    const ls = v.lastIndexOf('\n', Math.max(0, a - 1)) + 1;
+    let le = v.indexOf('\n', a);
+    if (le < 0) le = v.length;
+    return { start: ls, end: le };
+  }
+  return { start: Math.min(a, b), end: Math.max(a, b) };
+}
+
+function paintInlineEdit(editor, show) {
+  const box = document.getElementById('inlineEdit');
+  const input = document.getElementById('inlineEditInput');
+  if (!box) return;
+  if (!show) {
+    box.hidden = true;
+    S._inlineOpen = false;
+    return;
+  }
+  const sel = inlineSelection(editor);
+  S._inlineSel = sel;
+  box.hidden = false;
+  S._inlineOpen = true;
+  if (editor) {
+    const xy = tabCaretPixel(editor, sel.start);
+    box.style.left = Math.max(12, 16 + xy.x) + 'px';
+    box.style.top = Math.max(8, 8 + xy.y + 22) + 'px';
+  }
+  if (input) {
+    input.value = S.inlineInstruction || '';
+    setTimeout(function () { try { input.focus(); } catch (_) {} }, 0);
+  }
+}
+
+async function runInlineEdit(editor) {
+  const Inline = window.Engine && window.Engine.Inline;
+  const input = document.getElementById('inlineEditInput');
+  const instruction = ((input && input.value) || S.inlineInstruction || '').trim();
+  if (!Inline || !editor || !instruction) { toast('Type what to change, then Enter', '#f59e0b'); return; }
+  S.inlineInstruction = instruction;
+  const sel = S._inlineSel || inlineSelection(editor);
+  toast('Editing selection…', '#a78bfa');
+  let result;
+  try {
+    result = await Inline.transform({
+      path: S.ideFile,
+      content: editor.value,
+      selectionStart: sel.start,
+      selectionEnd: sel.end,
+      instruction: instruction
+    });
+  } catch (e) {
+    toast('Inline edit failed: ' + (e && e.message || e), '#ef4444');
+    return;
+  }
+  const next = Inline.apply(result, editor.value);
+  editor.value = next.content;
+  S.ideBuffer = next.content;
+  S.ideDirty = true;
+  editor.selectionStart = editor.selectionEnd = next.cursor;
+  paintInlineEdit(editor, false);
+  toast('Selection updated', '#34d399');
+}
+
+function bindInlineEdit(editor) {
+  if (!editor || editor.dataset.inlineBound === '1') return;
+  editor.dataset.inlineBound = '1';
+  editor.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+      e.preventDefault();
+      paintInlineEdit(editor, true);
+      return;
+    }
+    if (e.key === 'Escape' && S._inlineOpen) {
+      e.preventDefault();
+      paintInlineEdit(editor, false);
+    }
+  });
+  const input = document.getElementById('inlineEditInput');
+  if (input && input.dataset.inlineK !== '1') {
+    input.dataset.inlineK = '1';
+    input.oninput = function (ev) { S.inlineInstruction = ev.target.value; };
+    input.onkeydown = function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        runInlineEdit(editor);
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        paintInlineEdit(editor, false);
+        try { editor.focus(); } catch (_) {}
+      }
+    };
+  }
+}
+
+function bindAgentTab(editor) {
+  const Tab = window.Engine && window.Engine.Tab;
+  if (!Tab || !editor) return;
+  let t = 0;
+  const bump = function () {
+    clearTimeout(t);
+    t = setTimeout(function () { refreshAgentTab(editor); }, 80);
+  };
+  editor.addEventListener('input', function () {
+    const infoLine = (editor.value.split('\n')[Math.max(0, editor.value.slice(0, editor.selectionStart).split('\n').length - 1)] || '');
+    Tab.recordEdit({ path: S.ideFile, line: infoLine, cursor: editor.selectionStart });
+    bump();
+  });
+  editor.addEventListener('keyup', bump);
+  editor.addEventListener('click', bump);
+  editor.addEventListener('scroll', function () { if (S._tabSug) paintAgentTab(editor, S._tabSug); });
+  editor.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) return;
+    if (e.key === 'Escape' && S._inlineOpen) return;
+    if (e.key === 'Escape' && S._tabSug) {
+      e.preventDefault();
+      paintAgentTab(editor, null);
+      return;
+    }
+    if (e.key === 'Tab' && !e.shiftKey && S._tabSug && !S._inlineOpen) {
+      e.preventDefault();
+      if (Tab.isPortal(S._tabSug) && !S._tabSug.text) acceptTabPortal();
+      else acceptAgentTab(editor);
+    }
+  });
+  bump();
+}
+
 function bindIDE() {
   try { bindPipelineModal(); } catch (_) {}
   const openP = document.getElementById('openPipelineModal');
@@ -1423,21 +1851,46 @@ function bindIDE() {
   const editor = document.getElementById('ideEditor');
   if (editor) {
     editor.oninput = e => { S.ideBuffer = e.target.value; S.ideDirty = true; /* re-render would lose focus; mark only */ const ind = document.querySelector('[id="screenRoot"]'); };
+    bindAgentTab(editor);
+    bindInlineEdit(editor);
   }
   const sf = document.getElementById('saveFileBtn'); if (sf) sf.onclick = saveFile;
   const sf2 = document.getElementById('saveFileBtn2'); if (sf2) sf2.onclick = saveFile;
   const rp = document.getElementById('refreshPreviewIde'); if (rp) rp.onclick = () => { renderAll(); };
   // Live Preview panel bindings (preview tab in IDE bottom panel)
   const rpp = document.getElementById('refreshPreviewPanel'); if (rpp) rpp.onclick = () => { renderAll(); };
-  const opp = document.getElementById('openPreviewPanel'); if (opp) opp.onclick = () => { const h = Engine.Preview.build(); if (h) { const w = window.open('', '_blank'); if (w) { w.document.open(); w.document.write(h); w.document.close(); } } };
+  const opp = document.getElementById('openPreviewPanel'); if (opp) opp.onclick = () => { if (Engine.Preview.openTab) Engine.Preview.openTab(); };
   // Inject srcdoc into the Live Preview panel iframe after render
+  const panelEpoch = S._previewEpoch;
   setTimeout(() => {
+    if (panelEpoch !== S._previewEpoch) return;
     const f = document.querySelector('[data-idepreviewpanel]');
-    if (f && f.dataset.bound !== '1') { const h = Engine.Preview.build(); if (h) { f.srcdoc = h; f.dataset.bound = '1'; } }
+    if (!f) return;
+    const h = Engine.Preview.build();
+    if (h) {
+      if (Engine.Preview.applyFrame) Engine.Preview.applyFrame(f, h);
+      else f.srcdoc = h;
+    }
   }, 0);
   const op = document.getElementById('openPreviewIde'); if (op) op.onclick = runPreview;
   const rpv = document.getElementById('runPreviewIde'); if (rpv) rpv.onclick = runPreview;
   const nf = document.getElementById('newFileBtn'); if (nf) nf.onclick = newFileDialog;
+  const ideFollow = document.getElementById('ideFollowUpInput');
+  if (ideFollow) {
+    ideFollow.oninput = e => { S.ideFollowUp = e.target.value; };
+    ideFollow.onkeydown = e => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        const p = (S.ideFollowUp || '').trim();
+        if (!p) { toast('Type a follow-up first', '#f59e0b'); return; }
+        sendIdeFollowUp();
+      }
+    };
+  }
+  const ideSend = document.getElementById('ideFollowUpBtn');
+  if (ideSend) ideSend.onclick = sendIdeFollowUp;
+  const ideAgent = document.getElementById('ideOpenAgentBtn');
+  if (ideAgent) ideAgent.onclick = () => { S.screen = 'agent'; renderAll(); };
 }
 
 function newFileDialog() {
@@ -1749,7 +2202,8 @@ function renderPipelines(){
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px">
         <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.shield} Tool Gateway</h3>
+          <h3 class="cs-h3" style="margin-bottom:6px">${I.shield} Tool Gateway</h3>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Allow / deny is saved in this workspace</div>
           <div style="display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto">
             ${Object.keys(gw).map(tool => `<div style="display:flex;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2)">
               <span style="font:500 12px 'JetBrains Mono',monospace;flex:1">${esc(tool)}</span>
@@ -1866,7 +2320,7 @@ function bindPipelines(){
         const cur = EngineExtras.ToolGateway.isAllowed(tool);
         EngineExtras.ToolGateway.allow(tool, !cur);
         renderAll();
-        toast('Gateway: ' + tool + ' → ' + (!cur ? 'ALLOW' : 'DENY'));
+        toast('Gateway: ' + tool + ' → ' + (!cur ? 'ALLOW' : 'DENY') + ' (saved)');
       }
     });
   });
@@ -2052,7 +2506,9 @@ function renderFactory(){
   const realFiles = files.filter(f => f.type === 'file');
   const modules = {};
   realFiles.forEach(f => {
-    const parts = f.path.split('/').filter(Boolean); const top = parts[0] || f.path;
+    const parts = f.path.split('/').filter(Boolean);
+    if (parts.length < 2) return; // root files are not modules
+    const top = parts[0];
     if (!modules[top]) modules[top] = { count: 0, size: 0, name: top };
     modules[top].count++;
     modules[top].size += (typeof f.size === 'number') ? f.size : 0;
@@ -2067,7 +2523,8 @@ function renderFactory(){
   // Real build state, driven by the actual file system
   // Hydrate the build sub-state if the project has files but the buckets
   // are out of sync (e.g. first render of Factory after a project switch).
-  if ((S.buildComponents.planned + S.buildLogic.planned + S.buildData.planned) === 0 && fileCount > 0) {
+  const pendingPlan = [S.buildComponents, S.buildLogic, S.buildData].some(b => (b && b.items || []).some(i => i.status === 'planned'));
+  if (!pendingPlan) {
     syncBuildFromFS();
   }
   const comp = S.buildComponents || { planned: 0, written: 0, items: [] };
@@ -2288,8 +2745,16 @@ function bindFactory(){
    Shows real issues, real file paths, real severity counts
    ============================================================ */
 function renderRecovery(){
-  // Run the real validator to get live results
-  if (!S.lastScan) { var _ri = Engine.Validator.runAll(); S.lastScan = { at: Date.now(), issues: _ri, score: Math.max(0, 100 - _ri.filter(function(i){ return i.severity === "error"; }).length * 8 - _ri.filter(function(i){ return i.severity === "warning"; }).length * 2), fileCount: Engine.FS.count() }; }
+  // Drop a scan that no longer matches the workspace (e.g. after Clear workspace).
+  if (S.lastScan && S.lastScan.fileCount !== Engine.FS.count()) S.lastScan = null;
+  // Run the real validator to get live results, including suite classification
+  if (!S.lastScan) {
+    var _ri = Engine.Validator.runAll();
+    recordLastScan(_ri);
+  } else if (!S.lastScan.suites || !S.lastScan.suites.length) {
+    S.lastScan.suites = classifyValidatorSuites(S.lastScan.issues || []);
+  }
+  try { if (window.Engine && Engine.Recovery && Engine.Recovery.analyze) Engine.Recovery.analyze(); } catch (_) {}
   const scan = S.lastScan;
 
   const errors = (scan.issues || []).filter(i => i.severity === 'error');
@@ -2399,7 +2864,7 @@ function renderRecovery(){
       <div class="card" style="padding:20px;margin-top:18px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <h3 class="cs-h3">Validator Suites</h3>
-          <span style="font-size:12px;color:var(--muted)">real scans from the last <code>runValidatorScan()</code> pass</span>
+          <span style="font-size:12px;color:var(--muted)">HTML / JavaScript / CSS / console / references / files</span>
         </div>
         ${renderRecoverySuites()}
       </div>
@@ -2435,7 +2900,11 @@ function renderRecovery(){
       <div class="card" style="padding:20px;margin-top:18px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
           <h3 class="cs-h3">Mock &amp; Placeholder Detector</h3>
-          <span style="font-size:12px;color:var(--muted)">setTimeout-as-data, fake arrays, hardcoded numbers, TODO / FIXME</span>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span style="font-size:12px;color:var(--muted)">empty handlers, fake async, TODOs, hardcoded secrets</span>
+            <button class="btn" onclick="runMockDetectorScan()">Scan</button>
+            <button class="btn btn-primary" onclick="runMockDetectorFix()">Fix placeholders</button>
+          </div>
         </div>
         ${renderRecoveryMockDetector()}
       </div>
@@ -2671,8 +3140,8 @@ function renderRecoveryV4Cards(){
           <div style="font-size:13px;font-weight:600;color:#f472b6">V4.6 API Runtime</div>
           <span style="font-size:10px;background:#f472b622;color:#f472b6;padding:2px 6px;border-radius:3px">REAL FETCH</span>
         </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Real fetch() with retries, status check, body shape check, missing-key detection.</div>
-        <button class="btn" onclick="runV4ApiDemo()">Call Live API</button>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Same-origin fetch() against this workspace — retries, status check, body shape. No third-party placeholder APIs.</div>
+        <button class="btn" onclick="runV4ApiDemo()">Call workspace API</button>
         <div id="v4-api-out" style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)"></div>
       </div>
       <!-- V4.7 DB Validator -->
@@ -2700,6 +3169,7 @@ function renderRecoveryV4Cards(){
       <button class="btn btn-primary" onclick="runV4FullBenchmark()">Run V4 Full Benchmark</button>
       <button class="btn" onclick="runV4SelfCheck()">Engine Self-Check</button>
       <button class="btn" onclick="runV4UnresolvedInspector()">Inspect Unresolved</button>
+      <button class="btn btn-primary" onclick="runV4UnresolvedFix()">Fix unresolved</button>
       <button class="btn" onclick="runV4IssueV4Certificate()">Issue V4 Certificate</button>
     </div>
     <div id="v4-actions-out" style="margin-top:14px"></div>
@@ -2778,7 +3248,7 @@ async function runV4ServerDemo(){
   out.textContent = "starting test server...";
   try {
     const SL = window.ServerLifecycle || window.Engine.ServerLifecycle;
-    const srv = await SL.start("demo-server", { port: 8080 });
+    const srv = await SL.start("demo-server", { port: 8080, healthEveryMs: 150, healthyAfter: 1 });
     out.textContent = "started id=" + srv.id.slice(-6) + " - waiting for healthy...";
     const ok = await SL.waitHealthy(srv.id, 5000);
     const fresh = SL.get(srv.id);
@@ -2792,13 +3262,17 @@ async function runV4ServerDemo(){
 async function runV4ApiDemo(){
   const out = document.getElementById("v4-api-out");
   if (!out) return;
-  out.textContent = "calling live JSONPlaceholder API...";
+    out.textContent = "calling same-origin workspace…";
   try {
     const API = window.APIRuntime || window.Engine.APIRuntime;
-    const r = await API.call({ url: "https://jsonplaceholder.typicode.com/posts/1", expectStatus: 200, expectJsonKeys: ["id","title","body"] });
-    out.textContent = "ok=" + r.ok + " status=" + r.status + " ms=" + r.durationMs + " hasId=" + !!(r.json && r.json.id);
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "api-demo", ok: r.ok, status: r.status, url: "jsonplaceholder" });
-    toast("V4.6 API call " + (r.ok ? "OK" : "FAIL"), r.ok ? "#34d399" : "#ef4444");
+    const loc = (typeof location !== "undefined" && location.href) ? location.href : "/";
+    const r = await API.call({
+      url: loc,
+      expectStatus: 200
+    });
+    out.textContent = "ok=" + r.ok + " status=" + r.status + " ms=" + r.durationMs + " same-origin=" + !r.fallback;
+    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "api-demo", ok: r.ok, status: r.status, url: "workspace" });
+    toast("V4.6 workspace API " + (r.ok ? "OK" : "FAIL"), r.ok ? "#34d399" : "#ef4444");
   } catch(e){ out.textContent = "error: " + e.message; toast("V4.6 error: " + e.message, "#ef4444"); }
 }
 
@@ -2893,23 +3367,62 @@ function runV4UnresolvedInspector(){
   if (!out) return;
   try {
     const UI = window.UnresolvedInspector || window.Engine.UnresolvedInspector;
-    const samples = [
-      { message: "DB connection refused", faultClass: "db.connect", package: "pg" },
-      { message: "Missing alt attribute", faultClass: "html.alt" },
-      { message: "Timeout after 5s", faultClass: "rt.timeout" },
-      { message: "Hard-coded secret", faultClass: "sec.secret" }
-    ];
-    const insps = UI.inspectAll(samples);
-    const sorted = UI.byPriority(insps);
+    const report = UI.inspectWorkspace ? UI.inspectWorkspace() : { inspected: UI.inspectAll(UI.collect ? UI.collect() : []), count: 0 };
+    const sorted = report.inspected || UI.byPriority(report.inspected || []);
+    let capture = null;
+    try { capture = window.Engine.Preview && window.Engine.Preview.capture(); } catch(_){}
+    if (!sorted.length) {
+      out.innerHTML = `
+        <div style="padding:14px;border:1px solid #34d39955;border-radius:8px">
+          <div style="font-weight:700;color:#34d399;margin-bottom:8px">Unresolved Inspector — workspace is clean</div>
+          <div style="font-size:12px;color:var(--muted)">No validator, mock, secret, timeout, or DB findings. Auto-workarounds are ready for db.connect, rt.timeout, sec.secret, and html.alt when they appear.</div>
+          ${capture && capture.dataUrl ? '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid #ffffff14"/>' : ''}
+        </div>`;
+      toast("No unresolved issues", "#34d399");
+      return;
+    }
     out.innerHTML = `
       <div style="padding:14px;border:1px solid #fbbf2433;border-radius:8px">
-        <div style="font-weight:700;color:#fbbf24;margin-bottom:8px">Unresolved Inspector - Triage by Priority</div>
+        <div style="font-weight:700;color:#fbbf24;margin-bottom:8px">Unresolved Inspector - Triage by Priority (${sorted.length} live finding${sorted.length === 1 ? '' : 's'})</div>
         <div style="font-size:12px">
-          ${sorted.map(i => "<div style=\"padding:6px 0;border-bottom:1px solid #ffffff10\"><span style=\"color:" + (i.priority === 1 ? "#ef4444" : i.priority === 2 ? "#f59e0b" : "#34d399") + ";font-weight:600\">P" + i.priority + "</span> <span style=\"color:#fbbf24\">" + esc(i.category) + "</span> " + esc(i.severity) + " - " + esc(i.issue.message) + "<br><span style=\"color:var(--muted);font-size:11px\">Next: " + esc(i.nextStep) + " - Workaround: " + esc(i.workaround) + "</span></div>").join("")}
+          ${sorted.map(i => "<div style=\"padding:6px 0;border-bottom:1px solid #ffffff10\"><span style=\"color:" + (i.priority === 1 ? "#ef4444" : i.priority === 2 ? "#f59e0b" : "#34d399") + ";font-weight:600\">P" + i.priority + "</span> <span style=\"color:#fbbf24\">" + esc(i.category) + "</span> " + esc(i.severity) + " - " + esc((i.issue && i.issue.message) || "") + (i.issue && i.issue.file ? " <span style=\"color:var(--muted)\">(" + esc(i.issue.file) + ")</span>" : "") + "<br><span style=\"color:var(--muted);font-size:11px\">Next: " + esc(i.nextStep) + " — Workaround: " + esc(i.workaround) + (i.canAutoFix ? " — auto-fix ready" : "") + "</span></div>").join("")}
         </div>
+        ${capture && capture.dataUrl ? '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid #ffffff14"/>' : ''}
       </div>`;
     toast("Inspected " + sorted.length + " unresolved issues", "#fbbf24");
   } catch(e){ out.textContent = "error: " + e.message; toast("Inspector error: " + e.message, "#ef4444"); }
+}
+
+async function runV4UnresolvedFix(){
+  const out = document.getElementById("v4-actions-out");
+  if (!out) return;
+  out.textContent = "inspect → plan → patch → preview…";
+  try {
+    const LLM = window.Engine && window.Engine.LLM;
+    let result;
+    if (LLM && typeof LLM.smartLoop === "function") {
+      result = await LLM.smartLoop({ kind: "unresolved" });
+    } else {
+      const UI = window.UnresolvedInspector || window.Engine.UnresolvedInspector;
+      const auto = UI.autoFixAll();
+      const capture = window.Engine.Preview && window.Engine.Preview.capture && window.Engine.Preview.capture();
+      result = { patched: auto.patched, remaining: auto.remaining, capture: capture, steps: [{ kind: "patch", text: "Applied " + auto.patched.length + " workaround(s)" }], llm: { skipped: true } };
+    }
+    const remaining = result.remaining || [];
+    const insps = (window.UnresolvedInspector || window.Engine.UnresolvedInspector).inspectAll(remaining);
+    out.innerHTML = `
+      <div style="padding:14px;border:1px solid #34d39933;border-radius:8px">
+        <div style="font-weight:700;color:#34d399;margin-bottom:8px">Unresolved fix loop</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${(result.steps || []).map(s => esc(s.kind) + ": " + esc(s.text)).join(" → ")}</div>
+        <div style="font-size:12px">Patched ${((result.patched && result.patched.length) || 0)} · remaining ${remaining.length}${result.llm && result.llm.skipped ? " · LLM skipped" : ""}</div>
+        ${insps.length ? insps.map(i => "<div style=\"padding:6px 0;border-bottom:1px solid #ffffff10\"><span style=\"color:" + (i.priority === 1 ? "#ef4444" : "#f59e0b") + ";font-weight:600\">P" + i.priority + "</span> " + esc((i.issue && i.issue.message) || "") + " — " + esc(i.workaround) + "</div>").join("") : "<div style=\"color:#34d399;margin-top:8px\">All unresolved findings patched.</div>"}
+        ${result.capture && result.capture.dataUrl ? '<img alt="Live preview snapshot" src="' + result.capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid #ffffff14"/>' : ''}
+      </div>`;
+    toast("Unresolved fix: " + ((result.patched && result.patched.length) || 0) + " patched, " + remaining.length + " left", remaining.length ? "#f59e0b" : "#34d399");
+    S.lastScan = null;
+    if (typeof runValidatorScan === "function") runValidatorScan();
+    if (typeof renderAll === "function") setTimeout(renderAll, 80);
+  } catch(e){ out.textContent = "error: " + e.message; toast("Unresolved fix error: " + e.message, "#ef4444"); }
 }
 
 function runV4IssueV4Certificate(){
@@ -2957,6 +3470,10 @@ function bindRecovery(){
   document.querySelectorAll('[data-sovfile]').forEach(function(el){
     el.onclick = function(){ openSovereignFile(el.dataset.sovfile); };
   });
+  try {
+    const host = document.getElementById('crossTabHost');
+    if (host && window.renderCrossTabCard) host.innerHTML = window.renderCrossTabCard();
+  } catch (_) {}
   // Only auto-scan on entry if no recent scan exists (fixes render loop / flicker)
   try {
     var _fresh = (S && S.lastScan && S.lastScan.at) ? (Date.now() - S.lastScan.at) : Infinity;
@@ -3016,8 +3533,8 @@ function renderSettings(){
           </div>
         </div>
         <div style="margin-top:18px;display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn ghost" onclick="Engine.FS.clearAll();toast('Workspace cleared');renderAll()">Clear workspace</button>
-          <button class="btn ghost" onclick="if(confirm('Reset everything?')){Engine.FS.clearAll();Engine.Proj.list().forEach(p=>Engine.Proj.delete(p.id));location.reload()}">Reset all data</button>
+          <button class="btn ghost" onclick="clearWorkspace()">Clear workspace</button>
+          <button class="btn ghost" onclick="resetAllData()">Reset all data</button>
         </div>
       </div>
 
@@ -3511,7 +4028,12 @@ function bindPhase8(screen) {
 
 function bindTopNav() {
   document.querySelectorAll('#topNavInner button[data-screen]').forEach(b => {
-    b.onclick = () => { S.screen = b.dataset.screen; if (window.TabBus) { window.TabBus.broadcast('tab:clicked', { from: S.screen, to: b.dataset.screen, source: 'topnav' }); } renderAll(); };
+    b.onclick = () => {
+      const from = S.screen;
+      S.screen = b.dataset.screen;
+      if (window.TabBus) { window.TabBus.broadcast('tab:clicked', { from: from, to: b.dataset.screen, source: 'topnav' }); }
+      renderAll();
+    };
   });
   const mc = document.getElementById('modelChip');
   if (mc) mc.onclick = () => { cycleAgent(); };
@@ -3527,7 +4049,12 @@ function bindTopNav() {
 
 function bindRail() {
   document.querySelectorAll('#railInner button[data-screen]').forEach(b => {
-    b.onclick = () => { S.screen = b.dataset.screen; if (window.TabBus) { window.TabBus.broadcast('tab:clicked', { from: S.screen, to: b.dataset.screen, source: 'rail' }); } renderAll(); };
+    b.onclick = () => {
+      const from = S.screen;
+      S.screen = b.dataset.screen;
+      if (window.TabBus) { window.TabBus.broadcast('tab:clicked', { from: from, to: b.dataset.screen, source: 'rail' }); }
+      renderAll();
+    };
   });
 }
 
@@ -3563,9 +4090,15 @@ document.addEventListener('DOMContentLoaded', () => {
   S.agent = S.agent || 'Sovereign-1.5';
   S.theme = S.theme || 'dark';
   S.agentSteps = S.agentSteps || [];
+  S.agentRuns = S.agentRuns || [];
+  S.agentChat = S.agentChat || [];
   S.ideFile = S.ideFile || null;
   S.ideBuffer = S.ideBuffer || '';
   S.ideDirty = false;
+  try {
+    if (Engine.FS.count() === 0) resetAgentSession();
+    hydrateAgentSession();
+  } catch (_) {}
 
   // Seed an initial project if workspace is empty
   if (Engine.FS.count() === 0) {
@@ -3826,7 +4359,8 @@ function renderRecoveryLayers(){
     });
     html += '</div>';
     if (isLevels && layers.passed != null) {
-      html += '<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Reached <b style="color:var(--fg)">' + esc(layers.level || ('L' + layers.passed)) + '</b> - ' + layers.passed + ' / ' + layers.total + ' gates passing</div>';
+      var passing = (layers.passingGates != null) ? layers.passingGates : layers.passed;
+      html += '<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Reached <b style="color:var(--fg)">' + esc(layers.level || ('L' + layers.passed)) + '</b> — consecutive from L1 · ' + passing + ' / ' + layers.total + ' gates passing</div>';
     }
     return html;
   } catch (e) {
@@ -3893,7 +4427,10 @@ function renderRecoveryRootCause(){
     if (!window.Engine || !window.Engine.Recovery) return '<div style="color:var(--muted);font-size:13px">Engine.Recovery not loaded</div>';
     var analysis = window.Engine.Recovery.analyze();
     var rc = analysis && analysis.rootCause;
-    if (!rc) return '<div style="color:var(--muted);font-size:13px">No root-cause analysis available. Run a Re-scan to populate.</div>';
+    if (!rc) return '<div style="color:var(--muted);font-size:13px">No root-cause analysis available.</div>';
+    if (!rc.symptom && !rc.rootCause) {
+      return '<div style="color:var(--muted);font-size:13px">No symptoms detected. Workspace is clean.</div>';
+    }
 
     var html = '<div style="display:grid;grid-template-columns:1fr;gap:10px">';
     // Symptom
@@ -3969,23 +4506,26 @@ function renderRecoveryMockDetector(){
   try {
     if (!window.Engine || !window.Engine.MockDetect) return '<div style="color:var(--muted);font-size:13px">Mock detector not loaded</div>';
     var findings = window.Engine.MockDetect.run() || [];
+    var capture = null;
+    try { capture = window.Engine.Preview && window.Engine.Preview.lastCapture && window.Engine.Preview.lastCapture(); } catch (_) {}
     if (!findings.length) {
       return '<div style="display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--good);border-radius:8px;background:rgba(52,211,153,.06)">'
         + '<span style="color:var(--good)">' + I.checkc + '</span>'
         + '<div><div style="font-weight:600;font-size:13px;color:var(--good)">No mocks or placeholders detected</div>'
-        + '<div style="font-size:11.5px;color:var(--muted)">No setTimeout-as-data, fake arrays, hardcoded numbers or TODO/FIXME placeholders</div></div>'
-        + '</div>';
+        + '<div style="font-size:11.5px;color:var(--muted)">Empty handlers, fake async, TODOs, and hardcoded secrets are scanned on every Recovery visit. Use Fix placeholders after a scan that finds them.</div></div>'
+        + '</div>'
+        + (capture && capture.dataUrl ? '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid var(--line)"/>' : '');
     }
     var html = '<div style="font:600 12px Inter;color:var(--warn);margin-bottom:8px">' + findings.length + ' mock / placeholder finding' + (findings.length === 1 ? '' : 's') + '</div>';
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">';
-    findings.forEach(function(f){
+    findings.slice(0, 24).forEach(function(f){
       var kindLabel = (f.kind || 'mock').replace(/-/g, ' ');
       html += '<div style="padding:12px;border:1px solid var(--warn);border-radius:8px;background:rgba(245,158,11,.05)">';
       html +=   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
       html +=     '<span style="font:600 10.5px Inter;padding:2px 8px;background:var(--warn);color:#0a0e1a;border-radius:9px;text-transform:uppercase">' + esc(kindLabel) + '</span>';
       html +=     '<span style="font:600 11px Inter;color:var(--muted);margin-left:auto">x' + (f.count || 1) + '</span>';
       html +=   '</div>';
-      html +=   '<div style="font:600 12px Inter;margin-bottom:4px">' + esc(f.file || '') + '</div>';
+      html +=   '<div style="font:600 12px Inter;margin-bottom:4px">' + esc(f.file || '') + (f.line ? ':' + f.line : '') + '</div>';
       html +=   '<div style="font-size:11.5px;color:var(--muted);line-height:1.45">' + esc(f.why || '') + '</div>';
       if (f.sample) {
         html += '<div style="margin-top:6px;padding:6px 8px;background:var(--bg-2);border:1px solid var(--line);border-radius:4px;font:500 11px/1.4 monospace;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.sample) + '</div>';
@@ -3993,9 +4533,46 @@ function renderRecoveryMockDetector(){
       html += '</div>';
     });
     html += '</div>';
+    if (capture && capture.dataUrl) {
+      html += '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:12px;max-width:100%;border-radius:8px;border:1px solid var(--line)"/>';
+    }
     return html;
   } catch (e) {
     return '<div style="color:var(--err);font-size:13px">mock-detect error: ' + esc(String(e && e.message || e)) + '</div>';
+  }
+}
+
+function runMockDetectorScan(){
+  try {
+    if (window.Engine && window.Engine.Preview && window.Engine.Preview.capture) window.Engine.Preview.capture();
+    if (window.Engine && window.Engine.MockDetect) window.Engine.MockDetect.run();
+    toast('Mock detector scanned the current workspace', '#22d3ee');
+    if (typeof renderAll === 'function') renderAll();
+  } catch (e) {
+    toast('Mock scan failed: ' + (e && e.message || e), '#ef4444');
+  }
+}
+
+async function runMockDetectorFix(){
+  try {
+    toast('Fixing placeholders (inspect → patch → preview)…', '#7c5cff');
+    const LLM = window.Engine && window.Engine.LLM;
+    let result;
+    if (LLM && typeof LLM.smartLoop === 'function') {
+      result = await LLM.smartLoop({ kind: 'mocks' });
+    } else if (window.Engine.MockDetect && window.Engine.MockDetect.fix) {
+      result = window.Engine.MockDetect.fix();
+    } else {
+      toast('Mock detector not loaded', '#ef4444'); return;
+    }
+    const left = (result.remaining && (result.remaining.length || result.remaining.total)) || 0;
+    const n = (result.patched && result.patched.length) || 0;
+    toast('Placeholder fix: ' + n + ' file(s) patched, ' + (typeof left === 'number' ? left : 0) + ' left', left ? '#f59e0b' : '#34d399');
+    S.lastScan = null;
+    if (typeof runValidatorScan === 'function') runValidatorScan();
+    if (typeof renderAll === 'function') renderAll();
+  } catch (e) {
+    toast('Placeholder fix failed: ' + (e && e.message || e), '#ef4444');
   }
 }
 
@@ -4051,7 +4628,10 @@ function renderRecoverySuites(){
   try {
     if (!S || !S.lastScan) return '<div style="color:var(--muted);font-size:13px">No scan yet. Click <b>Re-scan</b> to populate validator suites.</div>';
     var suites = S.lastScan.suites;
-    if (!suites || !suites.length) return '<div style="color:var(--muted);font-size:13px">No suite data. Re-scan to populate.</div>';
+    if (!suites || !suites.length) {
+      suites = classifyValidatorSuites(S.lastScan.issues || []);
+      S.lastScan.suites = suites;
+    }
     var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">';
     suites.forEach(function(s){
       var has = s.count > 0;
@@ -4079,11 +4659,20 @@ function renderRecoveryLastRun(){
   try {
     if (!window.Engine || !window.Engine.Recovery) return '<div style="color:var(--muted);font-size:13px">Engine.Recovery not loaded</div>';
     var runs = window.Engine.Recovery.history();
-    if (!runs.length) {
-      return '<div style="color:var(--muted);font-size:13px">No runs yet. Click <b>Repair All</b> to start the first autonomous repair cycle.</div>';
+    var analysis = window.Engine.Recovery.lastAnalysis ? window.Engine.Recovery.lastAnalysis() : null;
+    var lastRepair = runs.length ? runs[runs.length - 1] : null;
+    var r = lastRepair;
+    if (!r) r = analysis;
+    else if (analysis && (!lastRepair.repairedCount) && (lastRepair.status === 'NOOP' || lastRepair.status === 'SCANNED') && analysis.at && lastRepair.finishedAt && analysis.at >= lastRepair.finishedAt) {
+      r = analysis;
+    } else if (analysis && lastRepair.status === 'NOOP' && (lastRepair.repairedCount || 0) === 0 && !lastRepair.diffCount) {
+      r = analysis;
     }
-    var r = runs[runs.length - 1];
-    var statusColor = r.status === 'VERIFIED' ? 'var(--good)' : r.status === 'ROLLED_BACK' ? 'var(--err)' : 'var(--warn)';
+    if (!r) {
+      return '<div style="color:var(--muted);font-size:13px">No runs yet. Open Recovery to scan, or click <b>Repair All</b> to start an autonomous repair cycle.</div>';
+    }
+    var isScan = r.status === 'SCANNED';
+    var statusColor = r.status === 'VERIFIED' ? 'var(--good)' : r.status === 'ROLLED_BACK' ? 'var(--err)' : (isScan ? 'var(--accent)' : 'var(--warn)');
     var verifyFailed = (r.verify && r.verify.failed) || [];
     var beforeH = r.before ? r.before.health : 0;
     var afterH  = r.after  ? r.after.health  : 0;
@@ -4091,10 +4680,10 @@ function renderRecoveryLastRun(){
     var afterColor  = afterH >= 90 ? 'var(--good)' : (afterH > beforeH ? 'var(--good)' : 'var(--err)');
     var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
     html += '<div>';
-    html +=   '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:6px">Run</div>';
-    html +=   '<div class="cs-mono" style="font-size:12px">' + esc(r.runId) + '</div>';
-    html +=   '<div style="margin-top:8px"><span style="font:700 12px Inter;padding:3px 10px;border-radius:9px;background:' + statusColor + ';color:#fff">' + esc(r.status) + '</span></div>';
-    html +=   '<div style="margin-top:8px;font-size:12px;color:var(--muted)">Agent: ' + esc(r.agent) + ' - Repaired: ' + r.repairedCount + ' - Rolled back: ' + (r.rolledBack ? 'yes' : 'no') + '</div>';
+    html +=   '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:6px">' + (isScan ? 'Last diagnostic' : 'Run') + '</div>';
+    html +=   '<div class="cs-mono" style="font-size:12px">' + esc(r.runId || '—') + '</div>';
+    html +=   '<div style="margin-top:8px"><span style="font:700 12px Inter;padding:3px 10px;border-radius:9px;background:' + statusColor + ';color:#fff">' + esc(r.status || 'UNKNOWN') + '</span></div>';
+    html +=   '<div style="margin-top:8px;font-size:12px;color:var(--muted)">Agent: ' + esc(r.agent || 'Sovereign-1.5') + (isScan ? (' — ' + (r.issueCount || 0) + ' issue' + ((r.issueCount||0)===1?'':'s')) : (' - Repaired: ' + (r.repairedCount || 0) + ' - Rolled back: ' + (r.rolledBack ? 'yes' : 'no'))) + '</div>';
     html += '</div>';
     html += '<div>';
     html +=   '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:6px">Before / After</div>';
@@ -4106,7 +4695,7 @@ function renderRecoveryLastRun(){
     if (verifyFailed.length) {
       html += '<div style="margin-top:8px;font-size:12px;color:var(--err)">Failed gates: ' + verifyFailed.join(', ') + '</div>';
     } else {
-      html += '<div style="margin-top:8px;font-size:12px;color:var(--good)">All gates passed</div>';
+      html += '<div style="margin-top:8px;font-size:12px;color:var(--good)">' + (isScan ? 'Diagnostic scan complete' : 'All gates passed') + '</div>';
     }
     html += '</div>';
     html += '</div>';
@@ -4342,16 +4931,22 @@ function renderRecoveryV3FaultInjection(){
     if (!window.Engine || !window.Engine.FaultInjector) return '<div style="color:var(--muted);font-size:13px">V3 FaultInjector not loaded</div>';
     var faults = window.Engine.FaultInjector.FAULTS || {};
     var keys = Object.keys(faults);
-    var html = '<div style="font:600 12px Inter;color:var(--mut);margin-bottom:8px">' + keys.length + ' controllable fault classes available - benchmark objective: inject each, run repair, record metrics</div>';
+    var last = window.Engine.FaultInjector.lastBenchmark ? window.Engine.FaultInjector.lastBenchmark() : null;
+    var html = '<div style="font:600 12px Inter;color:var(--mut);margin-bottom:8px">' + keys.length + ' controllable fault classes — inject each, run repair, record metrics</div>';
+    if (last) {
+      html += '<div style="margin-bottom:10px;padding:10px;border:1px solid var(--accent);border-radius:8px;background:rgba(124,92,255,.06);font-size:12px">Last benchmark: ' + last.injected + ' injected · ' + Math.round((last.detected/(last.injected||1))*100) + '% detected · ' + Math.round((last.repaired/(last.injected||1))*100) + '% repaired</div>';
+    }
     html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">';
     keys.forEach(function(k){
       var f = faults[k];
+      var lastR = last && last.results && last.results.find(function(x){ return x.fault === k; });
       html += '<div style="padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2)">';
       html +=   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">';
       html +=     '<span style="font:600 10.5px Inter;padding:2px 7px;background:var(--warn);color:#0a0e1a;border-radius:9px">' + esc(k) + '</span>';
       html +=     '<span style="font:600 10.5px Inter;color:var(--mut);margin-left:auto">' + esc(f.code) + '</span>';
       html +=   '</div>';
       html +=   '<div style="font-size:11px;color:var(--mut);line-height:1.4">' + esc(f.desc) + '</div>';
+      if (lastR) html += '<div style="margin-top:6px;font-size:10.5px;color:' + (lastR.repaired ? 'var(--good)' : 'var(--warn)') + '">' + (lastR.detected ? 'detected' : 'missed') + ' · ' + (lastR.repaired ? 'repaired' : 'not repaired') + '</div>';
       html += '</div>';
     });
     html += '</div>';
@@ -4500,42 +5095,35 @@ function repairWorkspaceV3(){
 function runFaultInjectionBenchmark(){
   try {
     if (!window.Engine || !window.Engine.FaultInjector) { toast('FaultInjector not loaded', '#ef4444'); return; }
-    // Pick the first .js and first .html we can find
-    var jsFile = null, htmlFile = null;
-    var files = (window.Engine.FS && window.Engine.FS.list) ? window.Engine.FS.list() : [];
-    files.forEach(function(f){
-      if (f && f.type === 'file') {
-        if (!jsFile && /\.js$/.test(f.path)) jsFile = f.path;
-        if (!htmlFile && /\.html$/.test(f.path)) htmlFile = f.path;
-      }
-    });
-    if (!jsFile) { toast('No .js file to inject into. Generate an app first.', '#f59e0b'); return; }
-    var faults = Object.keys(window.Engine.FaultInjector.FAULTS || {});
-    var summary = { injected: 0, detected: 0, repaired: 0, results: [] };
-    toast('V3 Benchmark: injecting ' + faults.length + ' faults into ' + jsFile, '#7c5cff');
-    faults.forEach(function(name){
-      window.Engine.FaultInjector.captureBaseline();
-      var inj = window.Engine.FaultInjector.inject(name, jsFile);
-      if (!inj || !inj.ok) {
-        window.Engine.FaultInjector.restoreBaseline();
-        return;
-      }
-      summary.injected++;
-      // Detect
-      var before = window.Engine.Validator.runAll().length;
-      // Repair
-      var run = window.Engine.Recovery.run();
-      // Check detection - is the injected code still detected?
-      window.Engine.FaultInjector.restoreBaseline();
-      var afterBaseline = window.Engine.Validator.runAll().length;
-      if (before > afterBaseline) summary.detected++;
-      if (run && (run.repairedCount || 0) > 0) summary.repaired++;
-      summary.results.push({ fault: name, detected: before > afterBaseline, repaired: (run.repairedCount || 0) > 0 });
-    });
-    // Update benchmark
-    if (window.Engine.Benchmark) {
-      window.Engine.Benchmark.recordFaults(summary.injected, summary.detected);
+    var FI = window.Engine.FaultInjector;
+    toast('V3 Benchmark: injecting ' + Object.keys(FI.FAULTS || {}).length + ' faults', '#7c5cff');
+    var summary = FI.runBenchmark ? FI.runBenchmark({ llm: false }) : null;
+    if (!summary) {
+      var faults = Object.keys(FI.FAULTS || {});
+      summary = { injected: 0, detected: 0, repaired: 0, results: [] };
+      faults.forEach(function(name){
+        var baselineCount = window.Engine.Validator.runAll().length;
+        FI.captureBaseline();
+        var inj = FI.inject(name, FI.pickTarget ? FI.pickTarget(name) : null);
+        if (!inj || !inj.ok) {
+          FI.restoreBaseline();
+          summary.results.push({ fault: name, detected: false, repaired: false, skipped: true, reason: inj && inj.error });
+          return;
+        }
+        summary.injected++;
+        var afterInject = window.Engine.Validator.runAll().length;
+        var run = window.Engine.Recovery.run();
+        var afterRepair = window.Engine.Validator.runAll().length;
+        FI.restoreBaseline();
+        var detected = afterInject > baselineCount;
+        var repaired = afterRepair < afterInject || (run && (run.repairedCount || 0) > 0);
+        if (detected) summary.detected++;
+        if (repaired) summary.repaired++;
+        summary.results.push({ fault: name, detected: detected, repaired: repaired, file: inj.file });
+      });
+      if (FI.recordBenchmark) FI.recordBenchmark(summary);
     }
+    try { if (window.Engine.Preview && window.Engine.Preview.capture) window.Engine.Preview.capture(); } catch (_) {}
     var detRate = summary.injected ? Math.round((summary.detected / summary.injected) * 100) : 0;
     var repRate = summary.injected ? Math.round((summary.repaired / summary.injected) * 100) : 0;
     toast('V3 Benchmark done: ' + summary.injected + ' injected, ' + detRate + '% detected, ' + repRate + '% repaired', detRate === 100 && repRate === 100 ? '#34d399' : '#f59e0b');

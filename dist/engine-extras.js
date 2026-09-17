@@ -19,6 +19,7 @@
   const NS_PIPE = 'cs.pipelines.v1';
   const NS_APP_TYPE = 'cs.appType.v1';
   const NS_CREDS = 'cs.creds.v1';
+  const NS_GW = 'cs.gateway.v1';
   const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch(e){ return d; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch(e){} };
 
@@ -79,21 +80,28 @@
   // ============================================================
   // 3) TOOL GATEWAY — controlled workspace access
   // ============================================================
-  const ToolGateway = {
-    _allow: {
+  const GW_DEFAULTS = {
       'fs.read': true, 'fs.write': true, 'fs.delete': true, 'fs.list': true,
       'shell.exec': false, 'shell.read': true, 'net.fetch': false,
       'git.commit': true, 'git.push': false, 'git.checkout': true,
       'deploy.bundle': true, 'deploy.preview': true, 'deploy.publish': false,
       'db.read': true, 'db.write': true, 'db.migrate': true
-    },
+    };
+  const ToolGateway = {
+    _allow: Object.assign({}, GW_DEFAULTS, load(NS_GW, {})),
     allow(tool, yes){
       this._allow[tool] = !!yes;
+      save(NS_GW, this._allow);
       EventBus.emit('gateway:allow', { tool, allowed: this._allow[tool] });
     },
     isAllowed(tool){ return !!this._allow[tool]; },
     can(tool){ return this._allow[tool] === true; },
     list(){ return Object.assign({}, this._allow); },
+    reset(){
+      this._allow = Object.assign({}, GW_DEFAULTS);
+      save(NS_GW, this._allow);
+      EventBus.emit('gateway:reset', { tools: Object.keys(this._allow).length });
+    },
     // invoke: if not allowed -> returns { ok:false, blocked:true, reason }
     invoke(tool, fn, args){
       if (!this.can(tool)){

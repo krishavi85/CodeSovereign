@@ -2083,33 +2083,71 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
     }
   };
 
+  // Strict JS syntax (acorn module → script). Never uses acorn-loose, which
+  // accepts broken source. Falls back to new Function only when acorn is
+  // missing, and does not false-fail ESM in that case.
+  function parseJsSyntax(content){
+    const src = String(content || '');
+    if (!src.trim()) return { ok: true };
+    const acorn = (typeof window !== 'undefined' && window.acorn && typeof window.acorn.parse === 'function')
+      ? window.acorn : null;
+    if (acorn) {
+      const opts = { ecmaVersion: 'latest', allowHashBang: true, allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true };
+      try { acorn.parse(src, Object.assign({}, opts, { sourceType: 'module' })); return { ok: true }; }
+      catch (e1) {
+        try { acorn.parse(src, Object.assign({}, opts, { sourceType: 'script' })); return { ok: true }; }
+        catch (e2) {
+          return { ok: false, error: (e1 && e1.message) || (e2 && e2.message) || 'parse error' };
+        }
+      }
+    }
+    try { new Function(src); return { ok: true }; }
+    catch (e) {
+      if (/\b(?:import|export)\b/.test(src)) return { ok: true, skipped: 'esm-without-acorn' };
+      return { ok: false, error: e.message || String(e) };
+    }
+  }
+
+  const HTML_VOID = { area:1, base:1, br:1, col:1, embed:1, hr:1, img:1, input:1, link:1, meta:1, param:1, source:1, track:1, wbr:1 };
+  function htmlTagBalance(content){
+    const opens = (content.match(/<(?!\/|!|\?)([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g) || []).filter(tag => {
+      const name = ((tag.match(/^<([a-zA-Z][a-zA-Z0-9]*)/) || [])[1] || '').toLowerCase();
+      if (HTML_VOID[name]) return false;
+      if (/\/\s*>$/.test(tag)) return false;
+      return true;
+    });
+    const closes = content.match(/<\/([a-zA-Z][a-zA-Z0-9]*)\s*>/g) || [];
+    return { open: opens.length, close: closes.length, ok: opens.length === closes.length };
+  }
+
+  function stripJsComments(src){
+    return String(src || '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  }
+
   // ---------- Validators (real, against FS) ----------
   const Validator = {
+    parseJsSyntax: parseJsSyntax,
     runAll(){
       const issues = [];
       Object.keys(FS._data).forEach(p => {
         if (!FS.isFile(p)) return;
         const content = FS.read(p) || '';
         if (p.endsWith('.html')){
-          // tag balance
-          const open = (content.match(/<(?!\/)([a-zA-Z][a-zA-Z0-9]*)/g) || []).length;
-          const close = (content.match(/<\/([a-zA-Z][a-zA-Z0-9]*)/g) || []).length;
-          if (open !== close) issues.push({ severity:'warning', faultClass:'html.unbalanced', file:p, message:'Tag imbalance (' + open + ' open / ' + close + ' close)' });
+          const bal = htmlTagBalance(content);
+          if (!bal.ok) issues.push({ severity:'warning', faultClass:'html.unbalanced', file:p, message:'Tag imbalance (' + bal.open + ' open / ' + bal.close + ' close)' });
           // missing alt on img
           const imgs = content.match(/<img(?![^>]*alt=)[^>]*>/g);
           if (imgs) imgs.forEach(() => issues.push({ severity:'warning', faultClass:'html.alt', file:p, message:'<img> missing alt attribute' }));
           // lang attr
-          if (!/<html[^>]*lang=/.test(content)) issues.push({ severity:'warning', faultClass:'html.lang', file:p, message:'<html> missing lang attribute' });
+          if (/<html[\s>]/i.test(content) && !/<html[^>]*lang=/i.test(content)) issues.push({ severity:'warning', faultClass:'html.lang', file:p, message:'<html> missing lang attribute' });
         }
-        if (p.endsWith('.js')){
-          // basic syntax check
-          try { new Function(content); }
-          catch(e){ issues.push({ severity:'error', faultClass:'js.syntax', file:p, message:'JS syntax error: ' + e.message }); }
-          // console.log
-          const logs = (content.match(/console\.log\(/g) || []).length;
+        if (p.endsWith('.js') || p.endsWith('.mjs')){
+          const syn = parseJsSyntax(content);
+          if (!syn.ok) issues.push({ severity:'error', faultClass:'js.syntax', file:p, message:'JS syntax error: ' + syn.error });
+          const code = stripJsComments(content);
+          const logs = (code.match(/console\.log\(/g) || []).length;
           if (logs > 0) issues.push({ severity:'info', faultClass:'js.console', file:p, message: logs + ' console.log statement(s) (consider removing for production)' });
-          // eval
-          if (/\beval\s*\(/.test(content)) issues.push({ severity:'error', faultClass:'js.eval', file:p, message:'Use of eval() detected' });
+          if (/\beval\s*\(/.test(code)) issues.push({ severity:'error', faultClass:'js.eval', file:p, message:'Use of eval() detected' });
         }
         if (p.endsWith('.css')){
           // broken reference: url(...)
@@ -2143,12 +2181,38 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
     }
   };
 
-  // ---------- Preview (single HTML) ----------
+  // ---------- Preview (single HTML + visual snapshot of the built app) ----------
+  function xmlEsc(s){
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
+  }
+  function svgDataUrl(svg){
+    try {
+      if (typeof btoa === 'function') return 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svg)));
+    } catch (_) {}
+    return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  }
+  const PREVIEW_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; base-uri 'none'; form-action 'none'";
+  function withDocumentStartCsp(html){
+    html = html == null ? '' : String(html);
+    const meta = '<meta http-equiv="Content-Security-Policy" content="' + PREVIEW_CSP + '">';
+    const detachOpener = "<script>try{if(window.opener)window.opener=null;}catch(e){}</script>";
+    const lead = meta + detachOpener;
+    const dt = html.match(/^(\s*<!DOCTYPE[^>]*>)/i);
+    if (dt) return dt[1] + lead + html.slice(dt[1].length);
+    return lead + html;
+  }
   const Preview = {
+    _lastCapture: null,
+    iframeCsp: PREVIEW_CSP,
+    applyFrame(frame, html){
+      if (!frame) return;
+      try { frame.setAttribute('csp', PREVIEW_CSP); } catch (_) {}
+      frame.srcdoc = html == null ? '' : String(html);
+    },
     build(){
       const htmlPath = '/index.html';
       if (!FS.exists(htmlPath)) return null;
-      let html = FS.read(htmlPath) || '';
+      let html = withDocumentStartCsp(FS.read(htmlPath) || '');
       // inline <link rel="stylesheet" href="..."> for local css
       html = html.replace(/<link[^>]+rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>/g, (m, href) => {
         if (FS.exists(href)) return '<style>' + (FS.read(href) || '') + '</style>';
@@ -2160,6 +2224,111 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
         return m;
       });
       return html;
+    },
+    inspect(html){
+      html = html == null ? (this.build() || '') : String(html);
+      const strip = (s) => String(s || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const title = strip((html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
+      const headings = [];
+      html.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h\1>/gi, (_, n, t) => {
+        headings.push({ level: Number(n), text: strip(t).slice(0, 80) });
+        return _;
+      });
+      const buttons = [];
+      html.replace(/<button\b([^>]*)>([\s\S]*?)<\/button>/gi, (_, attrs, t) => {
+        buttons.push({ text: strip(t).slice(0, 60), emptyHandler: /on[a-z]+\s*=\s*["']\s*["']/i.test(attrs || '') });
+        return _;
+      });
+      const images = [];
+      html.replace(/<img\b([^>]*)>/gi, (_, attrs) => {
+        const src = ((attrs || '').match(/\bsrc\s*=\s*["']([^"']*)["']/i) || [])[1] || '';
+        const altM = (attrs || '').match(/\balt\s*=\s*["']([^"']*)["']/i);
+        images.push({ src: src, alt: altM ? altM[1] : null, missingAlt: !/\balt\s*=/i.test(attrs || '') });
+        return _;
+      });
+      const missingAlt = images.filter(i => i.missingAlt);
+      const text = strip(html.replace(/<script[\s\S]*?<\/script>/gi, ' ').replace(/<style[\s\S]*?<\/style>/gi, ' '));
+      const issues = [];
+      if (missingAlt.length) issues.push(missingAlt.length + ' image(s) missing alt');
+      if (!title) issues.push('missing document title');
+      if (!headings.length) issues.push('no headings in the preview');
+      if (!buttons.length && !/<a[\s>]/i.test(html) && !/<nav[\s>]/i.test(html)) issues.push('no interactive controls');
+      if (text.length < 40) issues.push('very little visible text');
+      if (/simple notepad|start writing your notes here/i.test(text)) issues.push('placeholder notepad UI visible');
+      return {
+        title: title,
+        headings: headings.slice(0, 12),
+        buttons: buttons.slice(0, 20),
+        images: images.slice(0, 20),
+        missingAltCount: missingAlt.length,
+        textSample: text.slice(0, 420),
+        textLength: text.length,
+        issues: issues
+      };
+    },
+    svgSnapshot(inspect){
+      inspect = inspect || this.inspect();
+      const rows = [];
+      rows.push({ y: 36, size: 18, fill: '#e6e9f2', text: inspect.title || '(untitled app)' });
+      (inspect.headings || []).slice(0, 5).forEach((h, i) => {
+        rows.push({ y: 70 + i * 22, size: 13, fill: '#9aa3b8', text: 'H' + h.level + '  ' + (h.text || '') });
+      });
+      const startY = 70 + Math.min((inspect.headings || []).length, 5) * 22 + 16;
+      (inspect.buttons || []).slice(0, 6).forEach((b, i) => {
+        rows.push({ y: startY + i * 20, size: 12, fill: '#7c6ff5', text: '[ ' + (b.text || 'button') + ' ]' });
+      });
+      const warnY = 360;
+      const warn = (inspect.issues || []).length
+        ? inspect.issues.join(' · ')
+        : 'preview looks wired';
+      const svg = [
+        '<svg xmlns="http://www.w3.org/2000/svg" width="640" height="400" viewBox="0 0 640 400">',
+        '<rect width="640" height="400" fill="#0b0d12"/>',
+        '<rect x="16" y="16" width="608" height="368" rx="14" fill="#141821" stroke="#1f2433"/>',
+        '<text x="32" y="28" font-size="10" fill="#7b859c" font-family="Inter,system-ui,sans-serif">LIVE PREVIEW SNAPSHOT</text>',
+        rows.map(r => '<text x="32" y="' + r.y + '" font-size="' + r.size + '" fill="' + r.fill + '" font-family="Inter,system-ui,sans-serif">' + xmlEsc(String(r.text).slice(0, 70)) + '</text>').join(''),
+        '<text x="32" y="' + warnY + '" font-size="11" fill="' + ((inspect.issues || []).length ? '#f59e0b' : '#34d399') + '" font-family="Inter,system-ui,sans-serif">' + xmlEsc(warn.slice(0, 88)) + '</text>',
+        '</svg>'
+      ].join('');
+      return svgDataUrl(svg);
+    },
+    lastCapture(){ return this._lastCapture; },
+    capture(){
+      const html = this.build();
+      const inspect = this.inspect(html);
+      const cap = {
+        at: Date.now(),
+        method: 'svg',
+        inspect: inspect,
+        dataUrl: this.svgSnapshot(inspect),
+        htmlLength: (html || '').length,
+        issues: inspect.issues || []
+      };
+      this._lastCapture = cap;
+      return cap;
+    },
+    tabShell(html){
+      const srcdoc = xmlEsc(html == null ? '' : String(html));
+      return '<!DOCTYPE html><html><head><meta charset="utf-8"><title>Preview</title>'
+        + '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\';">'
+        + '<style>html,body{margin:0;height:100%;background:#0b0d12}iframe{border:0;width:100%;height:100%;display:block}</style>'
+        + '</head><body>'
+        + '<iframe sandbox="allow-scripts" csp="' + PREVIEW_CSP + '" srcdoc="' + srcdoc + '"></iframe>'
+        + '</body></html>';
+    },
+    openTab(html){
+      html = html == null ? this.build() : String(html);
+      if (!html) return { ok: false, reason: 'no-html' };
+      try {
+        const blob = new Blob([this.tabShell(html)], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank', 'noopener,noreferrer');
+        const tid = setTimeout(function () { try { URL.revokeObjectURL(url); } catch (_) {} }, 30000);
+        if (tid && typeof tid.unref === 'function') tid.unref();
+        return { ok: true, detached: true, sandboxed: true };
+      } catch (e) {
+        return { ok: false, error: String(e && e.message || e) };
+      }
     }
   };
 
@@ -2218,5 +2387,5 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
   ];
 
   // ---------- Public API ----------
-  window.Engine = { FS, Proj, Agent, Validator, Preview, Deploy, TEMPLATES, AGENTS };
+  window.Engine = { FS, Proj, Agent, Validator, Preview, Deploy, TEMPLATES, AGENTS, parseJsSyntax };
 })();
