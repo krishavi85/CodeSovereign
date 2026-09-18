@@ -119,7 +119,19 @@ contextBridge.exposeInMainWorld('desktop', {
   ai: {
     discover: () => invoke('ai:discover'),
     request: (opts) => invoke('ai:request', opts),
-    omniroute: (action) => invoke('ai:omniroute', action),
-    openclaw: (action) => invoke('ai:openclaw', action)
+    omniroute: (action) => invoke('ai:omniroute', action)
+  },
+
+  openclaw: {
+    detect: () => invoke('openclaw:detect'),
+    install: () => invoke('openclaw:install'),
+    getStatus: () => invoke('openclaw:status'),
+    probeGateway: () => invoke('openclaw:probe'),
+    installGateway: () => invoke('openclaw:gatewayInstall'),
+    startGateway: () => invoke('openclaw:gatewayStart'),
+    stopGateway: () => invoke('openclaw:gatewayStop'),
+    restartGateway: () => invoke('openclaw:gatewayRestart'),
+    openOnboarding: () => invoke('openclaw:openOnboarding'),
+    openDashboard: (url) => invoke('openclaw:openDashboard', url)
   }
 });

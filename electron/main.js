@@ -20,6 +20,7 @@ const observer = require('./lib/observer');
 const trust = require('./lib/trust');
 const hardware = require('./lib/hardware');
 const aihost = require('./lib/aihost');
+const openclawManager = require('./lib/openclaw-manager');
 const git = require('./lib/git');
 const creds = require('./lib/creds');
 const zip = require('./lib/zip');
@@ -562,26 +563,93 @@ function registerIpc() {
       return res;
     } catch (e) { return fail(e); }
   });
-  let _openclawOkd = false;
-  ipcMain.handle('ai:openclaw', async (_e, action) => {
+  /* ---- OpenClaw: local agent gateway, fully behind IPC (see
+     electron/lib/openclaw-manager.js for the lifecycle + the verified CLI
+     contract). The renderer never shells out itself. ---- */
+  let _openclawCliOkd = false;
+  let _openclawGatewayInstallOkd = false;
+  let _openclawGatewayStartOkd = false;
+  const openclawStream = (s) => { if (win && !win.isDestroyed()) win.webContents.send('proc:data', { id: 'openclaw', stream: 'stdout', data: s + '\n' }); };
+
+  ipcMain.handle('openclaw:detect', async () => {
+    try { return ok(await openclawManager.detect()); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:status', async () => {
+    try { return ok(await openclawManager.getStatus()); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:probe', async () => {
+    try { return ok(await openclawManager.probe()); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:install', async () => {
     try {
-      if (action === 'start' || action === 'ensure') {
-        const running = await aihost.openclawRunning();
-        if (!running && !_openclawOkd) {
-          const r = await dialog.showMessageBox(win, {
-            type: 'info', noLink: true,
-            title: 'Start OpenClaw?',
-            message: 'Run the OpenClaw agent gateway locally?',
-            detail: 'This runs `npx openclaw daemon start` (downloads the MIT-licensed package on first use) and installs it as a background service on port 18789, loopback-only. It survives app restarts until you stop it. Nothing leaves your machine except the model calls the agent you invoke makes.',
-            buttons: ['Install & start', 'Cancel'], defaultId: 0, cancelId: 1
-          });
-          if (r.response !== 0) return { ok: false, error: 'declined' };
-          _openclawOkd = true;
-        }
+      if (!_openclawCliOkd) {
+        const r = await dialog.showMessageBox(win, {
+          type: 'info', noLink: true,
+          title: 'Install OpenClaw?',
+          message: 'Install the OpenClaw CLI globally via npm?',
+          detail: 'Runs `npm install -g openclaw` (MIT-licensed). This puts the `openclaw` command on your PATH so CodeSovereign can manage it directly instead of re-resolving it through npx every time.',
+          buttons: ['Install', 'Cancel'], defaultId: 0, cancelId: 1
+        });
+        if (r.response !== 0) return { ok: false, error: 'declined' };
+        _openclawCliOkd = true;
       }
-      const res = await aihost.openclaw(action, (s) => { if (win && !win.isDestroyed()) win.webContents.send('proc:data', { id: 'openclaw', stream: 'stdout', data: s + '\n' }); });
-      return res;
+      return await openclawManager.install(openclawStream);
     } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:gatewayInstall', async () => {
+    try {
+      if (!_openclawGatewayInstallOkd) {
+        const r = await dialog.showMessageBox(win, {
+          type: 'info', noLink: true,
+          title: 'Install the OpenClaw Gateway service?',
+          message: 'Register the OpenClaw Gateway as a background service?',
+          detail: 'Runs `openclaw gateway install`, which registers a loopback-only (127.0.0.1:18789) service (Scheduled Task on Windows, launchd/systemd elsewhere). It does not start automatically — you still choose when to start it.',
+          buttons: ['Install service', 'Cancel'], defaultId: 0, cancelId: 1
+        });
+        if (r.response !== 0) return { ok: false, error: 'declined' };
+        _openclawGatewayInstallOkd = true;
+      }
+      return await openclawManager.gatewayInstall();
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:gatewayStart', async () => {
+    try {
+      if (!_openclawGatewayStartOkd) {
+        const r = await dialog.showMessageBox(win, {
+          type: 'info', noLink: true,
+          title: 'Start the OpenClaw Gateway?',
+          message: 'Start the OpenClaw Gateway service?',
+          detail: 'Loopback-only, port 18789. It survives app restarts until you stop it — CodeSovereign never sends generation traffic through it unless you pick OpenClaw as the active backend.',
+          buttons: ['Start', 'Cancel'], defaultId: 0, cancelId: 1
+        });
+        if (r.response !== 0) return { ok: false, error: 'declined' };
+        _openclawGatewayStartOkd = true;
+      }
+      return await openclawManager.gatewayStart();
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:gatewayStop', async () => {
+    try { return await openclawManager.gatewayStop(); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:gatewayRestart', async () => {
+    try { return await openclawManager.gatewayRestart(); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:openOnboarding', async () => {
+    try {
+      const r = await dialog.showMessageBox(win, {
+        type: 'info', noLink: true,
+        title: 'Open OpenClaw setup?',
+        message: 'Open a terminal running `openclaw onboard`?',
+        detail: 'First-time setup (models, Gateway, workspace, channels) is interactive, so it opens in a real terminal window for you to complete — CodeSovereign cannot fill in credentials on your behalf.',
+        buttons: ['Open terminal', 'Cancel'], defaultId: 0, cancelId: 1
+      });
+      if (r.response !== 0) return { ok: false, error: 'declined' };
+      return openclawManager.openOnboarding();
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:openDashboard', async (_e, url) => {
+    try { await shell.openExternal(url || ('http://127.0.0.1:' + openclawManager.GATEWAY_PORT + '/')); return { ok: true }; }
+    catch (e) { return fail(e); }
   });
   // Locked-down HTTP: loopback only, or an LLM API host the CSP already allows.
   ipcMain.handle('ai:request', async (_e, opts) => {

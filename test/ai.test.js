@@ -173,43 +173,74 @@ module.exports = async function (t) {
     delete win.desktop;
   }
 
-  // ---- AIRouter.ensureOpenClaw / openClawStatus / stopOpenClaw — the same
-  // in-app start/stop/status pattern as OmniRoute, for OpenClaw's own
-  // background-service gateway (launchd/systemd/schtasks, not a plain child
-  // process). OpenClaw is deliberately NOT wired as an Engine.LLM provider —
-  // it isn't a drop-in chat endpoint, and a live test found its --local
-  // completion path far slower than the Ollama it called, so these three
-  // calls only ever start/stop/ask about the gateway process. ----
+  // ---- AIRouter.OpenClaw — full install/onboarding/gateway lifecycle,
+  // fully delegated to the main process (electron/lib/openclaw-manager.js)
+  // over window.desktop.openclaw. OpenClaw is exposed as an opt-in "agent
+  // runtime" backend (BACKENDS.agentRuntimes), not a drop-in Engine.LLM
+  // chat provider — none of these calls ever touch Engine.LLM config. ----
   {
-    t.deepEqual('openClawStatus with no desktop bridge is a safe no-op', await En.AIRouter.openClawStatus(), { ok: false, installed: false, running: false });
-    const stopNoBridge = await En.AIRouter.stopOpenClaw();
-    t.equal('stopOpenClaw with no desktop bridge reports it cannot', stopNoBridge.ok, false);
-    const ensureNoBridge = await En.AIRouter.ensureOpenClaw();
-    t.equal('ensureOpenClaw with no desktop bridge reports it cannot', ensureNoBridge.ok, false);
+    t.ok('AIRouter lists OpenClaw as an agent-runtime backend', En.AIRouter.BACKENDS.agentRuntimes.some((b) => b.id === 'openclaw'));
+
+    const statusNoBridge = await En.AIRouter.OpenClaw.status();
+    t.equal('OpenClaw.status with no desktop bridge is a safe no-op (ok)', statusNoBridge.ok, false);
+    t.equal('...reports not installed', statusNoBridge.installed, false);
+    t.equal('...reports the no-bridge phase', statusNoBridge.phase, 'no-bridge');
+    const detectNoBridge = await En.AIRouter.OpenClaw.detect();
+    t.equal('OpenClaw.detect with no desktop bridge is a safe no-op', detectNoBridge.ok, false);
+    t.equal('...reports not installed', detectNoBridge.installed, false);
+    const probeNoBridge = await En.AIRouter.OpenClaw.probe();
+    t.equal('OpenClaw.probe with no desktop bridge is a safe no-op', probeNoBridge.ok, false);
+    t.equal('...reports not ready', probeNoBridge.ready, false);
+    const stopNoBridge = await En.AIRouter.OpenClaw.stopGateway();
+    t.equal('OpenClaw.stopGateway with no desktop bridge reports it cannot', stopNoBridge.ok, false);
+    const startNoBridge = await En.AIRouter.OpenClaw.startGateway();
+    t.equal('OpenClaw.startGateway with no desktop bridge reports it cannot', startNoBridge.ok, false);
 
     let openclawCalls = [];
     win.desktop = {
       isDesktop: true,
-      ai: {
-        openclaw: (action) => { openclawCalls.push(action); return Promise.resolve(
-          action === 'status' ? { installed: '2026.7.1-2', running: true }
-          : action === 'stop' ? { ok: true }
-          : { ok: true, running: true, started: true, base: 'http://127.0.0.1:18789' }
-        ); }
+      openclaw: {
+        detect: () => { openclawCalls.push('detect'); return Promise.resolve({ ok: true, installed: true, version: '2026.7.1-2' }); },
+        getStatus: () => { openclawCalls.push('status'); return Promise.resolve({
+          ok: true, installed: true, version: '2026.7.1-2', phase: 'running', needsOnboarding: false,
+          gateway: { installed: true, serviceStatus: 'running', ready: true, port: 18789, dashboardUrl: 'http://127.0.0.1:18789/' }
+        }); },
+        probeGateway: () => { openclawCalls.push('probe'); return Promise.resolve({ ok: true, ready: true, statusCode: 200 }); },
+        install: () => { openclawCalls.push('install'); return Promise.resolve({ ok: true, version: '2026.7.1-2' }); },
+        installGateway: () => { openclawCalls.push('gatewayInstall'); return Promise.resolve({ ok: true }); },
+        startGateway: () => { openclawCalls.push('start'); return Promise.resolve({ ok: true }); },
+        stopGateway: () => { openclawCalls.push('stop'); return Promise.resolve({ ok: true }); },
+        restartGateway: () => { openclawCalls.push('restart'); return Promise.resolve({ ok: true }); },
+        openOnboarding: () => { openclawCalls.push('onboard'); return Promise.resolve({ ok: true }); },
+        openDashboard: (url) => { openclawCalls.push('dashboard:' + url); return Promise.resolve({ ok: true }); }
       }
     };
-    const st = await En.AIRouter.openClawStatus();
-    t.deepEqual('openClawStatus reflects a running gateway', st, { ok: true, installed: true, running: true });
-    t.ok('openClawStatus asked the main process for "status" (read-only)', openclawCalls.includes('status'));
 
-    const ensureRes = await En.AIRouter.ensureOpenClaw();
-    t.ok('ensureOpenClaw called the main-process "ensure" action', openclawCalls.includes('ensure'));
-    t.equal('ensureOpenClaw reports the base URL it came up on', ensureRes.base, 'http://127.0.0.1:18789');
+    const st = await En.AIRouter.OpenClaw.status();
+    t.equal('OpenClaw.status reflects a running gateway', st.phase, 'running');
+    t.ok('OpenClaw.status asked the main process for status (read-only)', openclawCalls.includes('status'));
+
+    await En.AIRouter.OpenClaw.startGateway();
+    t.ok('OpenClaw.startGateway called the main-process start action', openclawCalls.includes('start'));
     t.equal('starting OpenClaw does not touch Engine.LLM config (not wired as a provider)', llmCfg.providerId, 'ollama');
 
-    const stopRes = await En.AIRouter.stopOpenClaw();
-    t.ok('stopOpenClaw called the main-process "stop" action', openclawCalls.includes('stop'));
-    t.equal('stopOpenClaw reports ok', stopRes.ok, true);
+    await En.AIRouter.OpenClaw.stopGateway();
+    t.ok('OpenClaw.stopGateway called the main-process stop action', openclawCalls.includes('stop'));
+
+    await En.AIRouter.OpenClaw.restartGateway();
+    t.ok('OpenClaw.restartGateway called the main-process restart action', openclawCalls.includes('restart'));
+
+    await En.AIRouter.OpenClaw.install();
+    t.ok('OpenClaw.install called the main-process install action', openclawCalls.includes('install'));
+
+    await En.AIRouter.OpenClaw.installGateway();
+    t.ok('OpenClaw.installGateway called the main-process gatewayInstall action', openclawCalls.includes('gatewayInstall'));
+
+    await En.AIRouter.OpenClaw.openOnboarding();
+    t.ok('OpenClaw.openOnboarding called the main-process onboard action', openclawCalls.includes('onboard'));
+
+    await En.AIRouter.OpenClaw.openDashboard('http://127.0.0.1:18789/');
+    t.ok('OpenClaw.openDashboard forwarded the dashboard URL', openclawCalls.includes('dashboard:http://127.0.0.1:18789/'));
 
     delete win.desktop;
   }

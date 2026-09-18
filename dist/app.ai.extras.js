@@ -63,33 +63,7 @@
       (state.omniLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:100px;overflow:auto">' + esc(state.omniLog) + '</pre>' : '') +
       '</div>';
 
-    // OpenClaw — a local agent gateway, installed as a real background
-    // service (not a plain child process) so it survives app restarts.
-    // Honesty note, found live: its --local agent-completion path hung well
-    // past a healthy Ollama response time in testing, so this card only
-    // offers start/stop/status — CodeSovereign does not route its own
-    // generation through it (yet). The dashboard link is where you'd
-    // configure channels/providers for OpenClaw's own agent use.
-    var ocs = state.openclawStatus;
-    var ocRunning = !!(ocs && ocs.running);
-    var ocDotColor = ocRunning ? 'var(--good)' : (ocs ? 'var(--muted)' : '#e08a3f');
-    var ocStatusText = state.openclawBusy ? 'Starting…'
-      : ocRunning ? 'Running on :18789'
-      : ocs ? (ocs.installed ? 'Installed, not running' : 'Not started')
-      : 'Checking…';
-    var ocBtn = ocRunning
-      ? '<button id="aiOpenclawStopBtn" class="btn ghost" style="padding:5px 12px;font-size:12px">' + (state.openclawStopping ? 'Stopping…' : 'Stop OpenClaw') + '</button>' +
-        ' <a href="http://127.0.0.1:18789/" target="_blank" rel="noopener" style="font-size:11.5px;color:var(--accent);margin-left:8px">Open dashboard ↗</a>'
-      : '<button id="aiOpenclawBtn" class="btn primary" style="padding:5px 12px;font-size:12px">' + (state.openclawBusy ? 'Starting…' : 'Start OpenClaw') + '</button>';
-    var openclaw = '<div style="padding:10px 12px;border:1px solid #e08a3f;border-radius:8px;background:rgba(224,138,63,.06);margin-bottom:8px">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
-      '<div style="font-weight:600">OpenClaw — local agent gateway <span style="font-size:10px;color:var(--muted);font-weight:400">MIT</span></div>' +
-      '<span style="font-size:11px;display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:' + ocDotColor + ';display:inline-block"></span><span style="color:' + ocDotColor + '">' + esc(ocStatusText) + '</span></span>' +
-      '</div>' +
-      '<div style="font-size:11.5px;color:var(--muted);margin:4px 0 8px">Installs <code>npx openclaw daemon start</code> as a background service (in-app — no terminal), loopback-only, port 18789. A first-ever install needs one manual <code>openclaw configure</code> to pick providers/channels — this button cannot fill that in for you. CodeSovereign does not yet route its own generation through OpenClaw\'s agent runner: a live test found it noticeably slower than the Ollama it was calling.</div>' +
-      ocBtn +
-      (state.openclawLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:100px;overflow:auto">' + esc(state.openclawLog) + '</pre>' : '') +
-      '</div>';
+    var openclaw = openclawCardHtml();
 
     // discovered running runtimes
     var rows = '';
@@ -156,6 +130,75 @@
       '</div>';
   }
 
+  // OpenClaw — a local agent gateway (its own agent/session/tool model:
+  // channels, cron, devices, isolated workspaces), not a drop-in Engine.LLM
+  // chat provider. Lifecycle is fully behind Electron IPC
+  // (electron/lib/openclaw-manager.js) — this card only reflects real,
+  // detected state; it never guesses. Exposed as an opt-in "agent runtime"
+  // backend (Engine.AIRouter.BACKENDS) alongside direct local models and
+  // cloud providers — nothing here auto-switches generation to it.
+  function openclawCardHtml() {
+    var ocs = state.openclawStatus;
+    var busy = state.openclawBusy; // action name in progress, or falsy
+    var phase = ocs && ocs.phase;
+
+    var dot = '#e08a3f', label = 'Checking…', desc = '';
+    if (busy) { dot = '#a78bfa'; label = busyLabel(busy) + '…'; }
+    else if (!ocs) { label = 'Checking…'; }
+    else if (ocs.ok === false && !ocs.installed) { dot = 'var(--muted)'; label = 'Desktop app required'; }
+    else if (phase === 'not-installed') { dot = 'var(--muted)'; label = 'Not installed'; desc = 'OpenClaw CLI not installed.'; }
+    else if (phase === 'needs-onboarding') { dot = '#e08a3f'; label = 'Not configured'; desc = 'CLI installed — first-time setup has not been run yet.'; }
+    else if (phase === 'gateway-not-installed') { dot = '#e08a3f'; label = 'Not configured'; desc = 'Configured, but the Gateway service is not installed yet.'; }
+    else if (phase === 'starting') { dot = '#a78bfa'; label = 'Starting…'; desc = 'Gateway service launched — waiting for it to bind port ' + (ocs.gateway && ocs.gateway.port || 18789) + '.'; }
+    else if (phase === 'running') { dot = 'var(--good)'; label = 'Running'; desc = 'Gateway reachable on 127.0.0.1:' + (ocs.gateway && ocs.gateway.port || 18789) + '.'; }
+    else if (phase === 'stopped') { dot = 'var(--muted)'; label = 'Stopped'; desc = 'Gateway service installed, not running.'; }
+    else if (ocs.error) { dot = '#ef4444'; label = 'Error'; desc = esc(ocs.error); }
+    else { dot = 'var(--muted)'; label = 'Unknown'; }
+
+    var installBtnLabel =
+      phase === 'not-installed' ? 'Install CLI'
+      : phase === 'needs-onboarding' ? 'Open Setup Wizard'
+      : phase === 'gateway-not-installed' ? 'Install Gateway'
+      : 'Reconfigure';
+    var installBtnAction =
+      phase === 'not-installed' ? 'install'
+      : phase === 'needs-onboarding' ? 'onboard'
+      : phase === 'gateway-not-installed' ? 'gatewayInstall'
+      : 'onboard';
+
+    var running = phase === 'running' || phase === 'starting';
+    var canStart = phase === 'stopped';
+    var canInstallConfigure = phase === 'not-installed' || phase === 'needs-onboarding' || phase === 'gateway-not-installed';
+
+    var buttons = '';
+    if (canInstallConfigure) {
+      buttons += '<button id="aiOpenclawInstallBtn" data-action="' + installBtnAction + '" class="btn primary" style="padding:5px 12px;font-size:12px" ' + (busy ? 'disabled' : '') + '>' + esc(installBtnLabel) + '</button> ';
+    }
+    if (canStart) {
+      buttons += '<button id="aiOpenclawStartBtn" class="btn primary" style="padding:5px 12px;font-size:12px" ' + (busy ? 'disabled' : '') + '>Start Gateway</button> ';
+    }
+    if (running) {
+      buttons += '<button id="aiOpenclawStopBtn" class="btn ghost" style="padding:5px 12px;font-size:12px" ' + (busy ? 'disabled' : '') + '>Stop Gateway</button> ' +
+        '<button id="aiOpenclawRestartBtn" class="btn ghost" style="padding:5px 12px;font-size:12px" ' + (busy ? 'disabled' : '') + '>Restart</button> ';
+    }
+    if (phase === 'running') {
+      buttons += '<button id="aiOpenclawDashBtn" class="btn ghost" style="padding:5px 12px;font-size:12px">Open Dashboard</button>';
+    }
+
+    return '<div style="padding:10px 12px;border:1px solid #e08a3f;border-radius:8px;background:rgba(224,138,63,.06);margin-bottom:8px">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
+      '<div style="font-weight:600">OpenClaw — Local Agent Gateway <span style="font-size:10px;color:var(--muted);font-weight:400">MIT</span></div>' +
+      '<span style="font-size:11px;display:flex;align-items:center;gap:5px"><span style="width:7px;height:7px;border-radius:50%;background:' + dot + ';display:inline-block"></span><span style="color:' + dot + '">' + esc(label) + '</span></span>' +
+      '</div>' +
+      '<div style="font-size:11.5px;color:var(--muted);margin:4px 0 8px">Runs OpenClaw\'s local Gateway on 127.0.0.1:18789. CodeSovereign can install, start, stop, restart and health-check the Gateway automatically. First-time provider authentication or interactive onboarding may require opening the OpenClaw setup wizard.' + (desc ? ' <span style="color:#e08a3f">' + desc + '</span>' : '') + '</div>' +
+      buttons +
+      (state.openclawLog ? '<pre style="margin-top:8px;font:10.5px JetBrains Mono,monospace;color:var(--muted);white-space:pre-wrap;max-height:100px;overflow:auto">' + esc(state.openclawLog) + '</pre>' : '') +
+      '</div>';
+  }
+  function busyLabel(action) {
+    return { install: 'Installing CLI', gatewayInstall: 'Installing Gateway', start: 'Starting', stop: 'Stopping', restart: 'Restarting', onboard: 'Opening setup' }[action] || 'Working';
+  }
+
   function wiringHtml() {
     var AI = E().AI;
     if (!AI || !AI.wiring) return '';
@@ -185,11 +228,12 @@
     return AR.omniRouteStatus().then(function (s) { state.omniStatus = s; rerender(); });
   }
 
-  // Same, for OpenClaw.
+  // Same, for OpenClaw — read-only (detect + config + gateway status +
+  // probe, combined server-side); safe to call on every Settings mount.
   function refreshOpenclawStatus() {
     var AR = E().AIRouter;
-    if (!AR || !AR.openClawStatus) return Promise.resolve();
-    return AR.openClawStatus().then(function (s) { state.openclawStatus = s; rerender(); });
+    if (!AR || !AR.OpenClaw) return Promise.resolve();
+    return AR.OpenClaw.status().then(function (s) { state.openclawStatus = s; rerender(); });
   }
 
   function bindLocalAi(host) {
@@ -224,28 +268,58 @@
       });
     };
 
-    var ocb = host.querySelector('#aiOpenclawBtn');
-    if (ocb) ocb.onclick = function () {
-      state.openclawBusy = true; state.openclawLog = 'starting OpenClaw…\n'; rerender();
-      AR.ensureOpenClaw(function (s) { state.openclawLog += s + '\n'; rerender(); }).then(function (r) {
-        state.openclawBusy = false;
-        state.openclawLog += (r && r.ok) ? ('\nready on ' + r.base) : ('\nfailed: ' + ((r && r.error) || 'unknown'));
-        return refreshOpenclawStatus();
-      }).then(function () {
-        window.toast && window.toast(state.openclawStatus && state.openclawStatus.running ? 'OpenClaw gateway running' : 'OpenClaw not reachable', state.openclawStatus && state.openclawStatus.running ? '#34d399' : '#ef4444');
+    function runOpenclawAction(action, promise, doneLabel) {
+      state.openclawBusy = action; state.openclawLog = busyLabel(action) + '…\n'; rerender();
+      return promise.then(function (r) {
+        state.openclawBusy = null;
+        state.openclawLog += (r && r.ok !== false) ? ('\n' + doneLabel) : ('\nfailed: ' + ((r && r.error) || 'unknown'));
+        return refreshOpenclawStatus().then(function () { return r; });
+      }, function (e) {
+        state.openclawBusy = null;
+        state.openclawLog += '\nfailed: ' + (e && e.message || e);
+        rerender();
+        return { ok: false, error: String(e && e.message || e) };
+      });
+    }
+
+    var ocib = host.querySelector('#aiOpenclawInstallBtn');
+    if (ocib) ocib.onclick = function () {
+      var action = ocib.dataset.action;
+      var call =
+        action === 'install' ? AR.OpenClaw.install()
+        : action === 'gatewayInstall' ? AR.OpenClaw.installGateway()
+        : AR.OpenClaw.openOnboarding();
+      var doneLabel = action === 'onboard' ? 'setup wizard opened in a terminal' : 'done';
+      runOpenclawAction(action, call, doneLabel).then(function (r) {
+        window.toast && window.toast(r && r.ok !== false ? 'OpenClaw: ' + doneLabel : 'OpenClaw: ' + ((r && r.error) || 'failed'), r && r.ok !== false ? '#34d399' : '#ef4444');
+      });
+    };
+
+    var ocsrt = host.querySelector('#aiOpenclawStartBtn');
+    if (ocsrt) ocsrt.onclick = function () {
+      runOpenclawAction('start', AR.OpenClaw.startGateway(), 'gateway started').then(function (r) {
+        window.toast && window.toast(r && r.ok !== false ? 'OpenClaw gateway starting' : 'OpenClaw: ' + ((r && r.error) || 'failed'), r && r.ok !== false ? '#34d399' : '#ef4444');
       });
     };
 
     var ocsb = host.querySelector('#aiOpenclawStopBtn');
     if (ocsb) ocsb.onclick = function () {
-      state.openclawStopping = true; state.openclawLog = 'stopping OpenClaw…\n'; rerender();
-      AR.stopOpenClaw().then(function (r) {
-        state.openclawStopping = false;
-        state.openclawLog += (r && r.ok !== false) ? '\nstopped' : ('\nfailed: ' + ((r && r.error) || 'unknown'));
-        return refreshOpenclawStatus();
-      }).then(function () {
-        window.toast && window.toast('OpenClaw stopped', '#e08a3f');
+      runOpenclawAction('stop', AR.OpenClaw.stopGateway(), 'gateway stopped').then(function (r) {
+        window.toast && window.toast(r && r.ok !== false ? 'OpenClaw gateway stopped' : 'OpenClaw: ' + ((r && r.error) || 'failed'), r && r.ok !== false ? '#e08a3f' : '#ef4444');
       });
+    };
+
+    var ocrb = host.querySelector('#aiOpenclawRestartBtn');
+    if (ocrb) ocrb.onclick = function () {
+      runOpenclawAction('restart', AR.OpenClaw.restartGateway(), 'gateway restarted').then(function (r) {
+        window.toast && window.toast(r && r.ok !== false ? 'OpenClaw gateway restarted' : 'OpenClaw: ' + ((r && r.error) || 'failed'), r && r.ok !== false ? '#34d399' : '#ef4444');
+      });
+    };
+
+    var ocdb = host.querySelector('#aiOpenclawDashBtn');
+    if (ocdb) ocdb.onclick = function () {
+      var url = state.openclawStatus && state.openclawStatus.gateway && state.openclawStatus.gateway.dashboardUrl;
+      AR.OpenClaw.openDashboard(url);
     };
 
     var auto = host.querySelector('#aiAutoBtn');

@@ -156,37 +156,39 @@
     });
   }
 
-  /* ---- OpenClaw: a local agent gateway (not a drop-in Engine.LLM chat
-     provider — it has its own agent/session/tool model), installed as a
-     real background service (launchd/systemd/schtasks) rather than a
-     plain child process. Start/stop/status only; CodeSovereign does not
-     route its own generation prompts through it (see the honesty note on
-     ensureOpenClaw — a live test found its --local completion path can
-     hang well past a healthy Ollama response time, so it is not wired as
-     a "faster" path until that is resolved). */
-  function ensureOpenClaw(onStatus) {
-    var D = window.desktop;
-    if (!(D && D.isDesktop && D.ai && D.ai.openclaw)) {
-      return Promise.resolve({ ok: false, error: 'OpenClaw launch needs the desktop app — or run `npx openclaw daemon start` yourself' });
-    }
-    return D.ai.openclaw('ensure').then(function (r) {
-      return r || { ok: false, error: 'openclaw failed' };
-    });
-  }
+  /* ---- OpenClaw: an agent-runtime backend, not a drop-in Engine.LLM chat
+     provider (it has its own agent/session/tool model: channels, cron,
+     devices, isolated workspaces). Its full install -> onboarding ->
+     gateway-service lifecycle lives behind Electron IPC in
+     electron/lib/openclaw-manager.js — this is a thin renderer-side
+     wrapper, exposed as Engine.AIRouter.OpenClaw so the UI can drive it
+     without ever shelling out itself.
 
-  function openClawStatus() {
+     This backend is opt-in: nothing here auto-routes CodeSovereign's own
+     generation through OpenClaw just because it's installed or running —
+     see BACKENDS below. Direct local models (Ollama/LM Studio/llama.cpp)
+     stay the low-latency default; OpenClaw is there for when a task needs
+     agent orchestration, tools, channels, or its Gateway features, which
+     is a task/user choice, not something this router decides on its own. */
+  function ocBridge() {
     var D = window.desktop;
-    if (!(D && D.isDesktop && D.ai && D.ai.openclaw)) return Promise.resolve({ ok: false, installed: false, running: false });
-    return D.ai.openclaw('status').then(function (r) {
-      return { ok: true, installed: !!(r && r.installed), running: !!(r && r.running) };
-    }, function () { return { ok: false, installed: false, running: false }; });
+    return (D && D.isDesktop && D.openclaw) ? D.openclaw : null;
   }
-
-  function stopOpenClaw() {
-    var D = window.desktop;
-    if (!(D && D.isDesktop && D.ai && D.ai.openclaw)) return Promise.resolve({ ok: false, error: 'not running in the desktop app' });
-    return D.ai.openclaw('stop').then(function (r) { return r || { ok: true }; });
+  function noBridge(extra) {
+    return Promise.resolve(Object.assign({ ok: false, error: 'OpenClaw control needs the desktop app' }, extra || {}));
   }
+  var OpenClaw = {
+    detect: function () { var b = ocBridge(); return b ? b.detect() : noBridge({ installed: false }); },
+    status: function () { var b = ocBridge(); return b ? b.getStatus() : noBridge({ installed: false, phase: 'no-bridge' }); },
+    probe: function () { var b = ocBridge(); return b ? b.probeGateway() : noBridge({ ready: false }); },
+    install: function () { var b = ocBridge(); return b ? b.install() : noBridge(); },
+    installGateway: function () { var b = ocBridge(); return b ? b.installGateway() : noBridge(); },
+    startGateway: function () { var b = ocBridge(); return b ? b.startGateway() : noBridge(); },
+    stopGateway: function () { var b = ocBridge(); return b ? b.stopGateway() : noBridge(); },
+    restartGateway: function () { var b = ocBridge(); return b ? b.restartGateway() : noBridge(); },
+    openOnboarding: function () { var b = ocBridge(); return b ? b.openOnboarding() : noBridge(); },
+    openDashboard: function (url) { var b = ocBridge(); return b ? b.openDashboard(url) : noBridge(); }
+  };
 
   function route(opts) {
     opts = opts || {};
@@ -240,9 +242,21 @@
     return discover().then(function (d) { out.localRuntimes = (d.runtimes || []).map(function (r) { return { id: r.id, models: (r.models || []).length }; }); return out; });
   }
 
+  // Backend categorization (blueprint: Direct Local Models / Agent Runtimes /
+  // Cloud Providers). This is classification metadata only — nothing here
+  // auto-routes generation to a category; recommend()/route() above pick a
+  // direct local model or a configured cloud provider the same way they
+  // always did. Selecting an agent runtime (OpenClaw) is a task/user choice,
+  // never automatic just because it happens to be installed or running.
+  var BACKENDS = {
+    direct: LOCAL_PORTS.map(function (p) { return { id: p.id, label: p.label, kind: 'direct' }; }),
+    agentRuntimes: [{ id: 'openclaw', label: 'OpenClaw', kind: 'agent-runtime' }],
+    cloud: 'see Engine.LLM.PROVIDERS'
+  };
+
   Engine.AIRouter = { discover: discover, recommend: recommend, apply: apply, route: route, status: status,
     ensureOmniRoute: ensureOmniRoute, omniRouteStatus: omniRouteStatus, stopOmniRoute: stopOmniRoute,
-    ensureOpenClaw: ensureOpenClaw, openClawStatus: openClawStatus, stopOpenClaw: stopOpenClaw,
+    OpenClaw: OpenClaw, BACKENDS: BACKENDS,
     LOCAL_PORTS: LOCAL_PORTS };
   console.info('[AIRouter] local inference router ready — Engine.AIRouter');
 })();
