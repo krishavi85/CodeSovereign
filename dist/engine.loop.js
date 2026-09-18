@@ -157,12 +157,25 @@
     if (name === 'write_file' || name === 'create_file') {
       const files = Array.isArray(args.files) ? args.files : [{ path: args.path, content: args.content }];
       const written = [];
+      const skipped = [];
       files.forEach(function (f) {
-        if (!f || !f.path || typeof f.content !== 'string') return;
+        if (!f || !f.path) { skipped.push({ path: (f && f.path) || null, reason: 'missing path' }); return; }
+        if (typeof f.content !== 'string') { skipped.push({ path: f.path, reason: 'content must be a plain string, got ' + typeof f.content }); return; }
         const p = f.path.charAt(0) === '/' ? f.path : '/' + f.path;
         try { FS.write(p, f.content); written.push(p); } catch (e) { written.push({ path: p, error: String(e.message || e) }); }
       });
-      return { ok: written.length > 0, tool: name, written: written };
+      const out = { ok: written.length > 0, tool: name, written: written };
+      // A failed call must say WHY, or the model (and the stuck-loop
+      // detector's corrective nudge) has nothing to self-correct from —
+      // found live: a small model repeatedly retried write_file with a
+      // malformed args shape and got no feedback to fix it, until the
+      // safety-cap gave up.
+      if (!written.length) {
+        out.error = skipped.length
+          ? 'no files written — ' + skipped.map(function (s) { return (s.path || '(no path)') + ': ' + s.reason; }).join('; ')
+          : 'no files written — call with either { path, content } or { files: [{ path, content }, ...] }, content must be the full file text as a plain string';
+      }
+      return out;
     }
     if (name === 'delete_file') {
       const p = args.path;

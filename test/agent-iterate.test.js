@@ -303,7 +303,10 @@ module.exports = async function (t) {
     return /falling back to local synthesizer/i.test(s.text || '');
   }));
   t.ok('failed LLM tells the user to keep prompting', failSteps.some(function (s) {
-    return s.kind === 'error' && /synthesizer was not used/i.test(s.text || '');
+    return s.kind === 'error' && /deterministic generator was deliberately not used/i.test(s.text || '');
+  }));
+  t.ok('the connection failure is explained in plain language, not raw error text', failSteps.some(function (s) {
+    return s.kind === 'error' && /couldn.t reach/i.test(s.text || '') && !/ECONNREFUSED/.test(s.text || '');
   }));
   t.ok('failed LLM does not overwrite the workspace with a template notepad', (win.Engine.FS.read('/index.html') || '') === beforeFail);
   t.equal('failed LLM does not sequential-retry a down server', posts, 1);

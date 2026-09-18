@@ -334,7 +334,8 @@
     if (D && D.isDesktop && D.ai && D.ai.request) {
       const r = await D.ai.request({
         url: url, method: (init && init.method) || "GET",
-        headers: (init && init.headers) || {}, body: (init && init.body) || null
+        headers: (init && init.headers) || {}, body: (init && init.body) || null,
+        timeoutMs: init && init.timeoutMs
       });
       if (r && r.ok) return { ok: r.status >= 200 && r.status < 300, status: r.status, text: async () => r.body };
       throw new Error((r && r.error) || "request failed");
@@ -389,7 +390,11 @@
     const body = { model: cfg.model || provider.defaultModel || "auto", messages: msgs,
       temperature: opts.temperature == null ? 0.2 : opts.temperature, max_tokens: opts.maxTokens || 2048 };
     if (opts.json && provider.supportsJson) body.response_format = { type: "json_object" };
-    const res = await httpText(url, { method: "POST", headers, body: JSON.stringify(body) });
+    // Local models can legitimately take minutes for a full completion —
+    // the desktop proxy's default 45s HTTP timeout was aborting real,
+    // in-progress generations (confirmed live: llama3.1:8b on modest
+    // hardware routinely needs 60-90s+ per round once the prompt grows).
+    const res = await httpText(url, { method: "POST", headers, body: JSON.stringify(body), timeoutMs: opts.timeoutMs || 300000 });
     const raw = await res.text();
     if (!res.ok) {
       if (res.status === 401 && provider.id === "omniroute") {
@@ -447,10 +452,13 @@
     // Route through the desktop proxy (httpText) rather than a bare fetch — the
     // renderer CSP blocks localhost + most API hosts directly; the main-process
     // proxy is the vetted bypass. In a plain browser httpText falls back to fetch.
+    // See the same note on chat()'s httpText call above — the desktop
+    // proxy's 45s default was killing real, in-progress local generations.
     const res = await httpText(req.url, {
       method: "POST",
       headers: req.headers,
-      body: JSON.stringify(req.body)
+      body: JSON.stringify(req.body),
+      timeoutMs: opts.timeoutMs || 300000
     });
     const text = await res.text();
     if (!res.ok) {
@@ -550,6 +558,37 @@
   function isPlanParseError(err) {
     const msg = String(err && err.message || err || "");
     return /did not contain a valid file plan|no usable files/i.test(msg);
+  }
+
+  // Translate raw network/HTTP error text into something a non-technical
+  // user can act on. Found live: "Failed to fetch" and "timeout" reached
+  // the UI verbatim and told the user nothing they could do about it.
+  function humanizeTransportError(err, cfg) {
+    const msg = String(err && err.message || err || "");
+    const where = (cfg && cfg.baseUrl) || "the configured provider";
+    if (/timeout/i.test(msg)) {
+      return "the model at " + where + " didn't respond in time. Local models can be slow on modest hardware, " +
+        "especially on the first request — try again (it may just need a moment), or switch to a smaller/faster " +
+        "model or a cloud provider in Settings.";
+    }
+    if (/Failed to fetch|NetworkError|ECONNREFUSED|ENOTFOUND/i.test(msg)) {
+      return "couldn't reach " + where + ". Check that it's actually running (for a local model: is the server " +
+        "still up? is it busy with another request?), then try again.";
+    }
+    if (/ECONNRESET/i.test(msg)) {
+      return where + " closed the connection before responding — it may be overloaded (busy with an earlier " +
+        "request) or have crashed. Check it's still running, then try again.";
+    }
+    if (/^HTTP 401/.test(msg)) {
+      return "authentication failed (401) — check the API key for this provider in Settings.";
+    }
+    if (/^HTTP \d/.test(msg)) {
+      return where + " rejected the request: " + msg;
+    }
+    if (/LLM not configured|no baseUrl/i.test(msg)) {
+      return "no AI provider is connected — pick one in Settings first.";
+    }
+    return msg;
   }
 
   function pushFile(files, path, content) {
@@ -1779,6 +1818,17 @@
         let quality = { score: 0, pass: false, reasons: ["not generated"] };
         let lastErr = null;
         let wrote = false;
+        // Guards a real failure mode found live: a small/local model can get
+        // stuck repeatedly picking a tool call that keeps failing (e.g.
+        // run_command outside the allowlist) without ever pivoting to
+        // write_file — round after round, burning the full SAFETY_CAP
+        // (48 rounds) without writing a single file. After a couple of
+        // failed tool calls in a row, push a hard corrective instruction;
+        // if it still hasn't recovered after a handful more, stop early
+        // with an honest error instead of grinding out the rest of the cap.
+        let consecutiveFailedTools = 0;
+        const STUCK_NUDGE_AT = 2;
+        const STUCK_ABORT_AT = 6;
         steps.push({
           kind: "route",
           text: "Brain: " + intent.mode + " via " + intent.engines.join(" + ") + " (" + intent.reason + ")"
@@ -1846,7 +1896,7 @@
             lastErr = null;
           } catch (err) {
             lastErr = err;
-            steps.push({ kind: "error", text: "LLM round " + round + " failed: " + (err && err.message || err) });
+            steps.push({ kind: "error", text: "Round " + round + " failed: " + humanizeTransportError(err, cfg) });
             onStep && onStep(steps[steps.length - 1]);
             if (isTransportError(err)) break;
             if (isPlanParseError(err)) {
@@ -1891,6 +1941,11 @@
               catch (toolErr) { obs = { ok: false, error: String(toolErr && toolErr.message || toolErr) }; }
             }
             if (obs && obs.written && obs.written.length) wrote = true;
+            // Only an actually-failed call counts as "stuck" — a successful
+            // exploratory step (list_dir, grep, read_file) that hasn't
+            // written files yet is legitimate progress, not stalling.
+            if (obs && obs.ok) consecutiveFailedTools = 0;
+            else consecutiveFailedTools++;
             steps.push({
               kind: "observe",
               text: "Observe " + tool + ": " + (obs.ok ? "ok" : (obs.error || "fail")),
@@ -1898,6 +1953,16 @@
               result: obs
             });
             onStep && onStep(steps[steps.length - 1]);
+            if (consecutiveFailedTools >= STUCK_ABORT_AT) {
+              steps.push({
+                kind: "error",
+                text: "Stopped after " + consecutiveFailedTools + " tool calls in a row that made no progress (" +
+                  tool + " kept failing) — the connected model isn't recovering on its own. Try a larger/different " +
+                  "model, or disconnect AI in Settings to use the built-in deterministic generator for this prompt."
+              });
+              onStep && onStep(steps[steps.length - 1]);
+              return steps;
+            }
             const answers = (window.Engine.Loop && window.Engine.Loop.pendingAnswers)
               ? window.Engine.Loop.pendingAnswers()
               : [];
@@ -1905,7 +1970,12 @@
               "OBSERVATION (" + tool + "):\n" + JSON.stringify(obs).slice(0, 3500) +
               (answers.length ? "\n\nUSER ANSWERS (keep working):\n" + answers.map(function (a) {
                 return "- " + a.question + " → " + a.answer;
-              }).join("\n") : "");
+              }).join("\n") : "") +
+              (consecutiveFailedTools >= STUCK_NUDGE_AT
+                ? "\n\nIMPORTANT: your last " + consecutiveFailedTools + " tool call(s) made no progress. " +
+                  "Stop retrying run_command or similar tools. Call write_file (or create_file) RIGHT NOW with the " +
+                  "actual application source files — that is the only tool that moves this forward."
+                : "");
             continue;
           }
           const plan = decision && decision.plan;
@@ -1946,10 +2016,12 @@
             "\n\n" + formatRag(intent, followUp ? scanRepo() : null, engines.deps, observation, { followUp: followUp });
         }
         if (!wrote) {
+          const reason = lastErr ? humanizeTransportError(lastErr, cfg) : "no usable file plan came back";
           steps.push({
             kind: "error",
-            text: "LLM failed: " + (lastErr && lastErr.message || lastErr || "no usable file plan") +
-              " — the local synthesizer was not used. Fix the model or connection, then run again (or keep prompting to continue)."
+            text: "Couldn't generate this app: " + reason +
+              " Nothing was written yet — the built-in deterministic generator was deliberately not used instead, " +
+              "so this failure doesn't get hidden. Fix the issue above, then prompt again."
           });
           onStep && onStep(steps[steps.length - 1]);
           return steps;
