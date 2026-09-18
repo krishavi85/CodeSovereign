@@ -143,6 +143,10 @@ module.exports = async function (t) {
   t.ok('Recovery fills the Cross-Tab card after render (inline scripts in innerHTML never run)', /crossTabHost[\s\S]{0,400}renderCrossTabCard/.test(appSrc) || /getElementById\('crossTabHost'\)/.test(appSrc) && appSrc.includes('bindRecovery'));
   t.ok('bindRecovery paints Cross-Tab Communication', /function bindRecovery[\s\S]*renderCrossTabCard/.test(appSrc));
   t.ok('runAgentWith treats start-over as a new run, not a follow-up', appSrc.includes('promptIsRestart') && appSrc.includes('followUp = !restart'));
+  t.ok('runAgentWith only treats a built app as a follow-up', appSrc.includes('followUp = !restart && !!S.agentBuilt'));
+  t.ok('agentBuilt is set from this-run writes, not leftover index.html', appSrc.includes('function runWroteFiles') && appSrc.includes('if (wroteThisRun) S.agentBuilt = true'));
+  t.ok('successful generate opens Live Preview', /if \(wroteThisRun\)[\s\S]{0,400}runPreview\(\)/.test(appSrc));
+  t.ok('failed generate does not toast Files created from leftover HTML', /No files written — leftover starter is not your app/.test(appSrc));
   t.ok('IDE follow-up writes unsaved editor buffer before Agent.run', appSrc.includes('function flushIdeBuffer') && appSrc.includes('function sendIdeFollowUp'));
   t.ok('Clear workspace resets the agent session', /function clearWorkspace[\s\S]{0,400}resetAgentSession/.test(appSrc));
   t.ok('session hydrate requires the current workspace', appSrc.includes('sessionMatchesWorkspace'));
@@ -344,6 +348,14 @@ module.exports = async function (t) {
   ] };
   t.ok('prior agent run counts as a follow-up', LLM.isFollowUp('make the sidebar purple') === true);
   t.ok('explicit restart is not a follow-up even with history', LLM.isFollowUp('start over from scratch') === false);
+  win.S = { agentRuns: ['create a notepad app'], agentBuilt: false, agentChat: [
+    { role: 'user', text: 'create a notepad app' }
+  ] };
+  t.ok('failed generate history is not a follow-up', LLM.isFollowUp('create a kanban board') === false);
+  t.ok('needsAppBeforeDone blocks generate done without index.html', LLM.needsAppBeforeDone({ mode: 'generate' }, false) === true);
+  t.ok('needsAppBeforeDone allows generate done after index.html', LLM.needsAppBeforeDone({ mode: 'generate' }, true) === false);
+  t.ok('needsAppBeforeDone allows explore done without writes', LLM.needsAppBeforeDone({ mode: 'explore' }, false) === false);
+  t.ok('mustBuildBlock names leftover dashboard as not the product', /leftover Pulse\/SaaS dashboard is NOT the product/.test(LLM.mustBuildBlock()));
   t.ok('brain treats a follow-up as edit, not a full rebuild', LLM.classifyIntent('make the sidebar purple').mode === 'edit');
   t.ok('edit intent skips the dependency engine', LLM.classifyIntent('make the sidebar purple').engines.indexOf('deps') < 0);
   t.ok('fix prompt on an existing app is repair', LLM.classifyIntent('fix the timeout error').mode === 'repair');

@@ -259,7 +259,7 @@
       : "";
     const stance = followUp
       ? "You are editing an EXISTING app in the workspace. Preserve product identity, name, architecture, and working features. Apply the user's latest request. Return complete updated files — do not switch to a different product."
-      : "Replace any leftover files from a previous project. Do not keep starter-template copy.";
+      : "Replace any leftover files from a previous project. Do not keep starter-template copy. The leftover Pulse/SaaS dashboard is NOT the product. Do not call tool done until you have written /index.html plus CSS and JS for this NEW app.";
     return [
       "You are CodeSovereign's coding agent — an expert product engineer, not a tutorial generator.",
       "You write production-quality, fully working source files. No placeholders, no TODOs, no pseudo-code, no 'Simple Notepad'.",
@@ -645,12 +645,24 @@
     try {
       const S = window.S;
       if (!S) return false;
-      if (S.agentBuilt) return true;
-      const runs = Array.isArray(S.agentRuns) ? S.agentRuns : [];
-      return runs.some(function (p) {
-        return String(p || "").trim() && String(p).trim() !== String(prompt || "").trim();
-      });
+      // Seeded / leftover /index.html and failed prior prompts are not an app.
+      // Only a run that actually wrote files sets agentBuilt.
+      return !!S.agentBuilt;
     } catch (_) { return false; }
+  }
+
+  function isIndexPath(p) {
+    return /\/index\.html$/i.test(String(p || ""));
+  }
+
+  function needsAppBeforeDone(intent, wroteIndex) {
+    if (wroteIndex) return false;
+    const mode = intent && intent.mode;
+    return mode === "generate" || mode === "repo";
+  }
+
+  function mustBuildBlock() {
+    return "MUST BUILD THIS NEW APP NOW. The leftover Pulse/SaaS dashboard in the workspace is NOT the product. Emit a file plan with /index.html, /styles/*.css, and /scripts/*.js for the user's request. Do not call tool done until those files are written.";
   }
 
   function isFollowUp(prompt) {
@@ -1734,7 +1746,11 @@
           ? window.Engine.ProjectBrain.contextBlock()
           : "";
         if (brainBlk) extraUser = extraUser + "\n\n" + brainBlk;
+        if (needsAppBeforeDone(intent, false)) {
+          extraUser = (extraUser ? extraUser + "\n\n" : "") + mustBuildBlock();
+        }
         const cap = (window.Engine.Loop && window.Engine.Loop.SAFETY_CAP) || SAFETY_CAP;
+        let wroteIndex = false;
         for (let round = 1; round <= cap; round++) {
           steps.push({
             kind: "plan",
@@ -1783,6 +1799,17 @@
             steps.push({ kind: "act", text: "Act: " + tool, tool: tool });
             onStep && onStep(steps[steps.length - 1]);
             if (tool === "done") {
+              if (needsAppBeforeDone(intent, wroteIndex)) {
+                steps.push({
+                  kind: "observe",
+                  text: "done ignored — no app files written yet; keep building",
+                  tool: "done"
+                });
+                onStep && onStep(steps[steps.length - 1]);
+                extraUser = (extraUser ? extraUser + "\n\n" : "") +
+                  "OBSERVATION (done rejected): nothing written.\n" + mustBuildBlock();
+                continue;
+              }
               const observation = observeRuntime([]);
               const judged = evaluateBuild([], observation, scoreBuild([], observation.issues || []));
               quality = judged.quality;
@@ -1797,7 +1824,13 @@
               try { obs = await window.Engine.Loop.exec(tool, decision.args || {}); }
               catch (toolErr) { obs = { ok: false, error: String(toolErr && toolErr.message || toolErr) }; }
             }
-            if (obs && obs.written && obs.written.length) wrote = true;
+            if (obs && obs.written && obs.written.length) {
+              wrote = true;
+              obs.written.forEach(function (p) {
+                const path = typeof p === "string" ? p : (p && p.path);
+                if (isIndexPath(path)) wroteIndex = true;
+              });
+            }
             steps.push({
               kind: "observe",
               text: "Observe " + tool + ": " + (obs.ok ? "ok" : (obs.error || "fail")),
@@ -1821,6 +1854,9 @@
           onStep && onStep(steps[steps.length - 1]);
           await writeTargets(plan.targets, steps, onStep);
           wrote = true;
+          (plan.targets || []).forEach(function (t) {
+            if (t && isIndexPath(t.path)) wroteIndex = true;
+          });
           steps.push({ kind: "validate", text: "Runtime observe — validators, mocks, live preview…" });
           onStep && onStep(steps[steps.length - 1]);
           const files = (plan.targets || []).map(function (t) {
@@ -1940,6 +1976,8 @@
     extractExternalImports,
     isFollowUp,
     looksLikeRestart,
+    needsAppBeforeDone,
+    mustBuildBlock,
     conversationHistory,
     snapshotWorkspace,
     rememberModels,
