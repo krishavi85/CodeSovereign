@@ -164,6 +164,7 @@ module.exports = async function (t) {
     baseUrl: 'http://127.0.0.1:1234',
     localToken: 'lms-token'
   });
+  win.S.agentBuilt = true;
   let calls = 0;
   win.fetch = async function (url) {
     if (!/chat\/completions/.test(String(url))) {
@@ -178,4 +179,41 @@ module.exports = async function (t) {
   t.ok('agent observes the tool result', steps.some(function (s) { return s.kind === 'observe'; }));
   t.ok('agent can finish with done rather than a 4-round cap', steps.some(function (s) { return s.kind === 'done'; }));
   t.ok('tool loop used more than a single prompt→code hop', calls >= 2);
+
+  const leftover = win.Engine.FS.read('/index.html') || '';
+  t.ok('workspace still has a seeded index before generate', leftover.length > 0);
+  win.S = { agentQuestions: [], agentChat: [], agentRuns: [], agentBuilt: false };
+  let genCalls = 0;
+  let genBodies = [];
+  win.fetch = async function (url, opts) {
+    if (!/chat\/completions/.test(String(url))) {
+      return { ok: false, status: 404, text: async () => '' };
+    }
+    genCalls++;
+    try { genBodies.push(JSON.parse(opts.body)); } catch (_) { genBodies.push(null); }
+    if (genCalls === 1) {
+      return chatReply({ think: 'looks done', tool: 'done', args: { summary: 'already have a dashboard' } });
+    }
+    return chatReply({
+      summary: 'Harbor Board kanban',
+      files: [
+        {
+          path: '/index.html',
+          content: '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>Harbor Board</title><link rel="stylesheet" href="/styles/app.css"/></head><body><div class="app-shell"><aside class="sidebar"><div class="brand">Harbor Board</div><nav><button>Board</button></nav></aside><main><header class="app-nav">Kanban</header><section class="board">Columns</section></main></div><script src="/scripts/app.js"></script></body></html><!-- layout ' + 'n'.repeat(2000) + ' -->'
+        },
+        { path: '/styles/app.css', content: ':root{--bg:#0b1020;--accent:#7c6ff5}body{margin:0;background:linear-gradient(180deg,#0b1020,#151a2e)}.app-shell{display:grid;grid-template-columns:240px 1fr}.sidebar{background:#12182b}' + 'c'.repeat(1800) },
+        { path: '/scripts/app.js', content: 'localStorage.setItem("harbor","1");document.querySelector(".board").textContent="Ready";' },
+        { path: '/README.md', content: '# Harbor Board\nKanban for the prompt.' }
+      ]
+    });
+  };
+  const genSteps = await win.Engine.Agent.run('create a kanban board called Harbor Board');
+  t.ok('generate run talks to the LLM more than once when done has no writes', genCalls >= 2);
+  t.ok('generate ignores done until files are written', genSteps.some(function (s) {
+    return s.kind === 'observe' && /done ignored/i.test(s.text || '');
+  }));
+  t.ok('generate first user message includes MUST BUILD', /MUST BUILD THIS NEW APP/.test(((genBodies[0] && genBodies[0].messages) || []).map(function (m) { return m.content; }).join('\n')));
+  t.ok('generate writes the requested app instead of keeping the leftover dashboard', /Harbor Board/.test(win.Engine.FS.read('/index.html') || ''));
+  t.ok('generate records write steps for the UI', genSteps.some(function (s) { return s.kind === 'write' && s.path === '/index.html'; }));
+  t.ok('generate finishes after writing files', genSteps.some(function (s) { return s.kind === 'done'; }));
 };

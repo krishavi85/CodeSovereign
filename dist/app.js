@@ -383,6 +383,16 @@ function promptIsRestart(p) {
   } catch (_) {}
   return /\b(start over|from scratch|brand[- ]new(?: app)?|replace (?:the |this )?(?:entire )?app|rebuild (?:everything|from scratch)|throw (?:it|this) away|different (?:app|product))\b/i.test(String(p || ''));
 }
+function runWroteFiles(steps) {
+  return (steps || []).some(function (s) {
+    if (!s) return false;
+    if (s.kind === 'write' && s.path) return true;
+    const written = s.result && s.result.written;
+    if (s.kind === 'observe' && Array.isArray(written) && written.length) return true;
+    if (s.kind === 'observe' && (s.tool === 'write_file' || s.tool === 'create_file') && s.result && s.result.ok) return true;
+    return false;
+  });
+}
 function flushIdeBuffer() {
   if (!S.ideFile || !S.ideDirty) return false;
   try { Engine.FS.write(S.ideFile, S.ideBuffer); } catch (_) { return false; }
@@ -477,7 +487,7 @@ function runAgentWith(prompt, specCtx) {
   _agentTimers.forEach(t => clearTimeout(t));
   _agentTimers = [];
   const restart = promptIsRestart(prompt);
-  const followUp = !restart && !!(S.agentBuilt || (S.agentRuns || []).some(p => p && p !== prompt));
+  const followUp = !restart && !!S.agentBuilt;
   S.lastPrompt = prompt;
   S.agentChat = [...(S.agentChat || []), { role: 'user', text: prompt, at: Date.now() }];
   S.agentRunning = true;
@@ -521,7 +531,8 @@ function runAgentWith(prompt, specCtx) {
     // Final sync so the Build tab reflects exactly what the run produced
     try { syncBuildFromFS(); } catch (_) {}
     S.agentRunning = false;
-    if (Engine.FS.read('/index.html')) S.agentBuilt = true;
+    const wroteThisRun = runWroteFiles(S.agentSteps);
+    if (wroteThisRun) S.agentBuilt = true;
     const last = S.agentSteps[S.agentSteps.length - 1];
     if (last && (last.kind === 'done' || last.kind === 'error')) {
       S.agentChat = [...(S.agentChat || []), { role: 'assistant', text: last.text || last.kind, at: Date.now() }].slice(-40);
@@ -537,12 +548,15 @@ function runAgentWith(prompt, specCtx) {
     // Stay on Agent so the user can keep prompting the same app.
     try {
       S.screen = 'agent';
-      if (Engine.FS.read('/index.html')) {
+      if (wroteThisRun) {
         toast(followUp
           ? 'App updated — send another prompt or Open IDE'
           : 'Files created — send a follow-up or Open IDE', '#34d399');
+        try { runPreview(); } catch (_) {}
       } else {
-        toast('Run finished — send another prompt to continue', '#22d3ee');
+        toast((last && last.kind === 'error' && last.text)
+          ? last.text
+          : 'No files written — leftover starter is not your app. Connect the model and prompt again.', '#f59e0b');
       }
     } catch (_) {}
     renderAll();
