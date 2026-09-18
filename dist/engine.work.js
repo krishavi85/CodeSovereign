@@ -1615,7 +1615,10 @@
         } catch (_) {}
       }
       const token = await credAsync('VERCEL_TOKEN');
-      const bundle = Engine.Deploy && Engine.Deploy.bundle ? Engine.Deploy.bundle() : { files: snapshotFs() };
+      let bundle = { files: snapshotFs() };
+      try {
+        if (Engine.Deploy && Engine.Deploy.bundle) bundle = Engine.Deploy.bundle() || bundle;
+      } catch (_) {}
       const files = bundle.files || snapshotFs();
       const fileCount = bundle.manifest ? bundle.manifest.fileCount : Object.keys(files).length;
       if (!token) {
