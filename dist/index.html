@@ -135,6 +135,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 .cs-main, .cs-screen { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
 
 </style>
+<link rel="stylesheet" href="vendor/xterm/xterm.css">
 </head>
 <body>
 <div id="appRoot">
@@ -182,6 +183,15 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="vendor/acorn.js"></script>
 <script src="vendor/acorn-loose.js"></script>
 <script src="vendor/js-yaml.min.js"></script>
+<script src="vendor/xterm/xterm.js"></script>
+<script src="vendor/xterm/addon-fit.js"></script>
+<script>
+  // engine.recovery.js defines its own unrelated window.Terminal later in
+  // the load order (a simulated terminal for its repair loop) — capture
+  // xterm's real class under a distinct name before anything can shadow it.
+  window.XtermTerminal = window.Terminal;
+  window.XtermFitAddon = window.FitAddon;
+</script>
 <script src="engine.js"></script>
 <script src="engine-extras.js"></script>
 <script src="engine-pipeline-builder.js"></script>

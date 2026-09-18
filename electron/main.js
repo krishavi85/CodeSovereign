@@ -11,6 +11,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
 const path = require('path');
 const fsp = require('fs/promises');
+const crypto = require('crypto');
 
 const workspace = require('./lib/workspace');
 const proc = require('./lib/proc');
@@ -21,6 +22,7 @@ const trust = require('./lib/trust');
 const hardware = require('./lib/hardware');
 const aihost = require('./lib/aihost');
 const openclawManager = require('./lib/openclaw-manager');
+const terminalManager = require('./lib/terminal-manager');
 const git = require('./lib/git');
 const creds = require('./lib/creds');
 const zip = require('./lib/zip');
@@ -651,6 +653,29 @@ function registerIpc() {
     try { await shell.openExternal(url || ('http://127.0.0.1:' + openclawManager.GATEWAY_PORT + '/')); return { ok: true }; }
     catch (e) { return fail(e); }
   });
+
+  /* ---- integrated terminal: real PTYs (PowerShell/CMD/Git Bash/WSL) over
+     node-pty, entirely behind IPC — the renderer never spawns a process
+     itself. No command sandboxing here by design: once a terminal is open
+     it behaves like a real terminal window; the IPC surface itself
+     (create/input/resize/kill only) is the security boundary. ---- */
+  ipcMain.handle('terminal:listShells', async () => {
+    try { return ok({ shells: await terminalManager.detectShells() }); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('terminal:create', async (event, opts) => {
+    try {
+      if (!terminalManager.ptyAvailable()) return { ok: false, error: 'terminal engine unavailable (node-pty failed to load)' };
+      const id = crypto.randomUUID();
+      const sender = event.sender;
+      const res = await terminalManager.create(id, opts || {},
+        (data) => { if (!sender.isDestroyed()) sender.send('terminal:data', { id, data }); },
+        (info) => { if (!sender.isDestroyed()) sender.send('terminal:exit', Object.assign({ id }, info)); });
+      return res;
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.on('terminal:input', (_e, { id, data } = {}) => { if (id) terminalManager.write(id, data); });
+  ipcMain.on('terminal:resize', (_e, { id, cols, rows } = {}) => { if (id) terminalManager.resize(id, cols, rows); });
+  ipcMain.on('terminal:kill', (_e, { id } = {}) => { if (id) terminalManager.kill(id); });
   // Locked-down HTTP: loopback only, or an LLM API host the CSP already allows.
   ipcMain.handle('ai:request', async (_e, opts) => {
     try {
@@ -724,7 +749,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { proc.killAll(); observer.stop(); });
+  app.on('before-quit', () => { proc.killAll(); observer.stop(); terminalManager.killAll(); });
 }
 
 /* -------- observer integration check: serve a fixture page, crawl it -------- */

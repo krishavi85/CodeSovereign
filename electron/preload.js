@@ -133,5 +133,15 @@ contextBridge.exposeInMainWorld('desktop', {
     restartGateway: () => invoke('openclaw:gatewayRestart'),
     openOnboarding: () => invoke('openclaw:openOnboarding'),
     openDashboard: (url) => invoke('openclaw:openDashboard', url)
+  },
+
+  terminal: {
+    listShells: () => invoke('terminal:listShells'),
+    create: (opts) => invoke('terminal:create', opts),
+    sendInput: (id, data) => ipcRenderer.send('terminal:input', { id, data }),
+    resize: (id, cols, rows) => ipcRenderer.send('terminal:resize', { id, cols, rows }),
+    kill: (id) => ipcRenderer.send('terminal:kill', { id }),
+    onData: (cb) => subscribe('terminal:data', cb),
+    onExit: (cb) => subscribe('terminal:exit', cb)
   }
 });

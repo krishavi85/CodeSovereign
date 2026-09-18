@@ -48,6 +48,10 @@
       "!**/*.map",
       "!dist/_init_*.sql"
     ],
+    "asarUnpack": [
+      "**/node_modules/node-pty/**/*"
+    ],
+    "npmRebuild": false,
     "extraMetadata": {
       "main": "electron/main.js"
     },
@@ -128,6 +132,9 @@
     "@ethereumjs/tx": "^5.4.0",
     "@ethereumjs/util": "^9.1.0",
     "@ethereumjs/vm": "^8.1.1",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "node-pty": "^1.1.0",
     "solc": "^0.8.28"
   }
 }
