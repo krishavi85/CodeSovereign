@@ -110,7 +110,7 @@ const S = {
   agentRunning: false,
   planApproved: false,
   agentStopped: false,
-  plat: { web: true, ios: true, android: false, windows: false, macos: false, linux: false },
+  plat: { web: true, ios: true, android: true, windows: true, macos: true, linux: true },
   tools: { fs: true, term: true, search: true, git: true, web: true, db: true },
   settingsTab: 'agents',
   setToggles: {},
@@ -337,6 +337,7 @@ function saveAgentSession() {
       agentRuns: (S.agentRuns || []).slice(-20),
       agentChat: (S.agentChat || []).slice(-40),
       agentBuilt: !!S.agentBuilt,
+      plat: S.plat || null,
       lastPrompt: S.lastPrompt || '',
       projectId: proj && proj.id || ''
     }));
@@ -373,6 +374,7 @@ function hydrateAgentSession() {
   if (Array.isArray(sess.agentRuns) && sess.agentRuns.length) S.agentRuns = sess.agentRuns;
   if (Array.isArray(sess.agentChat) && sess.agentChat.length) S.agentChat = sess.agentChat;
   if (sess.agentBuilt) S.agentBuilt = true;
+  if (sess.plat && typeof sess.plat === 'object') S.plat = Object.assign({}, S.plat, sess.plat);
   if (sess.lastPrompt && !S.lastPrompt) S.lastPrompt = sess.lastPrompt;
 }
 function promptIsRestart(p) {
@@ -437,6 +439,10 @@ function genApp() {
   S.prompt = '';
   S.agentStopped = false;
   S.screen = 'agent';
+  const restart = promptIsRestart(p);
+  if (!restart && S.agentBuilt) {
+    toast('Follow-up started — editing the current app', '#a78bfa');
+  }
   // If the user came from the Universal Composer, attach the spec
   let ctx = null;
   if (S.univ && S.univ.state) {
@@ -454,6 +460,7 @@ function genApp() {
     };
     S.univSpecUsed = true;
   }
+  ctx = Object.assign({}, ctx || {}, { platforms: (Engine.Packages && Engine.Packages.selected) ? Engine.Packages.selected(p) : Object.keys(S.plat || {}).filter(k => S.plat[k]) });
   runAgentWith(p, ctx);
   renderAll();
 }
@@ -476,8 +483,9 @@ function runAgent() {
     stack: S.univ.state.stack,
     architecture: S.univ.state.architecture,
     taskGraph: S.univ.state.taskGraph,
-    modules: (S.univ.state.classification && S.univ.state.classification.estimatedModules) || 0
-  } : null;
+    modules: (S.univ.state.classification && S.univ.state.classification.estimatedModules) || 0,
+    platforms: (Engine.Packages && Engine.Packages.selected) ? Engine.Packages.selected(p) : Object.keys(S.plat || {}).filter(k => S.plat[k])
+  } : { platforms: (Engine.Packages && Engine.Packages.selected) ? Engine.Packages.selected(p) : Object.keys(S.plat || {}).filter(k => S.plat[k]) };
   runAgentWith(p, ctx);
   renderAll();
 }
@@ -488,6 +496,9 @@ function runAgentWith(prompt, specCtx) {
   _agentTimers = [];
   const restart = promptIsRestart(prompt);
   const followUp = !restart && !!S.agentBuilt;
+  specCtx = Object.assign({}, specCtx || {}, {
+    platforms: (specCtx && specCtx.platforms) || ((Engine.Packages && Engine.Packages.selected) ? Engine.Packages.selected(prompt) : Object.keys(S.plat || {}).filter(k => S.plat[k]))
+  });
   S.lastPrompt = prompt;
   S.agentChat = [...(S.agentChat || []), { role: 'user', text: prompt, at: Date.now() }];
   S.agentRunning = true;
@@ -842,7 +853,7 @@ function renderWelcome() {
         <span>${S.agent} ready · ${Engine.FS.count()} files · ${fmtBytes(Engine.FS.totalSize())}</span>
       </div>
       <h1 style="font-size:36px;font-weight:700;margin:0 0 6px;letter-spacing:-.02em">Prompt Composer<span style="font-size:13px;font-weight:600;color:#22d3ee;background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.3);border-radius:8px;padding:3px 9px;margin-left:10px;vertical-align:middle;letter-spacing:0">Stage 1 of 19</span></h1>
-      <p style="font-size:16px;color:#8b93a7;margin:0 0 28px">Describe your application. We&rsquo;ll normalize, classify, plan, architect, build, test, and ship it — with evidence.</p>
+      <p style="font-size:16px;color:#8b93a7;margin:0 0 28px">Describe your application. Keep prompting after the first run — each message extends the same app, and Target chips wrap it into Windows, macOS, Linux, iOS, and Android packages.</p>
 
       <div style="border:1px solid rgba(109,93,252,.35);border-radius:16px;background:linear-gradient(180deg,rgba(124,91,214,.08),rgba(13,17,28,.6));padding:20px;margin-bottom:14px;box-shadow:0 0 0 4px rgba(109,93,252,.06),0 20px 60px -30px rgba(109,93,252,.6)">
         <textarea id="welcomePrompt" placeholder="Describe the app you want to build — e.g. &ldquo;A local-first note app with markdown editing, tag search, and offline sync.&rdquo; Press Enter to generate." style="width:100%;min-height:70px;font:400 15px Inter,sans-serif;color:#e6e9f2;line-height:1.5;background:transparent;border:none;outline:none;resize:none;padding:0">${esc(S.prompt)}</textarea>
@@ -881,7 +892,15 @@ function bindWelcome() {
   if (btn) btn.onclick = genApp;
   const ab = document.getElementById('welcomeAgent');
   if (ab) ab.onclick = cycleAgent;
-  document.querySelectorAll('[data-plat]').forEach(el => el.onclick = () => { S.plat[el.dataset.plat] = !S.plat[el.dataset.plat]; renderAll(); });
+  document.querySelectorAll('[data-plat]').forEach(el => el.onclick = () => {
+    const k = el.dataset.plat;
+    if (!Object.prototype.hasOwnProperty.call(S.plat, k)) return;
+    S.plat[k] = !S.plat[k];
+    try {
+      if (S.agentBuilt && Engine.Packages && Engine.Packages.sync) Engine.Packages.sync();
+    } catch (_) {}
+    renderAll();
+  });
   document.querySelectorAll('[data-try]').forEach(el => el.onclick = () => { S.prompt = el.dataset.try; renderAll(); });
   const ucBtn = document.getElementById('openUniversalComposer');
   if (ucBtn) ucBtn.onclick = () => { S.screen = 'universal'; renderAll(); };
