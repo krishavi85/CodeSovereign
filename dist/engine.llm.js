@@ -1829,6 +1829,16 @@
         let consecutiveFailedTools = 0;
         const STUCK_NUDGE_AT = 2;
         const STUCK_ABORT_AT = 6;
+        // A second, independent guard: STUCK_ABORT_AT bounds *round count*,
+        // but a round's own wall-clock time isn't bounded by that — a
+        // follow-up edit pulls in full file contents (up to ~6 files) on
+        // top of the base system prompt, and on modest hardware prompt
+        // processing alone can run for minutes per round. Round-counting
+        // alone could still mean 20-30+ minutes of apparent silence before
+        // ever giving up. Cap total wall-clock time with no progress
+        // instead, so a too-slow setup fails honestly in a few minutes.
+        const runStartedAt = Date.now();
+        const TIME_BUDGET_MS = 360000;
         steps.push({
           kind: "route",
           text: "Brain: " + intent.mode + " via " + intent.engines.join(" + ") + " (" + intent.reason + ")"
@@ -1879,6 +1889,17 @@
         if (brainBlk) extraUser = extraUser + "\n\n" + brainBlk;
         const cap = (window.Engine.Loop && window.Engine.Loop.SAFETY_CAP) || SAFETY_CAP;
         for (let round = 1; round <= cap; round++) {
+          if (round > 1 && !wrote && (Date.now() - runStartedAt) > TIME_BUDGET_MS) {
+            steps.push({
+              kind: "error",
+              text: "Stopped after " + Math.round((Date.now() - runStartedAt) / 1000) + "s with nothing written yet — " +
+                (cfg.baseUrl || "the connected model") + " is too slow for this prompt on this machine (each round's " +
+                "prompt processing alone can take minutes on modest hardware). Try a smaller/faster model, a cloud " +
+                "provider, or a simpler request."
+            });
+            onStep && onStep(steps[steps.length - 1]);
+            return steps;
+          }
           steps.push({
             kind: "plan",
             text: round === 1

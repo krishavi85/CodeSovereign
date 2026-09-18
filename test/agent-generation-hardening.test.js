@@ -58,7 +58,7 @@ function load(extraWin) {
   run('engine.js');
   run('engine.llm.js');
   run('engine.loop.js');
-  return { win, store };
+  return { win, store, ctx };
 }
 
 module.exports = async function (t) {
@@ -129,5 +129,41 @@ module.exports = async function (t) {
     t.ok('the raw "Failed to fetch" string is not shown verbatim to the user', errText.indexOf('Failed to fetch') === -1);
     t.ok('the message explains what to check instead', /couldn.t reach|running|busy/i.test(errText));
     t.ok('the message names where it tried to connect', errText.indexOf('127.0.0.1:11434') >= 0);
+  }
+
+  /* ---- wall-clock time budget: a follow-up edit's prompt is much bigger
+     (up to ~6 full files of context) than a fresh generation's, and on
+     modest hardware prompt processing alone can run for minutes per
+     round. Round-count alone doesn't bound wall time, so a run that keeps
+     "succeeding" at the network level but never writes anything must
+     still give up within a few minutes, not the full 48-round cap. ---- */
+  {
+    const { win, ctx } = load();
+    win.Engine.Proj.create('test', 'saas-dashboard');
+    win.Engine.LLM.setConfig({
+      enabled: true, providerId: 'ollama', model: 'llama3.1:8b',
+      baseUrl: 'http://127.0.0.1:11434', apiKey: 'ollama'
+    });
+    // Every round "succeeds" at the network level and is a recognized
+    // tool call (think - a real, always-ok, side-effect-free tool), but
+    // never once writes a file — nothing but wasted rounds.
+    win.fetch = async () => ({
+      ok: true, status: 200,
+      text: async () => JSON.stringify({ choices: [{ message: { content: JSON.stringify({ think: 'still thinking', tool: 'think', args: {} }) } }] })
+    });
+    // Fast-forward the clock 90s on every read so the budget trips after
+    // a handful of rounds instead of requiring a real 6-minute wait. Must
+    // be injected from inside the vm context - Date there is not the same
+    // binding as the outer Node process's Date.
+    vm.runInContext(
+      'var __realNow = Date.now(); var __fakeNow = __realNow; Date.now = function () { __fakeNow += 90000; return __fakeNow; };',
+      ctx
+    );
+    const steps = await win.Engine.Agent.run('build a counter app');
+    const errText = steps.filter((s) => s.kind === 'error').map((s) => s.text).join(' | ');
+    t.ok('a run that never writes anything stops with an honest error', steps.some((s) => s.kind === 'error'));
+    t.ok('...specifically citing the time budget, not a round-count cap', /Stopped after \d+s with nothing written/.test(errText));
+    t.ok('...names where it was trying to reach', errText.indexOf('127.0.0.1:11434') >= 0);
+    t.ok('it did not burn through the full 48-round safety cap first', steps.filter((s) => s.kind === 'plan').length < 20);
   }
 };
