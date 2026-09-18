@@ -32,5 +32,6 @@ module.exports = async function (t) {
   t.ok('tools/call echoes arguments', /"n":7/.test(echoed) && !(call && call.error));
   mcp.stop(started.id);
   proc.killAll();
-  fs.rmSync(tmp, { recursive: true, force: true });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
 };

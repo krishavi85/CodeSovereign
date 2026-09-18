@@ -140,7 +140,7 @@
       + '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
       + '<input id="workVercelToken" type="password" placeholder="VERCEL_TOKEN" style="flex:1;min-width:160px;padding:6px 10px;border-radius:8px;border:1px solid var(--line);background:transparent;color:inherit;font-size:12px">'
       + '<button class="btn ghost" data-work-action="vercel-token" style="padding:4px 10px;font-size:11px">Save token</button>'
-      + '<button class="btn ghost" data-work-action="vercel" style="padding:4px 10px;font-size:11px">Publish to Vercel</button>'
+      + '<button class="btn ghost" data-work-action="publish-vercel" style="padding:4px 10px;font-size:11px">Publish to Vercel</button>'
       + '</div>'
       + '<div id="workGreenOut" style="font-size:11px;color:var(--muted);margin-top:8px">'
       + (last ? esc((last.name || 'app') + (last.repo ? ' · repo ' + last.repo.name : ' · no repository yet')) : 'No greenfield app yet')
@@ -289,7 +289,7 @@
         const r = E.Publish.setToken(v);
         setOut('workGreenOut', r.ok ? 'VERCEL_TOKEN saved in credential broker' : 'paste a VERCEL_TOKEN');
         toast(r.ok ? 'VERCEL_TOKEN saved' : 'Token empty', r.ok ? '#34d399' : '#f59e0b');
-      } else if (action === 'vercel') {
+      } else if (action === 'publish-vercel') {
         const r = await E.Publish.vercel();
         setOut('workGreenOut', r.ok ? ('Vercel · ' + (r.url || r.id)) : (r.needsToken ? 'needs VERCEL_TOKEN' : (r.error || 'deploy failed')));
         toast(r.ok ? 'Published to Vercel' : (r.needsToken ? 'Add VERCEL_TOKEN' : 'Vercel live call failed'), r.ok ? '#34d399' : '#f59e0b');

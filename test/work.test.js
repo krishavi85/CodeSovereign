@@ -54,7 +54,7 @@ module.exports = async function (t) {
   const ui = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.work.js'), 'utf8');
   t.ok('no new work-agent nav page', !/S\.screen\s*=\s*['"]work['"]/.test(ui));
   t.ok('injects into existing screens', /renderSettings/.test(ui) && /renderAgent/.test(ui) && /renderFactory/.test(ui) && /renderPipelines/.test(ui) && /renderRecovery/.test(ui));
-  t.ok('factory card has VERCEL_TOKEN field', /VERCEL_TOKEN/.test(ui) && /vercel-token/.test(ui));
+  t.ok('factory card has VERCEL_TOKEN field', /VERCEL_TOKEN/.test(ui) && /vercel-token/.test(ui) && /publish-vercel/.test(ui));
   t.ok('settings card has MCP URL input', /workMcpUrl/.test(ui) && /workMcpOAuth/.test(ui));
   t.ok('pipelines card has GitHub sync', /github-sync/.test(ui));
   t.ok('MCP connect does not use a fake URL', !/mcp\.example\.invalid/.test(ui));
