@@ -355,7 +355,11 @@ module.exports = async function (t) {
   t.ok('needsAppBeforeDone blocks generate done without index.html', LLM.needsAppBeforeDone({ mode: 'generate' }, false) === true);
   t.ok('needsAppBeforeDone allows generate done after index.html', LLM.needsAppBeforeDone({ mode: 'generate' }, true) === false);
   t.ok('needsAppBeforeDone allows explore done without writes', LLM.needsAppBeforeDone({ mode: 'explore' }, false) === false);
-  t.ok('mustBuildBlock names leftover dashboard as not the product', /leftover Pulse\/SaaS dashboard is NOT the product/.test(LLM.mustBuildBlock()));
+  t.ok('mustBuildBlock names leftover dashboard as not the product', /leftover Pulse\/SaaS dashboard/.test(LLM.mustBuildBlock()) && /NOT the product/.test(LLM.mustBuildBlock()));
+
+  win.S = { agentRuns: ['create an advanced notepad app'], agentBuilt: true, agentChat: [
+    { role: 'user', text: 'create an advanced notepad app' }
+  ] };
   t.ok('brain treats a follow-up as edit, not a full rebuild', LLM.classifyIntent('make the sidebar purple').mode === 'edit');
   t.ok('edit intent skips the dependency engine', LLM.classifyIntent('make the sidebar purple').engines.indexOf('deps') < 0);
   t.ok('fix prompt on an existing app is repair', LLM.classifyIntent('fix the timeout error').mode === 'repair');
