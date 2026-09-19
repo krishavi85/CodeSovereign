@@ -257,9 +257,9 @@
         "stack: " + JSON.stringify(stack) + "\n" +
         (arch ? "architecture: " + JSON.stringify(arch) + "\n" : "")
       : "";
-    const stance = followUp
-      ? "You are editing an EXISTING app in the workspace. Preserve product identity, name, architecture, and working features. Apply the user's latest request. Return complete updated files — do not switch to a different product."
-      : "Replace any leftover files from a previous project. Do not keep starter-template copy. The leftover Pulse/SaaS dashboard is NOT the product. Do not call tool done until you have written /index.html plus CSS and JS for this NEW app.";
+      const stance = followUp
+      ? "You are in a CONTINUOUS session on an EXISTING app. Each message extends the same product — like a long Cursor chat. Preserve identity and working features. Apply the latest request. Return complete updated files. Do not switch products."
+      : "Replace any leftover files from a previous project. Do not keep starter-template copy. The leftover Pulse/SaaS dashboard is NOT the product. Do not call tool done until you have written /index.html plus CSS and JS for this NEW app. After that, the user will keep prompting to grow it.";
     return [
       "You are CodeSovereign's coding agent — an expert product engineer, not a tutorial generator.",
       "You write production-quality, fully working source files. No placeholders, no TODOs, no pseudo-code, no 'Simple Notepad'.",
@@ -282,7 +282,7 @@
       "- Escape JSON newlines as \\n and quotes as \\\".",
       "- Always include /index.html plus /styles/*.css and /scripts/*.js (or equivalent).",
       "- index.html must reference styles and scripts via /styles/... and /scripts/... paths.",
-      "- Use plain HTML/CSS/JS unless the project context requires a framework.",
+      "- Use plain HTML/CSS/JS unless the project context requires a framework. CodeSovereign wraps that UI into Windows/macOS/Linux Electron installers, Android APK projects, and iOS Xcode projects.",
       "- All file paths start with /. Keep paths short and ASCII.",
       "- Every file must be complete and runnable. Visual quality matters as much as behavior.",
       "- run_command only runs workspace package jobs (install, test, build, lint, typecheck). It cannot spawn arbitrary node/python/git argv.",
@@ -792,6 +792,9 @@
         reason: prior ? "repair-request" : "repair-without-app",
         remotes: remotes
       };
+    }
+    if (/\b(add (?:ios|android|windows|macos|linux|desktop|mobile)|package for|build (?:the )?(?:apk|ipa|exe|dmg)|windows installer|play store|app store)\b/i.test(p) && (isFollowUp(p) || hasPriorTurns(p))) {
+      return { mode: "edit", engines: ["repo", "runtime"], reason: "add-platform", remotes: remotes };
     }
     if (isFollowUp(p)) {
       return { mode: "edit", engines: ["repo", "runtime"], reason: "follow-up-edit", remotes: remotes };
@@ -1635,6 +1638,9 @@
   // ----- Patch Engine.Agent.run: iterate until quality, never template-fallback -----
   function specContext() {
     try {
+      const plats = (window.Engine && Engine.Packages && Engine.Packages.selected)
+        ? Engine.Packages.selected()
+        : (window.S && S.plat ? Object.keys(S.plat).filter(function (k) { return S.plat[k]; }) : []);
       if (window.S && window.S.univ && window.S.univ.state) {
         const bs = window.S.univ.state;
         return {
@@ -1644,9 +1650,11 @@
           stack: bs.stack,
           architecture: bs.architecture,
           taskGraph: bs.taskGraph,
-          modules: (bs.classification && bs.classification.estimatedModules) || 0
+          modules: (bs.classification && bs.classification.estimatedModules) || 0,
+          platforms: plats
         };
       }
+      if (plats && plats.length) return { platforms: plats };
     } catch (_) {}
     return null;
   }
@@ -1746,6 +1754,9 @@
           ? window.Engine.ProjectBrain.contextBlock()
           : "";
         if (brainBlk) extraUser = extraUser + "\n\n" + brainBlk;
+        if (window.Engine.Packages && window.Engine.Packages.platformBlock) {
+          extraUser = (extraUser ? extraUser + "\n\n" : "") + window.Engine.Packages.platformBlock(prompt);
+        }
         if (needsAppBeforeDone(intent, false)) {
           extraUser = (extraUser ? extraUser + "\n\n" : "") + mustBuildBlock();
         }
