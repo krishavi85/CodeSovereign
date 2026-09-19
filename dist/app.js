@@ -395,6 +395,76 @@ function runWroteFiles(steps) {
     return false;
   });
 }
+function leftoverStarterHtml(html) {
+  return /◆ Pulse|class="brand">◆ Pulse|<title>SaaS Dashboard<\/title>/i.test(String(html || ''));
+}
+function beginIdeBuild(prompt, followUp, restart) {
+  S.screen = 'ide';
+  S.idePanel = 'workflow';
+  if (restart || !followUp) {
+    let html = '';
+    try { html = Engine.FS.read('/index.html') || ''; } catch (_) {}
+    if (restart || leftoverStarterHtml(html)) {
+      try { Engine.FS.clear(); } catch (_) {}
+      S.ideFile = null;
+      S.ideBuffer = '';
+      S.ideDirty = false;
+      if (restart) S.agentBuilt = false;
+    }
+  }
+  if (!Engine.Proj.current()) {
+    const name = String(prompt || 'New project')
+      .split(/[.\n!?]/)[0]
+      .replace(/^(build|create|make|i want)\s+/i, '')
+      .trim()
+      .slice(0, 48) || 'New project';
+    Engine.Proj.create(name, 'blank');
+  }
+}
+function watchBuildStep(step) {
+  if (!step) return;
+  S.screen = 'ide';
+  const paths = [];
+  if (step.kind === 'write' && step.path) paths.push(step.path);
+  if (step.result && Array.isArray(step.result.written)) {
+    step.result.written.forEach(function (p) {
+      const path = typeof p === 'string' ? p : (p && p.path);
+      if (path) paths.push(path);
+    });
+  }
+  if (!paths.length) return;
+  const path = paths[paths.length - 1];
+  S.ideFile = path;
+  S.ideDirty = false;
+  try { S.ideBuffer = Engine.FS.read(path) || ''; } catch (_) { S.ideBuffer = ''; }
+  const wroteIndex = paths.some(function (p) { return /index\.html$/i.test(p); });
+  if (wroteIndex) {
+    try { if (Engine.Computer && Engine.Computer.launch) Engine.Computer.launch('preview'); } catch (_) {}
+    try { if (Engine.LivePreview && Engine.LivePreview.open) Engine.LivePreview.open(); } catch (_) {}
+  }
+}
+function refreshLivePreview() {
+  const html = Engine.Preview.build();
+  if (!html) return false;
+  try { if (Engine.Computer && Engine.Computer.launch) Engine.Computer.launch('preview'); } catch (_) {}
+  let frames = [];
+  try {
+    const a = document.querySelector('[data-idepreview]');
+    const b = document.querySelector('[data-idepreviewpanel]');
+    if (a) frames.push(a);
+    if (b) frames.push(b);
+  } catch (_) { frames = []; }
+  frames.forEach(function (f) {
+    try {
+      if (Engine.Preview.applyFrame) Engine.Preview.applyFrame(f, html);
+      else f.srcdoc = html;
+    } catch (_) {}
+  });
+  if (!frames.length && S.screen !== 'ide') {
+    try { runPreview(); } catch (_) {}
+  }
+  return true;
+}
 function flushIdeBuffer() {
   if (!S.ideFile || !S.ideDirty) return false;
   try { Engine.FS.write(S.ideFile, S.ideBuffer); } catch (_) { return false; }
@@ -433,15 +503,17 @@ window.resetAllData = resetAllData;
 function genApp() {
   const p = S.prompt.trim();
   if (!p) { toast('Describe the app first — or pick a “Try” prompt', '#f59e0b'); return; }
-  if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
   S.lastPrompt = p;
   S.agentRuns = [...S.agentRuns, p];
   S.prompt = '';
   S.agentStopped = false;
-  S.screen = 'agent';
   const restart = promptIsRestart(p);
+  const followUp = !restart && !!S.agentBuilt;
+  beginIdeBuild(p, followUp, restart);
   if (!restart && S.agentBuilt) {
-    toast('Follow-up started — editing the current app', '#a78bfa');
+    toast('Follow-up started — watch the IDE while this app updates', '#a78bfa');
+  } else {
+    toast('Building in the IDE — files, code, and live UI update as they are written', '#a78bfa');
   }
   // If the user came from the Universal Composer, attach the spec
   let ctx = null;
@@ -468,13 +540,14 @@ function genApp() {
 function runAgent() {
   const p = S.agentPrompt.trim();
   if (!p) { toast(S.agentBuilt ? 'Type a follow-up for this app first' : 'Describe what you want to build first', '#f59e0b'); return; }
-  if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
   S.lastPrompt = p;
   S.agentRuns = [...S.agentRuns, p];
   S.agentPrompt = '';
   S.agentStopped = false;
   const restart = promptIsRestart(p);
-  toast(!restart && S.agentBuilt ? 'Follow-up started — editing the current app' : 'Run started — Planner is analyzing the request', '#a78bfa');
+  const followUp = !restart && !!S.agentBuilt;
+  beginIdeBuild(p, followUp, restart);
+  toast(followUp ? 'Follow-up started — watch the IDE while this app updates' : 'Building in the IDE — files, code, and live UI update as they are written', '#a78bfa');
   // Also include any active spec from the Universal composer
   const ctx = (S.univ && S.univ.state) ? {
     source: 'universal-composer',
@@ -527,6 +600,7 @@ function runAgentWith(prompt, specCtx) {
     if (window.TabBus) window.TabBus.broadcast('agent:run', { prompt: prompt, followUp: followUp });
   } catch (_) {}
   // hook for live updates
+  beginIdeBuild(prompt, followUp, restart);
   Engine.Agent.run(prompt, step => {
     S.agentSteps = [...S.agentSteps, step].slice(-80);
     // when the planner publishes the file plan, feed it into the build pipeline
@@ -537,6 +611,7 @@ function runAgentWith(prompt, specCtx) {
     if (step && step.kind === 'write' && step.path) {
       try { markArtifactWritten(step.path); } catch (_) {}
     }
+    try { watchBuildStep(step); } catch (_) {}
     renderAll();
   }).then(() => {
     // Final sync so the Build tab reflects exactly what the run produced
@@ -556,14 +631,14 @@ function runAgentWith(prompt, specCtx) {
         prompt: prompt
       });
     } catch (_) {}
-    // Stay on Agent so the user can keep prompting the same app.
+    // Stay in the IDE so files, code, and the live UI stay in view. Keep prompting there.
     try {
-      S.screen = 'agent';
+      S.screen = 'ide';
       if (wroteThisRun) {
         toast(followUp
-          ? 'App updated — send another prompt or Open IDE'
-          : 'Files created — send a follow-up or Open IDE', '#34d399');
-        try { runPreview(); } catch (_) {}
+          ? 'App updated — keep prompting in the IDE'
+          : 'Files created — keep prompting in the IDE', '#34d399');
+        try { refreshLivePreview(); } catch (_) {}
       } else {
         toast((last && last.kind === 'error' && last.text)
           ? last.text
@@ -594,6 +669,9 @@ function runAgentWith(prompt, specCtx) {
 window.runAgent = runAgent;
 window.runAgentWith = runAgentWith;
 window.genApp = genApp;
+window.beginIdeBuild = beginIdeBuild;
+window.watchBuildStep = watchBuildStep;
+window.refreshLivePreview = refreshLivePreview;
 
 function approvePlan() {
   if (S.planApproved) { toast('Plan already approved', '#f59e0b'); return; }
@@ -853,7 +931,7 @@ function renderWelcome() {
         <span>${S.agent} ready · ${Engine.FS.count()} files · ${fmtBytes(Engine.FS.totalSize())}</span>
       </div>
       <h1 style="font-size:36px;font-weight:700;margin:0 0 6px;letter-spacing:-.02em">Prompt Composer<span style="font-size:13px;font-weight:600;color:#22d3ee;background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.3);border-radius:8px;padding:3px 9px;margin-left:10px;vertical-align:middle;letter-spacing:0">Stage 1 of 19</span></h1>
-      <p style="font-size:16px;color:#8b93a7;margin:0 0 28px">Describe your application. Keep prompting after the first run — each message extends the same app, and Target chips wrap it into Windows, macOS, Linux, iOS, and Android packages.</p>
+      <p style="font-size:16px;color:#8b93a7;margin:0 0 28px">Describe your application. Keep prompting after the first run — each message extends the same app. Generate App opens the IDE so you can watch files, code, and the live UI while Computer Use drives the preview. Target chips wrap it into Windows, macOS, Linux, iOS, and Android packages.</p>
 
       <div style="border:1px solid rgba(109,93,252,.35);border-radius:16px;background:linear-gradient(180deg,rgba(124,91,214,.08),rgba(13,17,28,.6));padding:20px;margin-bottom:14px;box-shadow:0 0 0 4px rgba(109,93,252,.06),0 20px 60px -30px rgba(109,93,252,.6)">
         <textarea id="welcomePrompt" placeholder="Describe the app you want to build — e.g. &ldquo;A local-first note app with markdown editing, tag search, and offline sync.&rdquo; Press Enter to generate." style="width:100%;min-height:70px;font:400 15px Inter,sans-serif;color:#e6e9f2;line-height:1.5;background:transparent;border:none;outline:none;resize:none;padding:0">${esc(S.prompt)}</textarea>
@@ -1397,7 +1475,7 @@ function renderIDE() {
       </div>
       <div style="background:#0b0f1a;padding:12px 14px;overflow:auto;display:flex;flex-direction:column">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#7b859c">${S.agent} ACTIVITY</span><span style="font-size:10px;font-weight:600;color:#a78bfa;background:rgba(124,91,214,.16);padding:2px 8px;border-radius:6px">${S.agentRunning?'Working':'Idle'}</span></div>
-        ${S.agentSteps.length === 0 ? '<div style="font-size:12px;color:#7b859c">No agent activity yet — run an agent from the Agent screen.</div>' :
+        ${S.agentSteps.length === 0 ? '<div style="font-size:12px;color:#7b859c">Prompt from Welcome or below — files, code, and the live UI update here as the app is built.</div>' :
           S.agentSteps.slice(-8).map(s => {
             const color = s.kind==='done' ? '#34d399' : s.kind==='write' ? '#60a5fa' : s.kind==='validate-result' ? '#a78bfa' : '#22d3ee';
             return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;color:${color=='#34d399'?'#34d399':'#c7cddb'}"><span style="width:14px;height:14px;display:inline-flex">${I.checkc}</span><span style="font-size:12px">${esc(s.kind==='write'?s.path:s.text || s.kind)}</span></div>`;
@@ -1461,7 +1539,7 @@ function renderIDE() {
         <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;border-bottom:1px solid rgba(255,255,255,.06);flex:none;background:#0b0f1a">
           <div style="display:flex;align-items:center;gap:8px">
             <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#34d399;box-shadow:0 0 6px #34d399;animation:csPulse 1.6s infinite"></span>
-            <span style="font-size:11px;font-weight:600;color:#34d399;letter-spacing:.05em">LIVE</span>
+            <span style="font-size:11px;font-weight:600;color:#34d399;letter-spacing:.05em">${S.agentRunning ? 'COMPUTER IN USE' : 'LIVE'}</span>
             <span style="font-size:11.5px;color:#8b93a7">workspace preview <span style="color:#a9b0ff;font-family:'JetBrains Mono',monospace">preview://index.html</span></span>
           </div>
           <div style="display:flex;align-items:center;gap:6px">
@@ -1545,7 +1623,7 @@ function renderIDE() {
 
     <div style="width:436px;flex:none;border-left:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;min-height:0;background:#0a0e17">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 14px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">
-        <span style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#7b859c">LIVE PREVIEW</span>
+        <span style="font-size:11px;font-weight:700;letter-spacing:.05em;color:${S.agentRunning ? '#34d399' : '#7b859c'}">${S.agentRunning ? 'COMPUTER IN USE' : 'LIVE PREVIEW'}</span>
         <div style="display:flex;align-items:center;gap:4px">
           ${['desktop','tablet','mobile'].map(d => {
             const act = (S.ideDevice||'desktop')===d;

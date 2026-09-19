@@ -115,6 +115,7 @@
   // ---------- Project Templates ----------
   // Each template returns an array of [path, content] pairs to seed the FS
   const TEMPLATES = {
+    'blank': function(){ return []; },
     'saas-dashboard': function(){
       return [
         ['/index.html', `<!doctype html>
