@@ -13,9 +13,10 @@
      browser snapshot, ask the user without stopping). There is no
      product limit on tool calls; SAFETY_CAP is only a runaway guard.
      Local models that cannot emit a full JSON plan are asked for
-     files one at a time. When the real LLM is enabled it is NOT
-     replaced by the template synthesizer — a failed call surfaces
-     the error so the user can keep prompting.
+     files one at a time. Follow-up edits never overwrite the app
+     with the template synthesizer. A first generate that cannot
+     reach the model still writes files from the prompt so the
+     IDE is not left on leftover Pulse.
 
    - Discovers and persists /v1/models so any model loaded in
      LM Studio (or another OpenAI-compatible server) stays in the
@@ -663,6 +664,22 @@
 
   function mustBuildBlock() {
     return "MUST BUILD THIS NEW APP NOW. The leftover Pulse/SaaS dashboard in the workspace is NOT the product. Emit a file plan with /index.html, /styles/*.css, and /scripts/*.js for the user's request. Do not call tool done until those files are written.";
+  }
+
+  function isPulseStarter(html) {
+    return /◆ Pulse|class="brand">◆ Pulse|<title>SaaS Dashboard<\/title>/i.test(String(html || ""));
+  }
+
+  function wipeLeftoverStarter() {
+    const FS = window.Engine && window.Engine.FS;
+    if (!FS || !FS.read) return false;
+    let html = "";
+    try { html = FS.read("/index.html") || ""; } catch (_) { return false; }
+    if (!isPulseStarter(html)) return false;
+    ["/index.html", "/styles/main.css", "/scripts/app.js", "/README.md", "/package.json"].forEach(function (p) {
+      try { if (FS.exists && FS.exists(p)) FS.remove(p); } catch (_) {}
+    });
+    return true;
   }
 
   function isFollowUp(prompt) {
@@ -1719,6 +1736,9 @@
           });
           onStep && onStep(steps[steps.length - 1]);
         }
+        if (!followUp && needsAppBeforeDone(intent, false)) {
+          try { wipeLeftoverStarter(); } catch (_) {}
+        }
         const includeContents = followUp || intent.mode === "edit" || intent.mode === "repair" || intent.mode === "explore" || intent.mode === "deps";
         const explore = relevantContext(prompt, { followUp: followUp, includeContents: includeContents });
         steps.push({
@@ -1868,6 +1888,13 @@
           (plan.targets || []).forEach(function (t) {
             if (t && isIndexPath(t.path)) wroteIndex = true;
           });
+          if (wroteIndex) {
+            try {
+              if (window.Engine.Computer && window.Engine.Computer.launch) {
+                window.Engine.Computer.launch("preview");
+              }
+            } catch (_) {}
+          }
           steps.push({ kind: "validate", text: "Runtime observe — validators, mocks, live preview…" });
           onStep && onStep(steps[steps.length - 1]);
           const files = (plan.targets || []).map(function (t) {
@@ -1900,6 +1927,26 @@
             "\n\n" + formatRag(intent, followUp ? scanRepo() : null, engines.deps, observation, { followUp: followUp });
         }
         if (!wrote) {
+          if (needsAppBeforeDone(intent, wroteIndex) && originalRun) {
+            steps.push({
+              kind: "plan",
+              text: "Model unavailable — writing files from your prompt so the app still gets created."
+            });
+            onStep && onStep(steps[steps.length - 1]);
+            try {
+              await originalRun(prompt, function (s) {
+                steps.push(s);
+                onStep && onStep(s);
+              });
+            } catch (synErr) {
+              steps.push({
+                kind: "error",
+                text: "Could not create the app: " + (synErr && synErr.message || synErr)
+              });
+              onStep && onStep(steps[steps.length - 1]);
+            }
+            return steps;
+          }
           steps.push({
             kind: "error",
             text: "LLM failed: " + (lastErr && lastErr.message || lastErr || "no usable file plan") +
@@ -1989,6 +2036,8 @@
     looksLikeRestart,
     needsAppBeforeDone,
     mustBuildBlock,
+    isPulseStarter,
+    wipeLeftoverStarter,
     conversationHistory,
     snapshotWorkspace,
     rememberModels,

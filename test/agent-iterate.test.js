@@ -136,7 +136,8 @@ module.exports = async function (t) {
   t.ok('preview epoch invalidates stale srcdoc', appSrc.includes('_previewEpoch'));
   t.ok('IDE chrome does not pretend a Vite 5173 server is running', !/http:\/\/localhost:5173/.test(appSrc));
   t.ok('shared UI state is published as window.S', appSrc.includes('window.S = S'));
-  t.ok('Agent stay on the Agent screen after a run so follow-ups are possible', /S\.screen = 'agent'/.test(appSrc) && appSrc.includes('send a follow-up'));
+  t.ok('Generate App opens the IDE so files, code, and live UI are visible', appSrc.includes('function beginIdeBuild') && appSrc.includes("S.screen = 'ide'"));
+  t.ok('writes stream into the open IDE editor', appSrc.includes('function watchBuildStep') && /S\.ideFile = path/.test(appSrc));
   t.ok('Agent prompt invites follow-ups on the same app', appSrc.includes('Ask a follow-up'));
   t.ok('IDE has a follow-up composer on the same project', appSrc.includes('ideFollowUpInput'));
   t.ok('Agent session persists across screens', appSrc.includes('cs.agent.session.v1'));
@@ -145,7 +146,7 @@ module.exports = async function (t) {
   t.ok('runAgentWith treats start-over as a new run, not a follow-up', appSrc.includes('promptIsRestart') && appSrc.includes('followUp = !restart'));
   t.ok('runAgentWith only treats a built app as a follow-up', appSrc.includes('followUp = !restart && !!S.agentBuilt'));
   t.ok('agentBuilt is set from this-run writes, not leftover index.html', appSrc.includes('function runWroteFiles') && appSrc.includes('if (wroteThisRun) S.agentBuilt = true'));
-  t.ok('successful generate opens Live Preview', /if \(wroteThisRun\)[\s\S]{0,400}runPreview\(\)/.test(appSrc));
+  t.ok('successful generate refreshes live preview in the IDE', /if \(wroteThisRun\)[\s\S]{0,500}refreshLivePreview\(\)/.test(appSrc));
   t.ok('failed generate does not toast Files created from leftover HTML', /No files written — leftover starter is not your app/.test(appSrc));
   t.ok('IDE follow-up writes unsaved editor buffer before Agent.run', appSrc.includes('function flushIdeBuffer') && appSrc.includes('function sendIdeFollowUp'));
   t.ok('Clear workspace resets the agent session', /function clearWorkspace[\s\S]{0,400}resetAgentSession/.test(appSrc));
@@ -296,20 +297,17 @@ module.exports = async function (t) {
   t.ok('listModels keeps previously typed custom ids', LLM.cachedModels('lmstudio', 'http://127.0.0.1:1234').indexOf('custom-anything-i-typed') >= 0);
   t.ok('model cache is stored under cs.llm.models.v1', !!store['cs.llm.models.v1']);
 
-  const beforeFail = win.Engine.FS.read('/index.html') || '';
   let posts = 0;
   win.fetch = async function () {
     posts++;
     throw new Error('ECONNREFUSED');
   };
   const failSteps = await win.Engine.Agent.run('create a notepad app');
-  t.ok('failed LLM does not fall back to the template synthesizer', !failSteps.some(function (s) {
-    return /falling back to local synthesizer/i.test(s.text || '');
+  t.ok('failed LLM generate still writes the app from the prompt', failSteps.some(function (s) {
+    return /writing files from your prompt/i.test(s.text || '');
   }));
-  t.ok('failed LLM tells the user to keep prompting', failSteps.some(function (s) {
-    return s.kind === 'error' && /synthesizer was not used/i.test(s.text || '');
-  }));
-  t.ok('failed LLM does not overwrite the workspace with a template notepad', (win.Engine.FS.read('/index.html') || '') === beforeFail);
+  t.ok('failed LLM generate produces real files', /index\.html/.test((win.Engine.FS.read('/index.html') && 'index.html') || '') && (win.Engine.FS.read('/index.html') || '').length > 40);
+  t.ok('failed LLM generate replaces leftover Pulse', !/◆ Pulse/.test(win.Engine.FS.read('/index.html') || ''));
   t.equal('failed LLM does not sequential-retry a down server', posts, 1);
   t.ok('connection errors are not described as a JSON-plan miss', !failSteps.some(function (s) {
     return /JSON plan failed/i.test(s.text || '');
@@ -414,6 +412,19 @@ module.exports = async function (t) {
   t.ok('follow-up system prompt is edit-mode', /EXISTING app/.test(((followBodies[0].messages || []).find(function (m) { return m.role === 'system'; }) || {}).content || ''));
   t.ok('follow-up keeps Nova Notes instead of rebuilding a new product', /Nova Notes/i.test(win.Engine.FS.read('/index.html') || ''));
   t.ok('follow-up applies the requested sidebar change', /#6d28d9/.test(win.Engine.FS.read('/styles/app.css') || '') || /#6d28d9/.test(win.Engine.FS.read('/index.html') || ''));
+
+  const keepHtml = win.Engine.FS.read('/index.html') || '';
+  let followFailPosts = 0;
+  win.fetch = async function () {
+    followFailPosts++;
+    throw new Error('ECONNREFUSED');
+  };
+  const followFail = await win.Engine.Agent.run('make the sidebar orange');
+  t.ok('follow-up with a down model does not replace the app', (win.Engine.FS.read('/index.html') || '') === keepHtml);
+  t.ok('follow-up with a down model does not use the synthesizer', followFail.some(function (s) {
+    return s.kind === 'error' && /synthesizer was not used/i.test(s.text || '');
+  }));
+  t.equal('follow-up down model does not sequential-retry', followFailPosts, 1);
 
   win.S = { agentRuns: [], agentBuilt: false, agentChat: [] };
   t.ok('first prompt with no history is not a follow-up', LLM.isFollowUp('create a notepad app') === false);
