@@ -719,7 +719,8 @@ footer{padding:24px;text-align:center;color:var(--mut);border-top:1px solid var(
         calendar:    has('calendar', 'event', 'schedule'),
         password:    has('password', 'password manager', 'vault'),
         qr:          has('qr code', 'qr generator', 'qr'),
-        form:        has('form', 'survey', 'questionnaire')
+        form:        has('form', 'survey', 'questionnaire'),
+        social:      has('facebook', 'social network', 'social media', 'social feed', 'newsfeed', 'news feed', 'timeline', 'friends list', 'instagram', 'twitter feed')
       };
       const matched = Object.keys(intents).filter(k => intents[k]);
       const primary = matched[0] || 'starter';
@@ -2082,6 +2083,175 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
 })();`);
       };
 
+      const writeSocial = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">${projectName}</div>
+  <nav><a class="active" href="#feed">Home</a><a href="#profile">Profile</a></nav>
+</header>
+<main class="layout">
+  <aside class="side">
+    <div class="card profile">
+      <div class="avatar" id="meAvatar"></div>
+      <div class="name" id="meName">You</div>
+      <div class="bio">Building ${projectName} with CodeSovereign.</div>
+      <div class="stat"><span id="friendCount">0</span> friends</div>
+    </div>
+    <div class="card">
+      <h2>Friends</h2>
+      <ul id="friends" class="friends"></ul>
+    </div>
+  </aside>
+  <section class="feed">
+    <form id="composer" class="card composer">
+      <textarea id="postText" placeholder="What's on your mind?" required></textarea>
+      <div class="composerRow"><button type="submit">Post</button></div>
+    </form>
+    <div id="posts" class="posts"></div>
+  </section>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#7c5cff;--ok:#28c76f;--bad:#ea5455}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.top{display:flex;align-items:center;justify-content:space-between;padding:14px 28px;background:#0f1218;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}
+.brand{font-weight:700;font-size:18px;color:var(--acc)}
+nav a{color:var(--mut);text-decoration:none;margin-left:18px;font-size:13.5px;padding-bottom:4px;border-bottom:2px solid transparent}
+nav a:hover,nav a.active{color:var(--fg);border-color:var(--acc)}
+.layout{max-width:920px;margin:0 auto;padding:24px 16px;display:grid;grid-template-columns:240px 1fr;gap:20px;align-items:start}
+@media (max-width:680px){.layout{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+.card h2{margin:0 0 10px 0;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
+.profile{text-align:center}
+.avatar{width:64px;height:64px;border-radius:50%;margin:0 auto 10px;background:linear-gradient(135deg,var(--acc),#5b3df0);display:flex;align-items:center;justify-content:center;font:700 22px system-ui;color:#fff}
+.name{font-weight:700;font-size:15px}
+.bio{color:var(--mut);font-size:12.5px;margin-top:4px}
+.stat{margin-top:10px;font-size:12.5px;color:var(--mut)}
+.stat span{color:var(--fg);font-weight:700}
+.friends{list-style:none;margin:0;padding:0}
+.friends li{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px}
+.friends .favatar{width:28px;height:28px;border-radius:50%;background:#1a1f2c;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font:700 11px system-ui;color:var(--acc);flex:none}
+.composer textarea{width:100%;min-height:64px;background:#0f1218;border:1px solid var(--line);color:var(--fg);padding:12px;border-radius:8px;font:14px system-ui;resize:vertical;box-sizing:border-box}
+.composerRow{display:flex;justify-content:flex-end;margin-top:10px}
+.composerRow button{background:var(--acc);color:#fff;border:0;padding:9px 20px;border-radius:8px;cursor:pointer;font-weight:600}
+.post{margin-bottom:14px}
+.postHead{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.postHead .favatar{width:36px;height:36px;border-radius:50%;background:#1a1f2c;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font:700 13px system-ui;color:var(--acc);flex:none}
+.postAuthor{font-weight:600;font-size:13.5px}
+.postTime{color:var(--mut);font-size:11.5px}
+.postText{white-space:pre-wrap;word-wrap:break-word;margin:0 0 10px 0}
+.postActions{display:flex;gap:14px;border-top:1px solid var(--line);padding-top:10px}
+.likeBtn{background:none;border:0;color:var(--mut);cursor:pointer;font-size:13px;display:flex;align-items:center;gap:6px}
+.likeBtn:hover{color:var(--acc)}
+.likeBtn.liked{color:var(--acc);font-weight:600}
+.empty{color:var(--mut);text-align:center;padding:20px;font-size:13px}`);
+        push('/scripts/app.js', `// ${projectName} — a real, working social feed (posts, likes, friends), all persisted in localStorage
+(function(){
+  const base = (location.pathname || 'app').replace(/\\W+/g, '_');
+  const K = { posts: 'cs.social.posts.' + base, friends: 'cs.social.friends.' + base };
+  const initials = (name) => (name || '?').split(/\\s+/).filter(Boolean).slice(0,2).map(w => w[0].toUpperCase()).join('');
+
+  document.getElementById('meAvatar').textContent = initials('You');
+
+  const FRIEND_NAMES = ['Alex Rivera', 'Sam Chen', 'Jordan Lee', 'Priya Patel'];
+  let friends = [];
+  try { friends = JSON.parse(localStorage.getItem(K.friends) || 'null'); } catch (_) { friends = null; }
+  if (!friends) { friends = FRIEND_NAMES.map(name => ({ name })); localStorage.setItem(K.friends, JSON.stringify(friends)); }
+  document.getElementById('friendCount').textContent = friends.length;
+  const friendsEl = document.getElementById('friends');
+  friends.forEach(f => {
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="favatar"></span><span class="fname"></span>';
+    li.querySelector('.favatar').textContent = initials(f.name);
+    li.querySelector('.fname').textContent = f.name;
+    friendsEl.appendChild(li);
+  });
+
+  let posts = [];
+  try { posts = JSON.parse(localStorage.getItem(K.posts) || 'null'); } catch (_) { posts = null; }
+  if (!posts) {
+    posts = [
+      { author: 'Sam Chen', text: 'Just shipped the first version of ' + ${JSON.stringify(projectName)} + ' — feels great to have something real running.', at: Date.now() - 3600000, likes: 3, liked: false },
+      { author: 'Alex Rivera', text: 'Welcome to the feed! Post something below to see it appear here instantly.', at: Date.now() - 7200000, likes: 1, liked: false }
+    ];
+    localStorage.setItem(K.posts, JSON.stringify(posts));
+  }
+  const save = () => localStorage.setItem(K.posts, JSON.stringify(posts));
+
+  const fmtTime = (ts) => {
+    const mins = Math.round((Date.now() - ts) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    return Math.round(hrs / 24) + 'd ago';
+  };
+
+  const postsEl = document.getElementById('posts');
+  const render = () => {
+    postsEl.innerHTML = '';
+    if (!posts.length) {
+      const e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = 'No posts yet — write the first one above.';
+      postsEl.appendChild(e);
+      return;
+    }
+    posts.forEach((p, i) => {
+      const el = document.createElement('div');
+      el.className = 'card post';
+      el.innerHTML =
+        '<div class="postHead"><span class="favatar"></span>' +
+        '<div><div class="postAuthor"></div><div class="postTime"></div></div></div>' +
+        '<p class="postText"></p>' +
+        '<div class="postActions"><button class="likeBtn" type="button"><span class="likeIcon">&#9825;</span><span class="likeCount"></span></button></div>';
+      el.querySelector('.favatar').textContent = initials(p.author);
+      el.querySelector('.postAuthor').textContent = p.author;
+      el.querySelector('.postTime').textContent = fmtTime(p.at);
+      el.querySelector('.postText').textContent = p.text;
+      const likeBtn = el.querySelector('.likeBtn');
+      const likeCount = el.querySelector('.likeCount');
+      const paintLike = () => {
+        likeCount.textContent = p.likes;
+        likeBtn.classList.toggle('liked', !!p.liked);
+        likeBtn.querySelector('.likeIcon').innerHTML = p.liked ? '&#9829;' : '&#9825;';
+      };
+      paintLike();
+      likeBtn.onclick = () => {
+        p.liked = !p.liked;
+        p.likes += p.liked ? 1 : -1;
+        save();
+        paintLike();
+      };
+      postsEl.appendChild(el);
+    });
+  };
+  render();
+
+  const composer = document.getElementById('composer');
+  const postText = document.getElementById('postText');
+  composer.onsubmit = (e) => {
+    e.preventDefault();
+    const text = (postText.value || '').trim();
+    if (!text) return;
+    posts.unshift({ author: 'You', text, at: Date.now(), likes: 0, liked: false });
+    postText.value = '';
+    save();
+    render();
+  };
+})();`);
+      };
+
       // -------- dispatch --------
       let summary = '';
       switch (primary) {
@@ -2103,6 +2273,7 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
         case 'rest':       writeRest();       summary = 'Built a real REST API console with sample endpoints.'; break;
         case 'ecommerce':  writeShop();       summary = 'Built a real, working storefront with cart.'; break;
         case 'chart':      writeChart();      summary = 'Added a real analytics chart to the existing project.'; break;
+        case 'social':     writeSocial();     summary = 'Built a real social feed with posts, likes, and friends.'; break;
         case 'starter':
         default:           writeStarter();    summary = 'Scaffolded a real, working starter app from your prompt.'; break;
       }
