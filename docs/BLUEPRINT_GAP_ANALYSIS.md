@@ -7,6 +7,15 @@ Measures the current codebase against the two blueprints:
 
 **Ratings:** ✅ real · 🟨 partial (works but shallow / not wired as a gate) · 🟧 stub (UI or plan only, no execution) · ⬜ missing.
 
+**Note (post-removal):** `Engine.UltraMode`, its rail entry, its acceptance
+harness, and the "Build with Ultra Mode" button were removed from the running
+app — see `docs/ACCEPTANCE.md`. It never called the same generation path the
+Agent screen uses and produced a fixed template regardless of the prompt. The
+entries below that reference Ultra Mode describe the pre-removal state and are
+now historical; the shared engines it sequenced (`Engine.Contract`,
+`Engine.Scaffold`, `Engine.Ledger`, `Engine.DoD`, `Engine.Orchestrator`, …)
+remain in place and are still exercised directly by `npm run acceptance`.
+
 ---
 
 ## 0. State of the app — honest standing

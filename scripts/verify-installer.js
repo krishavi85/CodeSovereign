@@ -87,7 +87,7 @@ if (fs.existsSync(asar)) {
     // would clobber this repo's package.json.
     const asarLib = require('@electron/asar');
     const list = asarLib.listPackage(asar).map((l) => l.replace(/\\/g, '/').replace(/^\//, ''));
-    ['electron/main.js', 'dist/index.html', 'dist/engine.ultramode.js'].forEach((need) => {
+    ['electron/main.js', 'dist/index.html', 'dist/engine.js'].forEach((need) => {
       if (list.indexOf(need) >= 0) ok('asar contains ' + need); else bad('asar missing ' + need);
     });
     const pkgTxt = asarLib.extractFile(asar, 'package.json').toString('utf8');

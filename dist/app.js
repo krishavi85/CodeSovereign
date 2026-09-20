@@ -259,16 +259,10 @@ function injectIcons() {
 function renderTopNav() {
   const tabs = [
     ['welcome','Welcome',I.home],
+    ['universal','Universal',I.flow||I.deploy],
     ['agent','Agent',I.agent],
     ['ide','IDE',I.ide],
-    ['factory','Factory',I.factory],
-    ['pipelines','Pipelines',I.flow||I.deploy],
-    ['marketplace','Marketplace',I.box||I.flow],
-    ['workspaces','Workspaces',I.user||I.flow],
-    ['ratings','Ratings',I.star||I.box],
-    ['actions','Actions',I.rocket||I.deploy],
-    ['github','GitHub',I.branch||I.deploy],
-    ['oauth','OAuth',I.lock||I.cog]
+    ['settings','Settings',I.gear]
   ];
   const envColor = S.env === 'prod' ? '#34d399' : (S.env === 'staging' ? '#f59e0b' : '#60a5fa');
   const envLabel = (S.env || 'dev');
@@ -295,10 +289,7 @@ function renderRail() {
     ['welcome','Welcome',I.home,false],
     ['universal','Universal',I.flow||I.deploy,false],
     ['agent','Agent',I.agent,false],
-    ['ide','IDE',I.ide,false],
-    ['factory','Factory',I.factory,false],
-    ['pipelines','Pipelines',I.flow||I.deploy,false],
-    ['recovery','Recovery',I.shield,true]
+    ['ide','IDE',I.ide,false]
   ];
   let html = items.map(([k,label,icon,badge]) =>
     `<button data-screen="${k}" title="${label}" class="${S.screen===k?'active':''}">${badge?'<span class="badge-dot"></span>':''}<span style="display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center">${icon}</span><span style="font-size:9.5px;font-weight:500">${label}</span></button>`
@@ -3943,10 +3934,8 @@ function renderUniversal() {
     + '</div>'
     // CTAs
     + '<div style="display:flex;gap:10px;margin-top:18px;align-items:center">'
-    +   '<button id="buildUltraFromUniversal" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border:none;border-radius:10px;background:linear-gradient(135deg,#34d399,#22d3ee);color:#04121a;font:700 13.5px Inter,sans-serif;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex">⚡</span>Build with Ultra Mode (closed loop)</button>'
     +   '<button id="runSpecAgent" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border:none;border-radius:10px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 13.5px Inter,sans-serif;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex">' + I.run + '</span>Send to Agent (build code)</button>'
     +   '<button id="openPipelineFromUniversal" style="display:inline-flex;align-items:center;gap:8px;padding:11px 22px;border:1px solid rgba(34,211,238,.4);border-radius:10px;background:rgba(34,211,238,.08);color:#22d3ee;font:600 13.5px Inter,sans-serif;cursor:pointer"><span style="width:14px;height:14px;display:inline-flex">' + I.deploy + '</span>Pick Pipeline</button>'
-    +   '<span class="cs-muted">Ultra Mode derives a contract, generates the repo, runs real tests/build, observes it, repairs, and gates on the 10-criterion DoD.</span>'
     + '</div>'
   + '</div>';
 }
@@ -3999,28 +3988,6 @@ function bindUniversal() {
     S.prompt = Universal.PromptComposer.fields.prompt;
     genApp();
   };
-  const buildUltra = a('buildUltraFromUniversal');
-  if (buildUltra) buildUltra.onclick = () => {
-    const prompt = (Universal.PromptComposer.fields.prompt || '').trim();
-    if (prompt.length < 8) { toast('Describe the application first', '#f59e0b'); return; }
-    const UM = window.Engine && window.Engine.UltraMode;
-    if (!UM || !UM.start) { toast('Ultra Mode engine not loaded', '#ef4444'); return; }
-    if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
-    const st = UM.status && UM.status();
-    const go = () => {
-      buildUltra.disabled = true; buildUltra.textContent = 'Starting Ultra Mode…';
-      const useLLM = !!(window.Engine.AI && window.Engine.AI.ready && window.Engine.AI.ready());
-      UM.start({ prompt, useLLM, injectedContext: (S.univ && S.univ.state) ? { source: 'universal-composer', classification: S.univ.state.classification, stack: S.univ.state.stack } : null })
-        .then(() => { try { renderAll(); } catch (_) {} });
-      S.screen = 'ultra';
-      S.lastPrompt = prompt;
-      renderAll();
-    };
-    if (st && !st.terminal && st.state && st.state !== 'NONE') {
-      if (!confirm('An Ultra Mode run is already in progress — start a new one? The current run will be replaced.')) return;
-      (UM.reset ? UM.reset() : Promise.resolve()).then(go);
-    } else { go(); }
-  };
   const openPipeline = a('openPipelineFromUniversal');
   if (openPipeline) openPipeline.onclick = () => {
     S.screen = 'ide';
@@ -4034,18 +4001,14 @@ function renderAll(){
   injectIcons();
   const main = document.getElementById('main');
   if (!main) return;
-  const screen = S.screen || 'welcome';
+  let screen = S.screen || 'welcome';
   let html = '';
   if (screen === 'welcome') html = renderWelcome();
   else if (screen === 'universal') html = renderUniversal();
   else if (screen === 'agent') html = renderAgent();
   else if (screen === 'ide') html = renderIDE();
-  else if (screen === 'factory') html = renderFactory();
-  else if (screen === 'pipelines') html = renderPipelines();
-  else if (screen === 'recovery') html = renderRecovery();
   else if (screen === 'settings') html = renderSettings();
-  else if (PHASE8_SCREENS[screen]) html = '';   // filled by bindPhase8() below
-  else html = renderWelcome();
+  else { screen = S.screen = 'welcome'; html = renderWelcome(); }
 
   // Replace topnav, rail, and main via outerHTML
   const tn = document.getElementById('topnav');
@@ -4073,11 +4036,7 @@ function renderAll(){
   else if (screen === 'universal') bindUniversal();
   else if (screen === 'agent') bindAgent();
   else if (screen === 'ide') bindIDE();
-  else if (screen === 'factory') bindFactory();
-  else if (screen === 'pipelines') bindPipelines();
-  else if (screen === 'recovery') bindRecovery();
   else if (screen === 'settings') bindSettings();
-  else if (PHASE8_SCREENS[screen]) bindPhase8(screen);
 
   renderToasts();
 }

@@ -78,64 +78,24 @@ build half of the loop:
 This is the proof that CodeSovereign can *build* verified software from a spec,
 not only verify software that already exists. CI job **Desktop → acceptance-build**.
 
-## `npm run acceptance:ultramode` — the closed Ultra Mode loop (68 checks)
+## Ultra Mode — removed
 
-`electron/acceptance-ultramode.js` starts from an **empty** workspace and **one
-natural-language request** and drives `Engine.UltraMode` through the entire real
-flow — see `docs/ULTRAMODE_CLOSED_LOOP.md`:
+The standalone Ultra Mode closed loop (`Engine.UltraMode`, `electron/acceptance-ultramode.js`,
+`npm run acceptance:ultramode`, `test/ultramode.test.js`, the "Ultra Mode" rail
+entry, and the "Build with Ultra Mode" button on the Universal screen) was
+removed — it never called the same generation path the Agent screen uses, so
+"Build with Ultra Mode" always produced a fixed CRUD-form template regardless
+of the prompt, and it added a confusing extra tab that didn't help the app's
+actual job of turning a prompt into a working app. The Universal screen's
+"Send to Agent" button remains — that one correctly routes to `Engine.Agent.run()`,
+the generator that's actually AI-aware and produces prompt-specific output.
 
-1. `Engine.Contract.deriveFromPrompt` → a machine-readable contract (14 requirements,
-   all with machine-checkable acceptance criteria; entities `project` + `task`;
-   auth + jobs inferred).
-2. `Universal.buildPlan` → a typed plan (scaffold · testgen · security-scan ·
-   deploy-iac); **every mandatory requirement traces to a real artifact**.
-3. `Engine.Scaffold.specFromContract` → `generate()` → a **36-file** full-stack
-   project (backend + JSON/pg data layer + real SQL migrations + auth + durable
-   queue + worker + per-entity REST services + frontend + tests + CI + Docker +
-   Compose).
-4. A **repairable defect** (an `<img>` with no `alt`) is injected into the
-   generated output.
-5. `analyze` → **real `npm test` + `npm run build` + `npm run lint`** (all pass)
-   → runtime observation (app booted, a control observed REAL, nothing fake).
-6. The defect is detected (validator findings), a **snapshot** is taken
-   (`pre-generate`, `pre-repair-N`), `Recovery.run()` repairs it, the checks
-   re-run, warnings drop.
-7. **All 14 Definition-of-Done gates PASS** → `release-certificate.md` =
-   **SOVEREIGN VERIFIED**. History: `ANALYZING → … → GENERATING → VALIDATING →
-   EXECUTING → OBSERVING → REPAIRING → REVERIFYING → VERIFIED (web); PLANNING → GENERATING → VALIDATING → EXECUTING → REVERIFYING → VERIFIED (runtime target)`.
-8. **Resume**: the persisted run is forced back to a mid-flight state and
-   `resume()` completes it to `VERIFIED` **without regenerating** the project.
-9. **Negative — unsafe**: a covert-keylogger request ends `BLOCKED`, nothing
-   generated, explicit reason.
-10. **Runtime target — iOS (staged)**: a native-iOS-only request is detected as
-    the `ios` target; a real SwiftUI + SwiftPM + xcodegen project is generated;
-    `electron/lib/ios.js` runs `sourceGeneration` + `staticValidation` (PASS on
-    every host), and `build` + `simulator` are **stage-BLOCKED** with
-    `MACOS_XCODE_REQUIRED` / `MACOS_SIMULATOR_REQUIRED` — the overall run is
-    **`PARTIAL`** (`SOVEREIGN VERIFIED — PARTIAL`), never a blanket BLOCKED, never
-    "unsupported". A Swift syntax error would instead be `FAILED`.
-11. **Runtime target — EVM**: an ERC-20 request is detected as the `evm` target;
-    `Engine.Blockchain` generates a real Solidity contract; `electron/lib/adapters.js`
-    compiles it with `solc` and deploys it on a `@ethereumjs/vm` local chain, runs
-    the transfer / approve / transferFrom / revert transactions, and every
-    assertion passes; the target DoD gate passes → **SOVEREIGN VERIFIED**.
-12. **Runtime target — desktop (Tauri)** via the **terse command syntax**
-    (`BUILD: … / TARGET: tauri / MODE: balanced`): the DSL is parsed
-    (`contract.dsl.syntax === 'ultra-command'`), a real `src-tauri/` project is
-    generated, `electron/lib/adapters.js` runs `cargo check` + `cargo test` (the
-    Rust core compiles on any host with Rust), and the packaged build is
-    stage-BLOCKED on `@tauri-apps/cli` → **`PARTIAL`** (`SOVEREIGN VERIFIED —
-    PARTIAL`); on a host with no Rust it is `BLOCKED CARGO/RUST_TOOLCHAIN` with the
-    exact `rustup` command — never a blanket FAIL, never "unsupported".
-13. **Runtime target — browser extension (MV3)**: an extension request is detected
-    as the `extension` target, a real MV3 manifest + popup + options + content
-    script + service worker is generated, static MV3 validation PASSES, the plain
-    store-only zip is built, and `load-unpacked` runs under Playwright/Chromium →
-    **`PARTIAL`** when headless service-worker inspection can't fully confirm
-    (`SOVEREIGN VERIFIED — PARTIAL`); the non-gating build stage never sinks the
-    verdict.
-
-CI job **Desktop → acceptance-ultramode**.
+The P0 pipeline engines Ultra Mode used (`Engine.Contract`, `Engine.Ledger`,
+`Engine.DoD`, `Engine.Orchestrator`, `Engine.Scaffold`, …) are **not** removed —
+Stage 8 above (`npm run acceptance`, still active) exercises them directly, so
+deleting them would have broken a real, working acceptance suite. Only the
+Ultra-Mode-exclusive files (`dist/engine.ultramode.js`, `dist/app.ultramode.js`,
+`electron/acceptance-ultramode.js`, `test/ultramode.test.js`) were deleted.
 
 ## `node test/run.js` — the factory layer (headless, no Electron)
 
