@@ -257,22 +257,12 @@ function injectIcons() {
    TOP NAV + RAIL + TOP BAR
    ============================================================ */
 function renderTopNav() {
-  const tabs = [
-    ['welcome','Welcome',I.home],
-    ['universal','Universal',I.flow||I.deploy],
-    ['agent','Agent',I.agent],
-    ['ide','IDE',I.ide],
-    ['settings','Settings',I.gear]
-  ];
   const envColor = S.env === 'prod' ? '#34d399' : (S.env === 'staging' ? '#f59e0b' : '#60a5fa');
   const envLabel = (S.env || 'dev');
+  // No <nav> of screen tabs here anymore - it duplicated the left rail.
+  // renderRail() is the single source of truth for screen navigation.
   return '<div id="topnav"><header class="cs-top">' +
     '<div class="cs-logo"><div class="badge">C</div><div class="name">CODESOVEREIGN</div></div>' +
-    '<nav class="cs-nav" id="topNavInner">' +
-      tabs.map(([k,label,icon]) =>
-        `<button data-screen="${k}" class="${S.screen===k?'active':''}"><span style="display:inline-flex;width:16px;height:16px;align-items:center;justify-content:center">${icon}</span><span>${label}</span></button>`
-      ).join('') +
-    '</nav>' +
     '<div class="cs-spacer"></div>' +
     `<div class="cs-chip" id="modelChip" title="Switch agent"><span class="label">Agent:</span><span class="val" id="modelVal">${esc(S.agent)}</span><span style="color:#6b7488;font-size:11px">▾</span></div>` +
     `<div class="cs-chip" id="envChip" title="Switch environment"><span class="label">Environment:</span><span class="cs-dot" id="envDot" style="background:${envColor};box-shadow:0 0 8px ${envColor}"></span><span class="val" id="envVal">${esc(envLabel)}</span><span style="color:#6b7488;font-size:11px">▾</span></div>` +
@@ -287,7 +277,6 @@ function renderTopNav() {
 function renderRail() {
   const items = [
     ['welcome','Welcome',I.home,false],
-    ['universal','Universal',I.flow||I.deploy,false],
     ['agent','Agent',I.agent,false],
     ['ide','IDE',I.ide,false]
   ];
@@ -858,8 +847,10 @@ function renderWelcome() {
         <span style="font-size:11.5px;color:#6b7488;margin-right:4px">Try:</span>
         ${tryPrompts.map(t => `<span class="try-p" data-try="${esc(t)}" style="font-size:12px;color:#a9b0ff;border:1px solid rgba(109,93,252,.25);background:rgba(109,93,252,.06);border-radius:20px;padding:5px 12px;cursor:pointer">${esc(t)}</span>`).join('')}
         <span style="flex:1"></span>
-        <button id="openUniversalComposer" style="display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.06);color:#22d3ee;border-radius:9px;font:600 12px Inter,sans-serif;cursor:pointer"><span style="display:inline-flex;width:13px;height:13px;align-items:center;justify-content:center">${I.flow}</span>Open Universal Composer (19-stage spec)</button>
+        <button id="openUniversalComposer" style="display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border:1px solid rgba(34,211,238,.3);background:rgba(34,211,238,.06);color:#22d3ee;border-radius:9px;font:600 12px Inter,sans-serif;cursor:pointer"><span style="display:inline-flex;width:13px;height:13px;align-items:center;justify-content:center">${I.flow}</span>${S.showUniversal ? 'Hide' : 'Open'} Universal Composer (19-stage spec)</button>
       </div>
+
+      ${S.showUniversal ? `<div id="universalInline" style="border:1px solid rgba(34,211,238,.25);border-radius:14px;margin-bottom:36px;overflow:hidden">${renderUniversal()}</div>` : ''}
 
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h2 style="font-size:17px;font-weight:700;margin:0">Start from a template</h2><span style="font-size:12.5px;color:#7b859c">${templates.length} templates · all scaffolded into real files</span></div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:44px">${qs}</div>
@@ -880,7 +871,8 @@ function bindWelcome() {
   document.querySelectorAll('[data-plat]').forEach(el => el.onclick = () => { S.plat[el.dataset.plat] = !S.plat[el.dataset.plat]; renderAll(); });
   document.querySelectorAll('[data-try]').forEach(el => el.onclick = () => { S.prompt = el.dataset.try; renderAll(); });
   const ucBtn = document.getElementById('openUniversalComposer');
-  if (ucBtn) ucBtn.onclick = () => { S.screen = 'universal'; renderAll(); };
+  if (ucBtn) ucBtn.onclick = () => { S.showUniversal = !S.showUniversal; renderAll(); };
+  if (S.showUniversal) bindUniversal();
   document.querySelectorAll('.qs-tile').forEach(el => el.onclick = () => {
     createProjectFromTemplate(el.dataset.qsname, el.dataset.qs);
   });
@@ -4004,7 +3996,6 @@ function renderAll(){
   let screen = S.screen || 'welcome';
   let html = '';
   if (screen === 'welcome') html = renderWelcome();
-  else if (screen === 'universal') html = renderUniversal();
   else if (screen === 'agent') html = renderAgent();
   else if (screen === 'ide') html = renderIDE();
   else if (screen === 'settings') html = renderSettings();
@@ -4033,7 +4024,6 @@ function renderAll(){
   bindTopNav();
   bindRail();
   if (screen === 'welcome') bindWelcome();
-  else if (screen === 'universal') bindUniversal();
   else if (screen === 'agent') bindAgent();
   else if (screen === 'ide') bindIDE();
   else if (screen === 'settings') bindSettings();
