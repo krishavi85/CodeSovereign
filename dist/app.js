@@ -484,6 +484,12 @@ function runAgentWith(prompt, specCtx) {
   S.agentChat = [...(S.agentChat || []), { role: 'user', text: prompt, at: Date.now() }];
   S.agentRunning = true;
   S.planApproved = false;
+  // Stopping a run can't truly cancel the in-flight request (no abort
+  // plumbing to the network layer yet) - it invalidates this token instead,
+  // so a stopped run's late-arriving steps/completion are ignored rather
+  // than clobbering whatever the user does next.
+  S.agentRunToken = (S.agentRunToken || 0) + 1;
+  const myRunToken = S.agentRunToken;
   if (followUp && Array.isArray(S.agentSteps) && S.agentSteps.length) {
     S.agentSteps = [...S.agentSteps, { kind: 'user', text: 'Follow-up: ' + prompt, prompt: prompt }].slice(-80);
   } else {
@@ -509,6 +515,7 @@ function runAgentWith(prompt, specCtx) {
   } catch (_) {}
   // hook for live updates
   Engine.Agent.run(prompt, step => {
+    if (S.agentRunToken !== myRunToken) return; // this run was stopped/superseded
     S.agentSteps = [...S.agentSteps, step].slice(-80);
     // when the planner publishes the file plan, feed it into the build pipeline
     if (step && step.kind === 'plan-result' && Array.isArray(step.files)) {
@@ -520,6 +527,7 @@ function runAgentWith(prompt, specCtx) {
     }
     renderAll();
   }).then(() => {
+    if (S.agentRunToken !== myRunToken) return; // this run was stopped/superseded
     // Final sync so the Build tab reflects exactly what the run produced
     try { syncBuildFromFS(); } catch (_) {}
     S.agentRunning = false;
@@ -580,6 +588,15 @@ function approvePlan() {
 }
 function stopRun() {
   S.agentStopped = !S.agentStopped;
+  if (S.agentStopped && S.agentRunning) {
+    // There's no abort plumbing to the network layer yet, so the in-flight
+    // request can't actually be killed - but the user must not be left
+    // stuck, unable to prompt again, until a possibly-hung request resolves
+    // on its own. Invalidate this run's token (its eventual steps/completion
+    // become no-ops, see runAgentWith) and free agentRunning immediately.
+    S.agentRunToken = (S.agentRunToken || 0) + 1;
+    S.agentRunning = false;
+  }
   toast(S.agentStopped ? 'Run stopped — agents paused safely' : 'Run resumed', S.agentStopped ? '#ef4444' : '#34d399');
   renderAll();
 }
