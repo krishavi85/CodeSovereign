@@ -419,6 +419,7 @@ window.clearWorkspace = clearWorkspace;
 window.resetAllData = resetAllData;
 
 function genApp() {
+  if (S.agentRunning) { S.screen = 'agent'; renderAll(); toast('A generation is already running — open the Agent tab to watch it, or click Stop first', '#f59e0b'); return; }
   const p = S.prompt.trim();
   if (!p) { toast('Describe the app first — or pick a “Try” prompt', '#f59e0b'); return; }
   if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
@@ -449,6 +450,7 @@ function genApp() {
 }
 
 function runAgent() {
+  if (S.agentRunning) { toast('A generation is already running — wait for it to finish, or click Stop first', '#f59e0b'); return; }
   const p = S.agentPrompt.trim();
   if (!p) { toast(S.agentBuilt ? 'Type a follow-up for this app first' : 'Describe what you want to build first', '#f59e0b'); return; }
   if (!Engine.Proj.current()) { Engine.Proj.create('New project', 'saas-dashboard'); }
