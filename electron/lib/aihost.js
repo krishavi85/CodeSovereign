@@ -9,8 +9,17 @@
  * `request()` is a deliberately narrow HTTP client:
  *   - only http(s) to a loopback host (any port), OR
  *   - https to one of the LLM API hosts the app already allow-lists in its CSP
- *   - 45s timeout, 8 MB response cap, no redirects to other hosts, no file://
+ *   - 300s default timeout (a caller can pass a shorter timeoutMs, e.g. the
+ *     renderer's connectivity probe uses 20s), 8 MB response cap, no
+ *     redirects to other hosts, no file://
  * The renderer never gets a general fetch — this is the whole surface.
+ *
+ * The default used to be 45s, which killed legitimate local-LLM completions
+ * mid-request on modest hardware (some first-token latencies exceed a
+ * minute). The renderer now always passes an explicit timeoutMs for actual
+ * generation calls, but this default exists as the platform-level safety
+ * net for any caller that doesn't — it must stay generous enough for real
+ * local inference, not just "longer than 45s".
  */
 const http = require('http');
 const https = require('https');
@@ -47,7 +56,7 @@ function request(opts) {
     const req = lib.request({
       protocol: url.protocol, hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
       path: url.pathname + url.search, method: (o.method || 'GET').toUpperCase(), headers,
-      timeout: o.timeoutMs || 45000
+      timeout: o.timeoutMs || 300000
     }, (res) => {
       // never follow a redirect off the vetted host
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {

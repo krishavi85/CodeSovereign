@@ -150,7 +150,9 @@ beyond what the user explicitly enabled.
     LLM API hosts the app already allow-lists in its CSP (openai / anthropic /
     minimax / openrouter / together / groq / mistral / deepseek / gemini).
   - No `file:`, no other hosts, no cross-host redirects (checked against the
-    same allowlist), 45 s timeout, 8 MB response cap.
+    same allowlist), 300 s default timeout (real local-LLM completions can
+    take minutes; a caller may pass a shorter `timeoutMs` — the renderer's
+    connectivity probe uses 20 s so it still fails fast), 8 MB response cap.
 - Purpose: the renderer CSP blocks `localhost` and several API hosts, so
   `Engine.LLM` routes its chat calls through this when running in Electron.
   The surface is the allowlist + the caps — the renderer never gets `net`.

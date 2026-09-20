@@ -1646,7 +1646,11 @@
       const res = await httpText(req.url, {
         method: "POST",
         headers: req.headers,
-        body: JSON.stringify(req.body)
+        body: JSON.stringify(req.body),
+        // A connectivity probe must fail fast even though a real generation
+        // call (chat()/complete(), below) needs minutes — decouple this from
+        // aihost.js's own default rather than inheriting whatever that is.
+        timeoutMs: 20000
       });
       const text = await res.text();
       const out = {
