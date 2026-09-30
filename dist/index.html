@@ -152,6 +152,21 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 
 <div id="toasts"></div>
 
+<!-- Generic Prompt/Confirm Modal (Electron does not implement window.prompt(),
+     and window.confirm() blocks the renderer unreliably under sandbox:true —
+     this replaces both with a real in-app dialog). -->
+<div id="promptModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:300;backdrop-filter:blur(6px);align-items:center;justify-content:center">
+  <div style="width:380px;background:#0f1420;border:1px solid rgba(255,255,255,.12);border-radius:14px;padding:20px;box-shadow:0 20px 80px rgba(0,0,0,.6)">
+    <div id="promptModalTitle" style="font:700 14.5px Inter,sans-serif;color:#e6e9f2;margin-bottom:6px"></div>
+    <div id="promptModalMessage" style="font:500 12.5px Inter,sans-serif;color:#8b93a7;margin-bottom:12px"></div>
+    <input id="promptModalInput" type="text" style="width:100%;background:#1a1f2c;border:1px solid rgba(255,255,255,.12);color:#e6e9f2;padding:9px 11px;border-radius:8px;font:13px 'JetBrains Mono',monospace;margin-bottom:14px;box-sizing:border-box">
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button id="promptModalCancel" style="padding:8px 16px;border-radius:8px;border:1px solid rgba(255,255,255,.12);background:transparent;color:#c7cddb;cursor:pointer;font:600 12.5px Inter,sans-serif">Cancel</button>
+      <button id="promptModalConfirm" style="padding:8px 16px;border-radius:8px;border:0;background:#6d5dfc;color:#fff;cursor:pointer;font:600 12.5px Inter,sans-serif">OK</button>
+    </div>
+  </div>
+</div>
+
 <!-- Pipeline Picker Modal (driven by PipelineBuilder) -->
 <div id="pipelineModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:200;backdrop-filter:blur(6px)">
   <div style="position:absolute;inset:40px;max-width:1200px;margin:auto;background:#0a0e1a;border:1px solid rgba(255,255,255,.1);border-radius:14px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 20px 80px rgba(0,0,0,.6);height:80vh;max-height:720px">
@@ -223,16 +238,10 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="app.bus.js"></script>
 <script src="app.bus_ui.js"></script>
 <script src="backend.js"></script>
-<script src="app.marketplace.js"></script>
-<script src="app.github.js"></script>
 <script src="engine.workspaces.js"></script>
 <script src="engine.ratings.js"></script>
 <script src="engine.actions.js"></script>
 <script src="engine.oauth.js"></script>
-<script src="app.workspaces.js"></script>
-<script src="app.ratings.js"></script>
-<script src="app.actions.js"></script>
-<script src="app.oauth.js"></script>
 <!-- AI: hardware intelligence -> local model lifecycle -> local inference router -> facade -> cost sovereignty -->
 <script src="engine.hardware.js"></script>
 <script src="engine.modelmanager.js"></script>

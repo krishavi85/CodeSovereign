@@ -187,7 +187,8 @@
     stopGateway: function () { var b = ocBridge(); return b ? b.stopGateway() : noBridge(); },
     restartGateway: function () { var b = ocBridge(); return b ? b.restartGateway() : noBridge(); },
     openOnboarding: function () { var b = ocBridge(); return b ? b.openOnboarding() : noBridge(); },
-    openDashboard: function (url) { var b = ocBridge(); return b ? b.openDashboard(url) : noBridge(); }
+    openDashboard: function (url) { var b = ocBridge(); return b ? b.openDashboard(url) : noBridge(); },
+    runAgentTurn: function (opts) { var b = ocBridge(); return b ? b.runAgentTurn(opts) : noBridge({ ok: false, error: 'OpenClaw control needs the desktop app' }); }
   };
 
   function route(opts) {

@@ -151,7 +151,7 @@
     else if (phase === 'gateway-not-installed') { dot = '#e08a3f'; label = 'Not configured'; desc = 'Configured, but the Gateway service is not installed yet.'; }
     else if (phase === 'starting') { dot = '#a78bfa'; label = 'Starting…'; desc = 'Gateway service launched — waiting for it to bind port ' + (ocs.gateway && ocs.gateway.port || 18789) + '.'; }
     else if (phase === 'running') { dot = 'var(--good)'; label = 'Running'; desc = 'Gateway reachable on 127.0.0.1:' + (ocs.gateway && ocs.gateway.port || 18789) + '.'; }
-    else if (phase === 'stopped') { dot = 'var(--muted)'; label = 'Stopped'; desc = 'Gateway service installed, not running.'; }
+    else if (phase === 'stopped') { dot = 'var(--muted)'; label = 'Stopped'; desc = (ocs.gateway && ocs.gateway.disabled) ? 'Gateway service is disabled (a failed OpenClaw update or a stop can leave it that way) — Start Gateway re-enables it.' : 'Gateway service installed, not running.'; }
     else if (ocs.error) { dot = '#ef4444'; label = 'Error'; desc = esc(ocs.error); }
     else { dot = 'var(--muted)'; label = 'Unknown'; }
 

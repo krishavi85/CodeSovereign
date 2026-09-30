@@ -37,18 +37,19 @@
  * window running it, same as a user would from a shell.
  */
 const http = require('http');
-const { execFile, spawn } = require('child_process');
+const { spawn } = require('child_process');
+const crossSpawn = require('cross-spawn');
+const { killTree } = require('./killtree');
 
 const GATEWAY_PORT = 18789;
 const BIN = 'openclaw';
 
+// Same { err, stdout, stderr } contract as before, via runSafe() (cross-spawn)
+// instead of execFile + shell: true: resolving the openclaw.cmd shim that way
+// concatenated args into an unescaped cmd.exe line, which Node 24 flags as
+// DEP0190 — this is the call that printed it at every app startup.
 function run(args, timeoutMs) {
-  return new Promise((resolve) => {
-    execFile(BIN, args, { timeout: timeoutMs || 20000, windowsHide: true, shell: process.platform === 'win32', maxBuffer: 1 << 20 },
-      (err, stdout, stderr) => {
-        resolve({ err: err || null, stdout: String(stdout || ''), stderr: String(stderr || '') });
-      });
-  });
+  return runSafe(args, timeoutMs);
 }
 
 function runJSON(args, timeoutMs) {
@@ -59,6 +60,41 @@ function runJSON(args, timeoutMs) {
     try { return { ok: true, json: JSON.parse(r.stdout) }; }
     catch (_) {
       return { ok: false, error: (r.stderr || (r.err && r.err.message) || 'openclaw produced no JSON output').trim() };
+    }
+  });
+}
+
+// Every openclaw invocation goes through here. Node refuses to spawn the
+// npm-generated openclaw.cmd shim directly, and the old workaround —
+// shell: true — naively joins args into one UNESCAPED cmd.exe line.
+// Confirmed live: a --message containing spaces broke the CLI's own arg
+// parsing ("no command \"with\""), and shell metacharacters in a prompt
+// would have been a command-injection vector. cross-spawn resolves the .cmd
+// shim AND escapes each argument, with no shell involved.
+function runSafe(args, timeoutMs) {
+  return new Promise((resolve) => {
+    let child;
+    try {
+      child = crossSpawn(BIN, args, { windowsHide: true });
+    } catch (e) { resolve({ err: e, stdout: '', stderr: String(e && e.message || e) }); return; }
+    let stdout = '', stderr = '', timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; killTree(child); }, timeoutMs || 20000);
+    if (child.stdout) child.stdout.on('data', (d) => { stdout += d; });
+    if (child.stderr) child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (e) => { clearTimeout(timer); resolve({ err: e, stdout, stderr }); });
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      const err = timedOut ? new Error('timed out') : (code !== 0 ? new Error('exit ' + code) : null);
+      resolve({ err, stdout, stderr, timedOut });
+    });
+  });
+}
+
+function runJSONSafe(args, timeoutMs) {
+  return runSafe(args, timeoutMs).then((r) => {
+    try { return { ok: true, json: JSON.parse(r.stdout) }; }
+    catch (_) {
+      return { ok: false, timedOut: !!r.timedOut, error: (r.stderr || (r.err && r.err.message) || 'openclaw produced no JSON output').trim() };
     }
   });
 }
@@ -79,7 +115,7 @@ function install(onStatus) {
     if (onStatus) onStatus('installing OpenClaw globally via npm…');
     let child;
     try {
-      child = spawn('npm', ['install', '-g', 'openclaw'], { windowsHide: true, shell: process.platform === 'win32' });
+      child = crossSpawn('npm', ['install', '-g', 'openclaw'], { windowsHide: true });
     } catch (e) { resolve({ ok: false, error: String(e && e.message || e) }); return; }
     let out = '';
     const onData = (d) => { out += d; if (onStatus) onStatus(String(d).trimEnd()); };
@@ -98,9 +134,11 @@ function install(onStatus) {
 
 /* ---- fast, dependency-free reachability probe (the flowchart's final
    "Probe 127.0.0.1:18789" step) — no CLI spawn, safe to poll often. ---- */
-function probe() {
+// `port` only exists so the test suite can probe a free port — on any machine
+// that really runs OpenClaw, GATEWAY_PORT is (correctly) occupied.
+function probe(port) {
   return new Promise((resolve) => {
-    const req = http.request({ hostname: '127.0.0.1', port: GATEWAY_PORT, path: '/', method: 'GET', timeout: 1500 }, (res) => {
+    const req = http.request({ hostname: '127.0.0.1', port: port || GATEWAY_PORT, path: '/', method: 'GET', timeout: 1500 }, (res) => {
       res.resume();
       resolve({ ready: res.statusCode > 0, statusCode: res.statusCode });
     });
@@ -124,6 +162,8 @@ async function getStatus() {
   const configExists = !!(j.config && j.config.cli && j.config.cli.exists && j.config.cli.valid);
   const serviceInstalled = !!(j.service && j.service.loaded);
   const serviceStatus = (j.service && j.service.runtime && j.service.runtime.status) || 'unknown';
+  // Windows Scheduled Task state; 'Disabled' means `gateway start` will refuse until it is re-registered.
+  const serviceDisabled = /^disabled$/i.test(String((j.service && j.service.runtime && j.service.runtime.state) || ''));
   const ready = !!(j.rpc && j.rpc.ok) || !!(j.port && j.port.status === 'busy');
 
   let phase;
@@ -140,6 +180,7 @@ async function getStatus() {
     gateway: {
       installed: serviceInstalled,
       serviceStatus: serviceStatus,
+      disabled: serviceDisabled,
       ready: ready,
       port: (j.gateway && j.gateway.port) || GATEWAY_PORT,
       dashboardUrl: (j.gateway && j.gateway.controlUiLinks && j.gateway.controlUiLinks.httpUrl) || ('http://127.0.0.1:' + GATEWAY_PORT + '/')
@@ -147,11 +188,93 @@ async function getStatus() {
   };
 }
 
-/* ---- gateway service lifecycle ---- */
-function gatewayInstall() { return runJSON(['gateway', 'install', '--json'], 30000); }
-function gatewayStart() { return runJSON(['gateway', 'start', '--json'], 30000); }
-function gatewayStop() { return runJSON(['gateway', 'stop', '--json'], 20000); }
-function gatewayRestart() { return runJSON(['gateway', 'restart', '--json'], 30000); }
+/* ---- gateway service lifecycle ----
+   These print valid JSON even when the action itself failed
+   ({"action":"start","ok":false,"error":"..."}), so a parsed reply is not a
+   success — the renderer checks `r.ok`, and used to report "gateway started"
+   for a start that never happened. */
+function lifecycle(args, timeoutMs) {
+  return runJSON(args, timeoutMs).then((r) => {
+    if (r.ok && r.json && r.json.ok === false) {
+      return { ok: false, error: String(r.json.error || ('openclaw ' + args.slice(0, 2).join(' ') + ' failed')), hints: r.json.hints || [], json: r.json };
+    }
+    return r;
+  });
+}
+
+// Windows: `gateway start` runs the "OpenClaw Gateway" Scheduled Task and
+// refuses outright when that task is Disabled — which is how a failed
+// OpenClaw self-update left it on a real install ("could not run because it
+// is disabled"). Plain `gateway install` answers "already-installed" and
+// changes nothing; `install --force` re-registers the task enabled (verified
+// live, 2026-09-27). `start` afterwards is idempotent ("already-running").
+const TASK_DISABLED_RE = /\bdisabled\b/i;
+async function withDisabledTaskRepair(first) {
+  const r = await first();
+  if (r.ok || !TASK_DISABLED_RE.test(r.error || '')) return r;
+  const re = await lifecycle(['gateway', 'install', '--force', '--json'], 60000);
+  if (!re.ok) return { ok: false, error: 'The Gateway service is disabled and re-registering it failed: ' + re.error };
+  const again = await lifecycle(['gateway', 'start', '--json'], 120000);
+  return again.ok ? Object.assign({}, again, { repaired: 'reenabled-disabled-task' }) : again;
+}
+
+// `gateway start` waits 90s for /healthz + /readyz and then reports failure,
+// but on a loaded machine the Gateway binds shortly after — seen twice live on
+// 2026-09-27 (ready ~5s and ~20s after the "timed out" reply). Check the port
+// ourselves before telling the user it failed.
+const START_TIMEOUT_RE = /timed out[^]*(healthz|readyz)/i;
+async function confirmLateStart(r, waitMs, port) {
+  if (r.ok || !START_TIMEOUT_RE.test(r.error || '')) return r;
+  const deadline = Date.now() + (waitMs == null ? 60000 : waitMs);
+  for (;;) {
+    if ((await probe(port)).ready) return { ok: true, lateReady: true, note: 'Gateway became ready after the CLI stopped waiting' };
+    if (Date.now() >= deadline) return r;
+    await new Promise((res) => setTimeout(res, 3000));
+  }
+}
+
+function gatewayInstall() { return lifecycle(['gateway', 'install', '--json'], 30000); }
+// 120s: the CLI's own readiness wait is 90s — the old 30s limit killed it first.
+function gatewayStart(opts) {
+  opts = opts || {};
+  return withDisabledTaskRepair(() => lifecycle(['gateway', 'start', '--json'], 120000)).then((r) => confirmLateStart(r, opts.lateReadyWaitMs, opts.probePort));
+}
+function gatewayStop() { return lifecycle(['gateway', 'stop', '--json'], 20000); }
+function gatewayRestart(opts) {
+  opts = opts || {};
+  return withDisabledTaskRepair(() => lifecycle(['gateway', 'restart', '--json'], 120000)).then((r) => confirmLateStart(r, opts.lateReadyWaitMs, opts.probePort));
+}
+
+/* ---- run one agent turn through the Gateway (`openclaw agent --json`) ----
+   The officially-supported single-shot path — confirmed via `openclaw agent
+   --help` — instead of hand-rolling the WebSocket Gateway protocol (which
+   needs the @openclaw/gateway-client package plus a device-pairing auth
+   flow). Same execFile/runJSON convention as every other command here. */
+function runAgentTurn(opts) {
+  opts = opts || {};
+  const args = ['agent', '--json'];
+  if (opts.agentId) args.push('--agent', opts.agentId);
+  if (opts.sessionKey) args.push('--session-key', opts.sessionKey);
+  if (opts.model) args.push('--model', opts.model);
+  // BUG FOUND LIVE: opts.timeoutSec used to feed only our own kill-timer
+  // below, never the CLI's own --timeout flag — so the CLI always fell
+  // back to its 600s config default regardless of what was requested here,
+  // confirmed by two live runs both stopping at ~600s even when this was
+  // called with timeoutSec: 900. Forwarding it explicitly now.
+  const timeoutSec = opts.timeoutSec || 600;
+  args.push('--timeout', String(timeoutSec));
+  args.push('--message', String(opts.message || ''));
+  // Headroom over the CLI's own --timeout so our own timeout never races
+  // the CLI's internal one (it would report a less useful error).
+  const timeoutMs = Math.max(30000, timeoutSec * 1000 + 15000);
+  // NOTE: killing this CLI process does NOT stop the Gateway's run — Ollama's
+  // request log showed it continuing (and re-requesting the model) for ~12
+  // minutes after our limit fired. `gateway call chat.abort` looked like the
+  // fix, but with a run actually active the Gateway rejects it
+  // ("INVALID_REQUEST: unauthorized" — one connection can't abort another's
+  // run), so there is currently no way to cancel it from here.
+  return runJSONSafe(args, timeoutMs);
+}
 
 /* ---- open the interactive first-run wizard in a real terminal window.
    Onboarding picks providers/credentials interactively — it cannot be
@@ -173,5 +296,6 @@ function openOnboarding() {
 
 module.exports = {
   GATEWAY_PORT, detect, install, getStatus, probe,
-  gatewayInstall, gatewayStart, gatewayStop, gatewayRestart, openOnboarding
+  gatewayInstall, gatewayStart, gatewayStop, gatewayRestart, openOnboarding,
+  runAgentTurn
 };

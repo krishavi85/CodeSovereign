@@ -32,5 +32,9 @@ module.exports = async function (t) {
   t.ok('tools/call echoes arguments', /"n":7/.test(echoed) && !(call && call.error));
   mcp.stop(started.id);
   proc.killAll();
-  fs.rmSync(tmp, { recursive: true, force: true });
+  // taskkill is fire-and-forget, and Windows refuses to delete a directory
+  // that is still some process's cwd — the MCP child may still be exiting,
+  // which made this throw EPERM on every Windows run. rmSync's own retry
+  // options exist for exactly this.
+  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 });
 };

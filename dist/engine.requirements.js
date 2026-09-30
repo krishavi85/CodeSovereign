@@ -247,6 +247,14 @@
   // and the requirements a competent engineer would add that the prompt implied
   // but did not state. Rule-based detection stays the source of truth; this only
   // adds. Resolves to { archetypes:[id...], added:[...], notes } — or nulls.
+  // Confirmed live: Sovereign.requirements() runs on every analyze() pass
+  // (several per build verification), and this re-asked the model each time —
+  // ~40s per call on a local model, queued in front of the real generation
+  // calls. Worse, with no prompt it fell back to a stub README ("# todo"),
+  // and the model answered with EVERY archetype it was offered; those
+  // "implied requirements" then became tracked contract requirements.
+  var _aiAssistCache = {};
+  var MIN_OBJECTIVE_CHARS = 40;
   function aiAssist(ctx) {
     ctx = ctx || {};
     var AI = Engine.AI;
@@ -254,13 +262,20 @@
     var known = Object.keys(PACKS).join(', ');
     var objective = ctx.prompt || ctx.objective || '';
     if (!objective) { try { objective = (FS.read('/README.md') || FS.read('/SPEC.md') || '').slice(0, 1500); } catch (_) {} }
+    var key = String(objective).trim();
+    if (key.replace(/[#*_`>\-\s]/g, '').length < MIN_OBJECTIVE_CHARS) {
+      return Promise.resolve({ archetypes: [], added: [], skipped: 'objective-too-thin' });
+    }
+    if (_aiAssistCache[key]) return _aiAssistCache[key];
     var ask = 'Software objective:\n' + objective + '\n\n' +
       'Return ONLY JSON: {"archetypes":[<subset of: ' + known + '>],' +
       '"impliedRequirements":["specific, testable requirement the objective implies but does not state", ...],' +
       '"topRisks":["risk to design against", ...]}. Be concrete, 6-12 impliedRequirements.';
-    return AI.json(ask, { maxTokens: 1000 }).then(function (j) {
+    var p = AI.json(ask, { maxTokens: 1000 }).then(function (j) {
       if (!j) return { archetypes: [], added: [] };
       var arch = (j.archetypes || []).filter(function (a) { return PACKS[a]; });
+      // naming most of the catalogue isn't a classification, it's noise
+      if (arch.length > Object.keys(PACKS).length / 2) arch = [];
       return {
         archetypes: arch,
         added: (j.impliedRequirements || []).slice(0, 14).map(function (s) { return String(s).slice(0, 200); }),
@@ -268,6 +283,10 @@
         source: 'ai'
       };
     }).catch(function () { return { archetypes: [], added: [] }; });
+    _aiAssistCache[key] = p;
+    // only a real answer is worth keeping; a failure/empty result may retry
+    p.then(function (r) { if (!r || (!r.archetypes.length && !r.added.length)) delete _aiAssistCache[key]; });
+    return p;
   }
 
   /* ---------------- §3 per-requirement verification record ---------------- */

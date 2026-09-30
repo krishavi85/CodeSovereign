@@ -16,3 +16,9 @@ Thumbs.db
 *.swp
 .vscode/
 .idea/
+
+# OpenClaw writes its state backups (credentials, sessions) to the cwd — never commit them
+*-openclaw-backup.tar.gz
+
+# Browser-automation tool logs (console captures), not project files
+.playwright-mcp/

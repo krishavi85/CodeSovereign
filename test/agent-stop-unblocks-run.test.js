@@ -23,7 +23,7 @@ const path = require('path');
 module.exports = async function (t) {
   const appSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.js'), 'utf8');
 
-  const runWithBody = appSrc.slice(appSrc.indexOf('function runAgentWith('), appSrc.indexOf('function approvePlan('));
+  const runWithBody = appSrc.slice(appSrc.indexOf('function runAgentWith('), appSrc.indexOf('function stopRun('));
   t.ok('runAgentWith() mints a fresh run token before starting', /S\.agentRunToken = \(S\.agentRunToken \|\| 0\) \+ 1/.test(runWithBody));
   t.ok('...captures it locally so a later run cannot be confused with this one', /const myRunToken = S\.agentRunToken/.test(runWithBody));
 

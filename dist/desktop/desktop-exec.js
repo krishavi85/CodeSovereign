@@ -160,6 +160,14 @@
     return a && a.commands && a.commands[step] ? a.commands[step] : null;
   }
   function runCmdString(cmd, label) {
+    // Adapters spell "nothing to do here" as `echo "no build step"` etc.
+    // echo isn't (and shouldn't be) on the proc allowlist, so spawning it
+    // came back code -1 and a static site's "nothing to build" was recorded
+    // as a hard FAIL. It's a no-op by intent — report it as skipped.
+    if (/^echo(\s|$)/.test(String(cmd).trim())) {
+      var note = String(cmd).trim().replace(/^echo\s*/, '').replace(/^["']|["']$/g, '');
+      return Promise.resolve({ code: -3, output: note || 'nothing to run', ms: 0, skipped: true });
+    }
     var parts = cmd.split(/\s+/);
     return run(parts[0], parts.slice(1), { label: label || cmd });
   }

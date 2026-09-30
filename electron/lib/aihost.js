@@ -23,7 +23,9 @@
  */
 const http = require('http');
 const https = require('https');
-const { spawn, execFile } = require('child_process');
+const { spawn } = require('child_process');
+const crossSpawn = require('cross-spawn');
+const { killTree } = require('./killtree');
 const { URL } = require('url');
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);
@@ -165,12 +167,19 @@ async function discover() {
 /* ---- OmniRoute: the zero-key free gateway ---- */
 let orProc = null;
 
+// cross-spawn, not execFile + shell: true — resolves the npx .cmd shim on
+// Windows without concatenating args into an unescaped cmd.exe line (which
+// Node 24 flags as DEP0190 on every call).
 function cli(cmd, args, timeoutMs) {
   return new Promise((resolve) => {
-    let done = false;
-    const c = execFile(cmd, args, { timeout: timeoutMs || 20000, windowsHide: true, shell: process.platform === 'win32', maxBuffer: 1 << 20 },
-      (err, out) => { if (!done) { done = true; resolve(err ? null : String(out || '')); } });
-    c.on('error', () => { if (!done) { done = true; resolve(null); } });
+    let done = false, out = '';
+    const finish = (v) => { if (!done) { done = true; clearTimeout(timer); resolve(v); } };
+    let c;
+    try { c = crossSpawn(cmd, args, { windowsHide: true }); } catch (_) { resolve(null); return; }
+    const timer = setTimeout(() => { killTree(c); finish(null); }, timeoutMs || 20000);
+    if (c.stdout) c.stdout.on('data', (d) => { if (out.length < (1 << 20)) out += d; });
+    c.on('error', () => finish(null));
+    c.on('close', (code) => finish(code === 0 ? out : null));
   });
 }
 
@@ -186,8 +195,8 @@ function omniRunning() {
 function omniStart() {
   if (orProc && orProc.exitCode == null) return { ok: true, pid: orProc.pid, already: true };
   try {
-    orProc = spawn('npx', ['--yes', 'omniroute', 'serve'], {
-      windowsHide: true, detached: false, stdio: 'ignore', shell: process.platform === 'win32',
+    orProc = crossSpawn('npx', ['--yes', 'omniroute', 'serve'], {
+      windowsHide: true, detached: false, stdio: 'ignore',
       env: Object.assign({}, process.env, { OMNIROUTE_PORT: '20128' })
     });
     orProc.on('exit', () => { orProc = null; });

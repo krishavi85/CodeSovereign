@@ -88,7 +88,11 @@ module.exports = async function (t) {
     const files = win.Engine.ML.generate({ name: 'TinyLM', prompt: 'train a small language model from scratch' });
     t.ok('ml: emits train.py + eval.py + training.json + dataset/', files.some((f) => f.path === '/train.py') && files.some((f) => f.path === '/eval.py') && files.some((f) => f.path === '/training.json'));
 
-    const hasTorch = (() => { try { const py = have('python') ? 'python' : 'python3'; return cp.spawnSync(py, ['-c', 'import torch'], { timeout: 20000 }).status === 0; } catch (_) { return false; } })();
+    // the product's own probe (cached, timeout-aware) — a private 20s
+    // `import torch` check here reported torch missing under load when it wasn't
+    const mlProbe = adapters.probe().ml;
+    const hasTorch = !!mlProbe.torch;
+    const noTorchReason = mlProbe.torchCheck === 'timed-out' ? 'PYTORCH_CHECK_TIMED_OUT' : 'PYTORCH_NOT_INSTALLED';
     if (hasTorch) {
       const dir = writeProject(files);
       try {
@@ -102,7 +106,7 @@ module.exports = async function (t) {
     } else {
       t.ok('ml: PyTorch not installed on this runner — generation verified, training BLOCKED (not unsupported)', true);
       const dir = writeProject(files);
-      try { workspace.setRoot(dir); const r = await adapters.mlRun({}); t.equal('ml: no torch -> BLOCKED PYTORCH_NOT_INSTALLED', r.reason, 'PYTORCH_NOT_INSTALLED'); }
+      try { workspace.setRoot(dir); const r = await adapters.mlRun({}); t.equal('ml: no torch -> BLOCKED with the honest torch reason', r.reason, noTorchReason); }
       finally { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }
     }
 
@@ -114,7 +118,9 @@ module.exports = async function (t) {
       workspace.setRoot(dir2);
       const r = await adapters.mlRun({ requiresDataset: true });
       t.equal('ml: "train on our data" + no dataset -> BLOCKED', r.status, 'BLOCKED');
-      t.equal('ml: the block reason is DATASET_REQUIRED', r.reason, 'DATASET_REQUIRED');
+      // the dataset gate sits AFTER the torch check, so it's only reachable with torch
+      if (hasTorch) t.equal('ml: the block reason is DATASET_REQUIRED', r.reason, 'DATASET_REQUIRED');
+      else t.equal('ml: without torch, the torch blocker is reported first', r.reason, noTorchReason);
     } finally { try { fs.rmSync(dir2, { recursive: true, force: true }); } catch (_) {} }
   }
 

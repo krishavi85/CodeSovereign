@@ -340,25 +340,38 @@
       new RegExp("\\b" + W + "(?:s|es|ies)? (?:table|entity|model|records?|collection)\\b", "gi"),
       new RegExp("\\bwhere (?:a |an |the |each )?(?:user|admin|manager|owner|customer|member|[a-z][a-z-]{2,20}) (?:can |could )?(?:create|add|manage|edit|delete|view|track)s? (?:their |your |a |an |the |all |new )*" + W + "(?:s|es|ies)?\\b", "gi")
     ];
+    var addHit = function (word) {
+      var s = singular(word);
+      if (s.length < 3 || ENTITY_STOP[s] || actorSet[s]) return;
+      if (/^(and|the|for|with|that|this|from|into|about|their|your|all|new|some|any)$/.test(s)) return;
+      hits[s] = (hits[s] || 0) + 1;
+    };
     PATTERNS.forEach(function (re) {
       var m;
       while ((m = re.exec(raw)) !== null) {
-        for (var g = 1; g < m.length; g++) {
-          if (!m[g]) continue;
-          var s = singular(m[g]);
-          if (s.length < 3 || ENTITY_STOP[s] || actorSet[s]) continue;
-          if (/^(and|the|for|with|that|this|from|into|about|their|your|all|new|some|any)$/.test(s)) continue;
-          hits[s] = (hits[s] || 0) + 1;
-        }
+        for (var g = 1; g < m.length; g++) if (m[g]) addHit(m[g]);
       }
     });
+    // The verb patterns above capture only the FIRST noun after the verb —
+    // "manage recipes and ingredients" lost `ingredient`. Take the whole
+    // coordinated list ("a, b and c") after a management verb.
+    var LIST = /\b(?:manage|managing|track|tracking|organi[sz]e|organi[sz]ing|store|storing|catalog(?:ue)?|record|recording|log|logging)\s+(?:their |your |my |our |the |all )*([a-z][a-z-]{2,20}(?:\s*,\s*(?:and\s+)?[a-z][a-z-]{2,20})*\s*,?\s+and\s+[a-z][a-z-]{2,20})\b/gi;
+    var lm;
+    while ((lm = LIST.exec(raw)) !== null) {
+      lm[1].split(/\s*,\s*(?:and\s+)?|\s+and\s+/).forEach(function (w) { if (w) addHit(w); });
+    }
     return Object.keys(hits).sort(function (a, b) { return hits[b] - hits[a]; });
   }
 
   function entitiesFromPrompt(text, actors) {
     var lc = ' ' + String(text || '').toLowerCase() + ' ';
+    // `todo` sits after `project` on purpose: the "<A> ... <B>" parent-ref
+    // heuristic below would otherwise read "todo list app with projects" as
+    // projects belonging to todos. (Before it existed, "build a todo app"
+    // yielded only the generic placeholder `item`, and "a todo list app with
+    // projects, due dates, and comments" had no todo entity at all.)
     var CANDIDATES = [
-      ['project', /\bprojects?\b/], ['task', /\btasks?\b/], ['ticket', /\btickets?\b/],
+      ['project', /\bprojects?\b/], ['task', /\btasks?\b/], ['todo', /\bto-?dos?\b/], ['ticket', /\btickets?\b/],
       ['note', /\bnotes?\b/], ['document', /\bdocuments?\b/], ['post', /\bposts?\b|\barticles?\b/],
       ['comment', /\bcomments?\b/], ['order', /\borders?\b/], ['product', /\bproducts?\b|\bitems?\b(?! per)/],
       ['invoice', /\binvoices?\b/], ['event', /\bevents?\b/], ['booking', /\bbookings?\b|\breservations?\b|\bappointments?\b/],
@@ -374,9 +387,14 @@
     found = found.slice(0, 4);
 
     // a hierarchy hint: "<A> with <B>" / "<A> and their <B>" -> B references A
+    // "due dates" / "deadlines" describe a FIELD of the work item, not an entity
+    var wantsDue = /\bdue[- ]?dates?\b|\bdeadlines?\b|\bdue by\b/.test(lc);
     var ents = found.map(function (name, i) {
       var fields = [];
-      if (name === 'task' || name === 'ticket') fields.push({ name: 'title', type: 'text', required: true, max: 200 }, { name: 'done', type: 'bool', default: false });
+      if (name === 'task' || name === 'ticket' || name === 'todo') {
+        fields.push({ name: 'title', type: 'text', required: true, max: 200 }, { name: 'done', type: 'bool', default: false });
+        if (wantsDue) fields.push({ name: 'dueDate', type: 'timestamp' });
+      }
       else if (name === 'note' || name === 'comment' || name === 'message') fields.push({ name: 'body', type: 'longtext', required: true, max: 5000 });
       else if (name === 'product') fields.push({ name: 'title', type: 'text', required: true }, { name: 'priceCents', type: 'int', required: true });
       else if (name === 'order' || name === 'invoice' || name === 'expense') fields.push({ name: 'amountCents', type: 'int', required: true }, { name: 'status', type: 'text', default: 'pending', max: 40 });

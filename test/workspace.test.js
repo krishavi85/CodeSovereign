@@ -31,6 +31,20 @@ module.exports = async function (t) {
   await t.throwsAsync('blocks node_modules mkdir', async () => ws.mkdirPath('node_modules'));
   await t.throwsAsync('blocks workspace-root delete', async () => ws.removePath('/'));
 
+  // ".." is still refused by every mutating call, and the error now says so
+  // (it used to be misreported as "protected directory").
+  for (const [name, fn] of [
+    ['writeFile', () => ws.writeFile('../escape.txt', 'x')],
+    ['removePath', () => ws.removePath('../x')],
+    ['mkdirPath', () => ws.mkdirPath('a/../../b')],
+    ['renamePath', () => ws.renamePath('/index.html', '../stolen.html')]
+  ]) {
+    let msg = '';
+    try { await fn(); } catch (e) { msg = e.message; }
+    t.ok(name + ' refuses a ".." path with the precise reason', /".." segment/.test(msg));
+  }
+  t.ok('the escape write created nothing outside the workspace', !fs.existsSync(path.join(tmp, '..', 'escape.txt')));
+
   // .sovereign/ project memory must be writable + reloadable (not a protected dir)
   await ws.writeFile('/.sovereign/decision-state.json', '{"health":90}');
   await ws.writeFile('/.sovereign/history/2026-01-01/x.json', '{}');

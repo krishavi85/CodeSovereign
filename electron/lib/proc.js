@@ -7,6 +7,7 @@
  * run()    is a one-shot: resolves with { code, stdout, stderr }.
  */
 const { spawn } = require('child_process');
+const crossSpawn = require('cross-spawn');
 const path = require('path');
 const workspace = require('./workspace');
 
@@ -80,16 +81,29 @@ function needsShell(cmd) {
   return process.platform === 'win32' && WIN_SHIMS.has(baseCmd(cmd));
 }
 
+// SECURITY: these shims used to be launched with `shell: true`, which makes
+// Node CONCATENATE the args into one cmd.exe command line UNESCAPED (Node 24
+// now flags it: DEP0190). The allowlist only checks the executable, never its
+// args — and args arrive from the renderer, including model-chosen commands.
+// Confirmed on this codebase: runManaged({cmd:'npm', args:['--version','&',
+// 'echo','X']}) made cmd.exe run `echo X` as a second command; `& del ...`
+// would have run just the same. cross-spawn resolves the .cmd shim AND
+// escapes every argument for cmd.exe, without shell: true.
+function spawnCommand(cmd, args, opts) {
+  return needsShell(cmd) ? crossSpawn(cmd, args, opts) : spawn(cmd, args, opts);
+}
+
 function spawnManaged({ cmd, args = [], cwd, shell, rawEnv, timeoutMs }, onEvent) {
   const workdir = cwdFor(cwd);
-  const useShell = shell != null ? shell : needsShell(cmd);
-  const child = spawn(cmd, args, {
+  const opts = {
     cwd: workdir,
-    shell: useShell,
     env: rawEnv ? { ...process.env, FORCE_COLOR: '1' } : sanitizedEnv({ FORCE_COLOR: '1' }),
     windowsHide: true,
     detached: process.platform !== 'win32' // own process group -> tree kill on unix
-  });
+  };
+  // An explicit `shell` (the interactive terminal passes false) is honored
+  // as-is; otherwise shims go through cross-spawn, never an unescaped shell.
+  const child = shell != null ? spawn(cmd, args, Object.assign({ shell: shell }, opts)) : spawnCommand(cmd, args, opts);
   const id = 'p' + (++seq);
   const rec = { child, cwd: workdir, killed: false, bytes: 0 };
   procs.set(id, rec);
@@ -140,9 +154,8 @@ function runManaged({ cmd, args = [], cwd, timeoutMs }) {
     }
     let workdir;
     try { workdir = cwdFor(cwd); } catch (e) { resolve({ code: -1, stdout: '', stderr: String(e.message) }); return; }
-    const child = spawn(cmd, args, {
+    const child = spawnCommand(cmd, args, {
       cwd: workdir,
-      shell: needsShell(cmd),
       env: sanitizedEnv({ FORCE_COLOR: '0' }),
       windowsHide: true,
       detached: process.platform !== 'win32'

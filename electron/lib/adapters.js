@@ -27,6 +27,8 @@ const fsp = require('fs/promises');
 const path = require('path');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
+const crossSpawn = require('cross-spawn');
+const { killTree } = require('./killtree');
 const workspace = require('./workspace');
 
 const CAP_MS = 12 * 60 * 1000;           // hard cap per adapter run
@@ -63,17 +65,20 @@ function runIn(cwd, cmd, args, opts) {
   return new Promise((resolve) => {
     let child;
     try {
-      const useShell = !!opts.shell;
-      const c = useShell && /[ (]/.test(cmd) ? '"' + cmd + '"' : cmd;
-      child = spawn(c, args || [], {
-        cwd, windowsHide: true, shell: useShell,
-        env: Object.assign({}, process.env, opts.env || {})
-      });
+      // opts.shell used to mean `shell: true`, which concatenates args into
+      // a cmd.exe line UNESCAPED — and some args come from the project's own
+      // package.json (e.g. `npm install <name>@<version>`), i.e. untrusted
+      // content. cross-spawn resolves .cmd shims (and paths with spaces)
+      // and escapes each argument, so no shell is needed at all.
+      const spawnOpts = { cwd, windowsHide: true, env: Object.assign({}, process.env, opts.env || {}) };
+      child = opts.shell ? crossSpawn(cmd, args || [], spawnOpts) : spawn(cmd, args || [], spawnOpts);
     } catch (e) {
       return resolve({ code: -1, stdout: '', stderr: String(e && e.message || e), spawnError: true });
     }
     let out = '', err = '', done = false;
-    const timer = setTimeout(() => { done = true; try { child.kill('SIGKILL'); } catch (_) {} resolve({ code: -2, stdout: out, stderr: err + '\n[timed out]', timedOut: true }); }, opts.timeoutMs || CAP_MS);
+    // Wait for the whole tree to die before reporting: callers clean up the
+    // project dir next, and a still-running rustc/node would hold it (EPERM).
+    const timer = setTimeout(() => { done = true; killTree(child).then(() => resolve({ code: -2, stdout: out, stderr: err + '\n[timed out]', timedOut: true })); }, opts.timeoutMs || CAP_MS);
     child.stdout && child.stdout.on('data', (d) => { if (out.length < MAX_OUT) out += d; });
     child.stderr && child.stderr.on('data', (d) => { if (err.length < MAX_OUT) err += d; });
     child.on('error', (e) => { err += String(e && e.message || e); });
@@ -101,6 +106,8 @@ function root() {
 /* =====================================================================
    PROBE — what can this host actually run?
    ===================================================================== */
+const TORCH_PROBE_MS = 45000;
+const _torchCache = {}; // python path -> a SUCCESSFUL torch detection
 function probe() {
   const out = { host: { platform: process.platform, arch: process.arch }, evm: {}, android: {}, ios: {}, ml: {}, desktop: {}, extension: {}, audio: {} };
 
@@ -169,16 +176,32 @@ function probe() {
   // ML
   const py = which('python') || which('python3');
   let torch = null, cuda = false, mps = false, vramGB = 0, ramGB = Math.round(os.totalmem() / 1e9);
-  if (py) {
+  let torchCheck = 'not-run';
+  if (py && _torchCache[py]) {
+    ({ torch, cuda, mps, vramGB } = _torchCache[py]);
+    torchCheck = 'cached';
+  } else if (py) {
+    // `import torch` is slow (6s on an idle CPU-only box here), runs
+    // SYNCHRONOUSLY in the main process, and re-ran on every probe(). Under
+    // load it blew the old 20s limit and was reported as "not installed" —
+    // confirmed with torch 2.13 present. Give it room, cache a success
+    // (installed torch doesn't vanish mid-session), and never report a
+    // timed-out check as a missing install.
     try {
-      const r = spawnSync(py, ['-c', 'import json,sys\ntry:\n import torch\n cu=torch.cuda.is_available()\n mp=getattr(torch.backends,"mps",None) and torch.backends.mps.is_available()\n v=0\n if cu:\n  v=torch.cuda.get_device_properties(0).total_memory/1e9\n print(json.dumps({"torch":torch.__version__,"cuda":bool(cu),"mps":bool(mp),"vram":round(v,1)}))\nexcept Exception as e:\n print(json.dumps({"torch":None,"err":str(e)}))'], { encoding: 'utf8', timeout: 20000 });
-      const j = JSON.parse((r.stdout || '{}').trim().split('\n').pop() || '{}');
-      torch = j.torch || null; cuda = !!j.cuda; mps = !!j.mps; vramGB = j.vram || 0;
-    } catch (_) {}
+      const r = spawnSync(py, ['-c', 'import json,sys\ntry:\n import torch\n cu=torch.cuda.is_available()\n mp=getattr(torch.backends,"mps",None) and torch.backends.mps.is_available()\n v=0\n if cu:\n  v=torch.cuda.get_device_properties(0).total_memory/1e9\n print(json.dumps({"torch":torch.__version__,"cuda":bool(cu),"mps":bool(mp),"vram":round(v,1)}))\nexcept Exception as e:\n print(json.dumps({"torch":None,"err":str(e)}))'], { encoding: 'utf8', timeout: TORCH_PROBE_MS });
+      if (r.error && (r.error.code === 'ETIMEDOUT' || r.signal)) {
+        torchCheck = 'timed-out';
+      } else {
+        const j = JSON.parse((r.stdout || '{}').trim().split('\n').pop() || '{}');
+        torch = j.torch || null; cuda = !!j.cuda; mps = !!j.mps; vramGB = j.vram || 0;
+        torchCheck = 'done';
+        if (torch) _torchCache[py] = { torch, cuda, mps, vramGB };
+      }
+    } catch (_) { torchCheck = 'failed'; }
   }
   out.ml = {
     available: !!(py && torch),
-    python: !!py, torch, cuda, mps,
+    python: !!py, torch, torchCheck, cuda, mps,
     vramGB, ramGB, cpus: os.cpus().length,
     axolotl: false, trl: false
   };
@@ -519,7 +542,7 @@ async function androidRun(opts) {
   emuProc.stderr && emuProc.stderr.on('data', (d) => { emuOut += d; });
 
   async function adbShell(args, t) { return runIn(r, adb, args, { timeoutMs: t || 20000, env }); }
-  async function killEmu() { try { await adbShell(['emu', 'kill'], 8000); } catch (_) {} try { emuProc.kill('SIGKILL'); } catch (_) {} }
+  async function killEmu() { try { await adbShell(['emu', 'kill'], 8000); } catch (_) {} killTree(emuProc); }
 
   try {
     // wait for device
@@ -620,6 +643,10 @@ async function mlRun(opts) {
   const p = probe().ml;
   if (!p.python) {
     return { status: 'BLOCKED', capability: 'ml-training', reason: 'PYTHON_NOT_INSTALLED', need: 'Python 3.10+ on PATH', evidenceFile: 'ml-evidence.json' };
+  }
+  if (!p.torch && p.torchCheck === 'timed-out') {
+    return { status: 'BLOCKED', capability: 'ml-training', reason: 'PYTORCH_CHECK_TIMED_OUT',
+      need: 'The `import torch` check took over ' + Math.round(TORCH_PROBE_MS / 1000) + 's (the machine may be busy) — PyTorch may well be installed. Try again.', evidenceFile: 'ml-evidence.json' };
   }
   if (!p.torch) {
     return { status: 'BLOCKED', capability: 'ml-training', reason: 'PYTORCH_NOT_INSTALLED',
@@ -830,7 +857,7 @@ async function registryRun(opts) {
   }
   stages.IMPORT_SMOKE = importOk ? 'PASS' : 'FAIL';
 
-  if (verdProc) try { verdProc.kill('SIGKILL'); } catch (_) {}
+  if (verdProc) killTree(verdProc);
   try { fs.rmSync(consumer, { recursive: true, force: true }); } catch (_) {}
   try { fs.rmSync(tgzPath, { force: true }); } catch (_) {}
 

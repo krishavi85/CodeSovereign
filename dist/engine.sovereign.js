@@ -768,9 +768,13 @@
     steps.forEach(function (s) {
       chain = chain.then(function () {
         return X[s]().then(function (r) {
+          // 6000, not 1500: Node prints the actual error BEFORE its stack
+          // frames, so a short tail of a failing `npm test` can keep only
+          // frames and drop the one line saying what broke. Consumers that
+          // hand this to a model compact it (stack frames stripped) first.
           results[s] = {
             code: r.code, ms: r.ms, timedOut: !!r.timedOut, skipped: !!r.skipped,
-            pass: r.code === 0, tail: String(r.output || '').slice(-1500)
+            pass: r.code === 0, tail: String(r.output || '').slice(-6000)
           };
         });
       });

@@ -13,12 +13,19 @@
 (function () {
   'use strict';
   const Engine = window.Engine || (window.Engine = {});
+  // The Tool Registry — every tool the agent loops in engine.llm.js and
+  // engine.orchestra.js can call, dispatched below in exec(). All tools
+  // here are natively implemented (including understand_image);
+  // engine.work.js's patchLoop() wraps exec() afterward to add AgentBus
+  // events, MCP/generate_image/understand_image richer handling, and the
+  // done-tool verification gate (Engine.Recovery.verifyBuild) — but nothing
+  // in this base registry depends on that patch having run.
   const TOOLS = [
     'think', 'list_dir', 'glob', 'grep', 'read_file',
     'write_file', 'create_file', 'delete_file',
     'run_command', 'install_deps', 'run_tests',
     'observe', 'web_search', 'browser', 'mcp',
-    'generate_image', 'ask_user', 'delegate', 'computer', 'goal', 'done'
+    'generate_image', 'understand_image', 'ask_user', 'delegate', 'computer', 'goal', 'done'
   ];
   const SAFETY_CAP = 48;
   const DENY_CMD = /rm\s+-rf|curl\s+|wget\s+|powershell|invoke-webrequest|safeStorage|localStorage\.|\/etc\/passwd|child_process/i;
@@ -326,6 +333,13 @@
         + String(title).replace(/[<>&]/g, '') + '</text></svg>';
       try { FS.write(path, svg); } catch (e) { return { ok: false, tool: name, error: String(e.message || e) }; }
       return { ok: true, tool: name, path: path, kind: 'svg' };
+    }
+    if (name === 'understand_image') {
+      const Img = Engine.Image;
+      if (!Img || !Img.understand) return { ok: false, tool: name, error: 'image understanding not loaded' };
+      const ref = args.path || args.src || args.data;
+      try { return Object.assign({ ok: true, tool: name }, Img.understand(ref)); }
+      catch (e) { return { ok: false, tool: name, error: String(e.message || e) }; }
     }
     if (name === 'ask_user') {
       const q = String(args.question || args.text || '').trim();

@@ -336,11 +336,28 @@
   // Re-run the proof engine against the current files. opts.evidence runs the
   // real npm gates (slow); opts.observe drives the running app. The dev server
   // is restarted so observation reflects freshly-generated backend code.
+  // A freshly generated project has a package.json but no node_modules, and
+  // nothing else in this pipeline ever installs — so `npm test` and the dev
+  // server the observer starts both died on require('express') no matter how
+  // good the generated code was. Confirmed live: Integration could never
+  // verify for any app with npm dependencies. npm install is idempotent, so
+  // re-running it on an already-installed project is cheap.
+  function declaresDeps() {
+    try {
+      var p = JSON.parse(FS.read('/package.json') || 'null');
+      return !!(p && ((p.dependencies && Object.keys(p.dependencies).length) || (p.devDependencies && Object.keys(p.devDependencies).length)));
+    } catch (_) { return false; }
+  }
+
   function reproof(desktop, opts) {
     opts = opts || {};
     try { S().analyze(); } catch (e) { /* keep going */ }
     var chain = Promise.resolve();
     if (desktop && opts.evidence !== false && allows('command')) {
+      var X = window.CSExec;
+      if (X && X.install && X.available && X.available() && declaresDeps()) {
+        chain = chain.then(function () { return X.install().catch(function () {}); });
+      }
       chain = chain.then(function () { return S().runEvidence().catch(function () {}); });
     }
     if (desktop && opts.observe !== false && allows('observe')) {
@@ -358,10 +375,41 @@
       });
   }
 
+  // Orders tasks so a task never runs before everything in its dependsOn
+  // list — e.g. a "Backend" task declaring dependsOn:['T-database'] is
+  // guaranteed to run after "T-database", regardless of the order the
+  // caller happened to list them in. Depth-first topological sort; an
+  // unresolvable id (points outside this run) is treated as already
+  // satisfied, and a genuine cycle degrades to the original given order
+  // (a broken plan should still run, not crash the whole build).
+  function topoSort(tasks) {
+    var idOf = function (t, i) { return t.id || t.name || ('task-' + i); };
+    var byId = {};
+    tasks.forEach(function (t, i) { byId[idOf(t, i)] = t; });
+    var visited = {}, inStack = {}, out = [];
+    var acyclic = true;
+    function visit(t, i) {
+      var id = idOf(t, i);
+      if (visited[id]) return;
+      if (inStack[id]) { acyclic = false; return; }
+      inStack[id] = true;
+      (t.dependsOn || []).forEach(function (depId) {
+        var dep = byId[depId];
+        if (dep) visit(dep, tasks.indexOf(dep));
+      });
+      inStack[id] = false;
+      visited[id] = true;
+      out.push(t);
+    }
+    tasks.forEach(function (t, i) { visit(t, i); });
+    return acyclic ? out : tasks;
+  }
+
   function run(opts) {
     opts = opts || {};
     var desktop = opts.desktop != null ? opts.desktop : isDesktop();
     var maxCycles = opts.maxCyclesPerTask || 2;
+    var cyclesFor = function (task) { return task.maxCycles || maxCycles; };
     // Generation cycles that need per-cycle proof (LLM output can be wrong).
     // Deterministic template tasks are generated once, then verified together
     // against a single final proof pass — restarting the dev server per cycle
@@ -384,6 +432,7 @@
         fromDAG = tasks.length > 0;
       } catch (_) {}
     }
+    tasks = topoSort(tasks);
     var runCtx = opts.ctx || {};
 
     var record = { startedAt: Date.now(), desktop: desktop, tasks: [], dodBefore: null, dodAfter: null };
@@ -398,23 +447,38 @@
       record.dodBefore = Engine.DoD && Engine.DoD.load();
     });
 
+    var onTaskStart = typeof opts.onTaskStart === 'function' ? opts.onTaskStart : null;
+    var onTaskDone = typeof opts.onTaskDone === 'function' ? opts.onTaskDone : null;
+    var notifyDone = function (tr, task) { if (onTaskDone) { try { onTaskDone(tr, task); } catch (_) {} } };
+
     tasks.forEach(function (task) {
       chain = chain.then(function () {
         var tr = { id: task.id || task.name, name: task.name || task.id, status: 'PENDING', cycles: 0, notes: [] };
         record.tasks.push(tr);
+        if (onTaskStart) { try { onTaskStart(tr, task); } catch (_) {} }
         if (!allows('generate') || !allows('write')) {
           tr.status = 'BLOCKED';
           tr.notes.push('autonomy level "' + ((Engine.Autonomy && Engine.Autonomy.get && Engine.Autonomy.get()) || '?') + '" does not allow generate/write');
+          notifyDone(tr, task);
           return;
         }
         var gen = resolveGenerator(task);
-        if (!gen) { tr.status = 'BLOCKED'; tr.notes.push('no generator (template / prompt+LLM / generate fn)'); return; }
-        if (targetMet(task)) { tr.status = 'ALREADY_MET'; return; }
+        if (!gen) { tr.status = 'BLOCKED'; tr.notes.push('no generator (template / prompt+LLM / generate fn)'); notifyDone(tr, task); return; }
+        if (targetMet(task)) { tr.status = 'ALREADY_MET'; notifyDone(tr, task); return; }
         task._tr = tr;
 
         var loop = function () {
           tr.cycles++;
           return Promise.resolve(gen({ task: task, ctx: runCtx }))
+            .catch(function (err) {
+              // A generator failure (a real network/LLM error, most commonly)
+              // must fail THIS task's cycle, not crash the whole multi-task
+              // run — the same "no fake success" rule from the other
+              // direction: report the real failure honestly, don't let it
+              // silently abort sibling tasks that would have succeeded.
+              tr.notes.push('generate failed: ' + String((err && err.message) || err));
+              return [];
+            })
             .then(function (files) {
               (files || []).forEach(function (f) {
                 if (f && typeof f.path === 'string' && typeof f.content === 'string') {
@@ -425,16 +489,22 @@
               return flush();
             })
             .then(function () {
-              if (deferProof) { try { S().analyze(); } catch (_) {} tr.status = 'GENERATED'; return; }
+              // GENERATED here is provisional, not a final outcome — deferred
+              // tasks (the common case) only learn COMPLETE/FAILED from the
+              // single shared batch reproof pass after every task has run
+              // (see below), so this notify is "files written, verifying
+              // next", not "done".
+              if (deferProof) { try { S().analyze(); } catch (_) {} tr.status = 'GENERATED'; notifyDone(tr, task); return; }
               return reproof(desktop, {})
                 .then(function () {
-                  if (targetMet(task)) { tr.status = 'COMPLETE'; return; }
+                  if (targetMet(task)) { tr.status = 'COMPLETE'; notifyDone(tr, task); return; }
                   if (allows('repair') && Engine.Recovery && Engine.Recovery.run) { try { Engine.Recovery.run(); } catch (_) {} }
                   return reproof(desktop, {}).then(function () {
-                    if (targetMet(task)) { tr.status = 'COMPLETE'; return; }
-                    if (tr.cycles < maxCycles) return wait(50).then(loop);
+                    if (targetMet(task)) { tr.status = 'COMPLETE'; notifyDone(tr, task); return; }
+                    if (tr.cycles < cyclesFor(task)) return wait(50).then(loop);
                     tr.status = 'FAILED';
                     tr.notes.push('target not met after ' + tr.cycles + ' cycle(s)');
+                    notifyDone(tr, task);
                   });
                 });
             });
@@ -451,6 +521,7 @@
           var task = tasks.filter(function (x) { return x._tr === tr; })[0];
           tr.status = (task && targetMet(task)) ? 'COMPLETE' : 'FAILED';
           if (tr.status === 'FAILED') tr.notes.push('target not met after final proof');
+          notifyDone(tr, task);
         }
       });
       record.finishedAt = Date.now();
@@ -464,6 +535,61 @@
     });
   }
 
-  Engine.Orchestrator = { run: run, TEMPLATES: TEMPLATES };
+  // Maps a Contract (Engine.Contract.deriveFromPrompt's output — entities,
+  // requirements, supportedStack) onto a real task list for run(). This is
+  // what makes the offline "substantial build" path go through the SAME
+  // Build Graph -> Executor -> Observer -> Validator -> Repair system named
+  // in the architecture doc, instead of its own one-shot generate-then-gate
+  // flow. Engine.Scaffold.generate() already builds frontend + backend +
+  // data layer + auth + tests + CI together from one spec (it is not
+  // decomposable into independent per-layer generation without a much
+  // larger rework of Scaffold itself) — so "Scaffold" is one real task, and
+  // Integration/Tests are separate verification-only tasks that depend on
+  // it and read Engine.DoD's already-computed criteria (never a 4th "is it
+  // done" score derived from scratch).
+  function tasksFromContract(contract) {
+    if (!contract || !Engine.Scaffold || !Engine.Scaffold.specFromContract) return [];
+    var spec = Engine.Scaffold.specFromContract(contract);
+    var st = contract.supportedStack || {};
+    var ents = contract.entities || [];
+    var doneCriteria = function (names) {
+      return function () {
+        var d = Engine.DoD && Engine.DoD.load();
+        if (!d || !d.criteria) return false;
+        return names.every(function (n) { return !!d.criteria[n]; });
+      };
+    };
+    var tasks = [{
+      id: 'T-scaffold',
+      name: 'Scaffold: ' + (ents.map(function (e) { return e.name; }).join(', ') || 'app') +
+        (st.auth ? ' + auth' : '') + (st.jobs ? ' + jobs' : ''),
+      scaffold: spec,
+      dependsOn: []
+    }];
+    // A pure-verification task needs SOME generator or resolveGenerator()
+    // marks it BLOCKED before targetMet()/check() ever runs — and BLOCKED
+    // was never being treated as failure by callers, so a blocked
+    // integration/tests check could silently let a run report done without
+    // ever actually verifying anything. A no-op generator (nothing to
+    // write) makes check() the real gate, as intended.
+    var noopGenerate = function () { return []; };
+    tasks.push({
+      id: 'T-integration',
+      name: 'Integration: frontend/backend wired end-to-end',
+      dependsOn: ['T-scaffold'],
+      generate: noopGenerate,
+      check: doneCriteria(['dependenciesConnected', 'runtimeActionSucceeds'])
+    });
+    tasks.push({
+      id: 'T-tests',
+      name: 'Tests: build + test suite pass',
+      dependsOn: ['T-scaffold'],
+      generate: noopGenerate,
+      check: doneCriteria(['buildSucceeds', 'testsSucceed'])
+    });
+    return tasks;
+  }
+
+  Engine.Orchestrator = { run: run, TEMPLATES: TEMPLATES, tasksFromContract: tasksFromContract };
   console.info('[Orchestrator] Ultra pipeline executor ready — Engine.Orchestrator');
 })();

@@ -2,7 +2,12 @@
 /* ============================================================
    CodeSovereign - REAL app.js
    - Driven entirely by Engine (window.Engine from engine.js)
-   - Sovereign-1.5 is an Agent, not a model
+   - The Agent picker (S.agent / Engine.LLM cfg.executionBackend) selects
+     between real, functionally distinct execution paths: Direct (whatever
+     AI Provider is configured), OpenClaw (the local agent runtime, via
+     Engine.AIRouter.OpenClaw), or Hermes (forces the OpenRouter-hosted
+     Hermes provider). See engine.llm.js complete()'s executionBackend
+     branch for where this is actually enforced.
    - All hardcoded mock data replaced with Engine.*
    ============================================================ */
 const I = {
@@ -45,6 +50,8 @@ const I = {
   db:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>',
   chart:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
   sparkle:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.4L19 10l-5.2 1.6L12 17l-1.8-5.4L5 10l5.2-1.6zM19 15l.7 2.3L22 18l-2.3.7L19 21l-.7-2.3L16 18l2.3-.7z"/></svg>',
+  brain:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-1.5 5.6A3.5 3.5 0 0 0 6 19a3 3 0 0 0 3 3 3 3 0 0 0 3-3V7a3 3 0 0 0-3-3z"/><path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 1.5 5.6A3.5 3.5 0 0 1 18 19a3 3 0 0 1-3 3 3 3 0 0 1-3-3V7a3 3 0 0 1 3-3z"/></svg>',
+  bulb:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.5.4.8.9.8 1.6h5.4c0-.7.3-1.2.8-1.6A6 6 0 0 0 12 3z"/></svg>',
   clip:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/></svg>',
   at:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-4 8"/></svg>',
   expand:'<svg viewBox="0 0 24 24" width="100%" height="100%" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5"/></svg>',
@@ -98,7 +105,7 @@ const I = {
 const S = {
   screen: 'welcome',
   env: 'Prod',
-  agent: 'Sovereign-1.5',
+  agent: 'direct',
   prompt: '',
   agentPrompt: '',
   agentRuns: [],
@@ -108,12 +115,10 @@ const S = {
   agentBuilt: false,
   lastPrompt: '',
   agentRunning: false,
-  planApproved: false,
   agentStopped: false,
   plat: { web: true, ios: true, android: false, windows: false, macos: false, linux: false },
   tools: { fs: true, term: true, search: true, git: true, web: true, db: true },
   settingsTab: 'agents',
-  setToggles: {},
   factoryTab: 'env',
   ctxTab: 'context',
   ideFile: null,
@@ -235,9 +240,6 @@ function classifyArtifact(p) {
   return 'data';
 }
 
-function buildBucketName(kind) {
-  return kind === 'component' ? 'buildComponents' : (kind === 'logic' ? 'buildLogic' : 'buildData');
-}
 
 /* ============================================================
    ICON INJECTION
@@ -264,7 +266,7 @@ function renderTopNav() {
   return '<div id="topnav"><header class="cs-top">' +
     '<div class="cs-logo"><div class="badge">C</div><div class="name">CODESOVEREIGN</div></div>' +
     '<div class="cs-spacer"></div>' +
-    `<div class="cs-chip" id="modelChip" title="Switch agent"><span class="label">Agent:</span><span class="val" id="modelVal">${esc(S.agent)}</span><span style="color:#6b7488;font-size:11px">▾</span></div>` +
+    `<div class="cs-chip" id="modelChip" title="Switch agent"><span class="label">Agent:</span><span class="val" id="modelVal">${esc(agentLabel(S.agent))}</span><span style="color:#6b7488;font-size:11px">▾</span></div>` +
     `<div class="cs-chip" id="envChip" title="Switch environment"><span class="label">Environment:</span><span class="cs-dot" id="envDot" style="background:${envColor};box-shadow:0 0 8px ${envColor}"></span><span class="val" id="envVal">${esc(envLabel)}</span><span style="color:#6b7488;font-size:11px">▾</span></div>` +
     `<div class="cs-chip" id="backendChip" title="Backend status"><span class="label">Backend:</span><span class="cs-dot" id="backendDot" style="background:#34d399;box-shadow:0 0 8px #34d399"></span><span class="val" id="backendVal">${esc((window.Backend && window.Backend.engine) || 'init')}</span></div>` +
     '<button class="cs-btn cs-btn-ghost" id="runPreviewBtn" title="Run preview"><span id="icRun"></span>Run Preview</button>' +
@@ -289,16 +291,72 @@ function renderRail() {
 }
 
 
-
 /* ==== .\_addons_actions.js ==== */
 /* ============================================================
    ACTIONS — all driven by Engine
    ============================================================ */
-function cycleAgent() {
-  const AGENTS = ['Sovereign-1.5', 'Sovereign-1.5-Fast', 'Sovereign-Architect'];
-  const i = AGENTS.indexOf(S.agent);
-  S.agent = AGENTS[(i + 1) % AGENTS.length];
-  toast('Agent switched to ' + S.agent, '#22d3ee');
+// id -> display label for the execution-backend picker (Engine.AGENTS ids:
+// 'direct' | 'openclaw' | 'hermes'). Kept separate from the id itself so
+// S.agent / cfg.executionBackend stay the plain machine-readable value.
+const AGENT_LABELS = { direct: 'Direct', openclaw: 'OpenClaw', hermes: 'Hermes' };
+function agentLabel(id) { return AGENT_LABELS[id] || id; }
+
+// Replaces the old cycleAgent(): a real per-row setter instead of a blind
+// rotation through 3 cosmetic labels. Persists to the SAME config store
+// Engine.LLM.complete() reads via liveConfig(), so this is the actual
+// decision point for every subsequent generation call, not just a display
+// change. See engine.llm.js complete()'s executionBackend branch.
+function setExecutionBackend(id) {
+  if (!window.Engine || !Engine.LLM || !Engine.LLM.setConfig) return;
+  Engine.LLM.setConfig({ executionBackend: id });
+  S.agent = id;
+  toast('Agent switched to ' + agentLabel(id), '#22d3ee');
+  renderAll();
+}
+
+// Quick-access chips (top bar, welcome screen) just rotate through the 3
+// real backends on click, same as the old cycleAgent() used to, but now
+// through the real setter instead of 3 cosmetic labels.
+function cycleAgentQuick() {
+  const ids = (window.Engine && Engine.AGENTS ? Engine.AGENTS.map(a => a.id) : ['direct', 'openclaw', 'hermes']);
+  const i = ids.indexOf(S.agent);
+  setExecutionBackend(ids[(i + 1) % ids.length]);
+}
+
+// Live readiness pill for a row in the Settings Agents card — 'openclaw'
+// reads S.openclawStatus (fetched by renderSettings, see above); 'hermes'
+// checks whether a key has actually been entered; 'direct' shows whatever
+// provider is currently configured, so the row is never claiming readiness
+// it hasn't actually verified.
+function renderAgentStatusPill(id) {
+  const cfg = (window.Engine && Engine.LLM && Engine.LLM.getConfig) ? Engine.LLM.getConfig() : {};
+  if (id === 'openclaw') {
+    const st = S.openclawStatus;
+    if (!st) return '<span class="pill" style="background:var(--bg-2);color:var(--muted);font-size:10px">Checking…</span>';
+    if (!st.installed) return '<span class="pill" style="background:rgba(239,68,68,.15);color:#f87171;font-size:10px">Not installed</span>';
+    if (st.needsOnboarding) return '<span class="pill" style="background:rgba(224,138,63,.15);color:#e08a3f;font-size:10px">Needs setup</span>';
+    if (st.gateway && st.gateway.ready) return '<span class="pill" style="background:rgba(52,211,153,.15);color:#34d399;font-size:10px">Gateway ready</span>';
+    return '<span class="pill" style="background:rgba(224,138,63,.15);color:#e08a3f;font-size:10px">Gateway ' + esc((st.gateway && st.gateway.serviceStatus) || 'stopped') + '</span>';
+  }
+  if (id === 'hermes') {
+    return cfg.hermesApiKey
+      ? '<span class="pill" style="background:rgba(52,211,153,.15);color:#34d399;font-size:10px">Key set</span>'
+      : '<span class="pill" style="background:rgba(224,138,63,.15);color:#e08a3f;font-size:10px">Needs OpenRouter key</span>';
+  }
+  const providerLabel = (Engine.LLM && Engine.LLM.providers || []).find(p => p.id === cfg.providerId);
+  return '<span class="pill" style="background:var(--bg-2);color:var(--muted);font-size:10px">' + esc(providerLabel ? providerLabel.label : (cfg.providerId || 'none configured')) + '</span>';
+}
+
+function renderHermesKeyRow() {
+  const cfg = (window.Engine && Engine.LLM && Engine.LLM.getConfig) ? Engine.LLM.getConfig() : {};
+  return `<div style="display:flex;gap:6px;padding-left:56px">
+    <input type="password" placeholder="OpenRouter API key (openrouter.ai/keys)" value="${esc(cfg.hermesApiKey || '')}" onchange="setHermesKey(this.value)" style="flex:1;padding:6px 10px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px;color:inherit;font-size:12px">
+  </div>`;
+}
+
+function setHermesKey(val) {
+  if (!window.Engine || !Engine.LLM || !Engine.LLM.setConfig) return;
+  Engine.LLM.setConfig({ hermesApiKey: String(val || '').trim() });
   renderAll();
 }
 function toggleEnv(key) { S.env = (key || (S.env === 'prod' ? 'dev' : 'prod')).toString().toLowerCase(); renderAll(); }
@@ -386,8 +444,14 @@ function clearWorkspace() {
   toast('Workspace cleared');
   renderAll();
 }
-function resetAllData() {
-  if (!confirm('Reset everything?')) return;
+async function resetAllData() {
+  const ok = await showPromptModal({
+    title: 'Reset everything?',
+    message: 'This clears the workspace, all projects, and the agent session. This cannot be undone.',
+    confirmLabel: 'Reset',
+    showInput: false
+  });
+  if (!ok) return;
   resetAgentSession();
   try { Engine.FS.clearAll(); } catch (_) {}
   try { Engine.Recovery && Engine.Recovery.resetState && Engine.Recovery.resetState(); } catch (_) {}
@@ -398,6 +462,21 @@ function resetAllData() {
 window.clearWorkspace = clearWorkspace;
 window.resetAllData = resetAllData;
 
+// Every "Generate App" / follow-up prompt passes through here on its way
+// to Engine.Agent.run(), which by the time this file runs is no longer the
+// base implementation in engine.js — it's a chain of monkey-patches applied
+// in this order (outermost/first-refusal last): engine.stack.js (execution-
+// backend metadata) -> engine.llm.js (the real THINK/ACT/OBSERVE agent loop
+// — this is where a connected LLM actually runs; it bypasses everything
+// below when useLLM is true) -> engine.work.js (AgentBus lifecycle events,
+// the Evidence/Recovery.verifyBuild done-tool gate) -> engine.runtime.js
+// (/goal prompt routing to Engine.Goal, which delegates repair to
+// Engine.Recovery) -> engine.js's base Agent.run (the deterministic
+// contract/scaffold path, falling back to _plan()'s keyword-matched
+// generators, itself falling back to writeStarter() — now honestly flagged
+// via plan.offlineFallback when that happens). See engine.js:585,
+// engine.loop.js:16, and engine.recovery.js's Recovery object for the
+// Tool Registry and repair/verify primitives this whole chain shares.
 function genApp() {
   if (S.agentRunning) { S.screen = 'agent'; renderAll(); toast('A generation is already running — open the Agent tab to watch it, or click Stop first', '#f59e0b'); return; }
   const p = S.prompt.trim();
@@ -454,6 +533,11 @@ function runAgent() {
   renderAll();
 }
 
+// The run-token/epoch counter below (S.agentRunToken) is not real
+// cancellation — nothing aborts the in-flight LLM request or tool call.
+// Stop just bumps the token so this call's onStep/`.then()` callbacks
+// become no-ops once they next fire, and frees S.agentRunning immediately
+// so a new run isn't blocked waiting for the stale one to resolve.
 function runAgentWith(prompt, specCtx) {
   // clear any previous timers
   _agentTimers.forEach(t => clearTimeout(t));
@@ -463,7 +547,6 @@ function runAgentWith(prompt, specCtx) {
   S.lastPrompt = prompt;
   S.agentChat = [...(S.agentChat || []), { role: 'user', text: prompt, at: Date.now() }];
   S.agentRunning = true;
-  S.planApproved = false;
   // Stopping a run can't truly cancel the in-flight request (no abort
   // plumbing to the network layer yet) - it invalidates this token instead,
   // so a stopped run's late-arriving steps/completion are ignored rather
@@ -513,7 +596,10 @@ function runAgentWith(prompt, specCtx) {
     S.agentRunning = false;
     if (Engine.FS.read('/index.html')) S.agentBuilt = true;
     const last = S.agentSteps[S.agentSteps.length - 1];
-    if (last && (last.kind === 'done' || last.kind === 'error')) {
+    // 'warn' belongs in the chat transcript too — it's the run's own honest
+    // account of what didn't verify, not a silent background detail. Losing
+    // it here would mean the only place it survives is a toast that fades.
+    if (last && (last.kind === 'done' || last.kind === 'error' || last.kind === 'warn')) {
       S.agentChat = [...(S.agentChat || []), { role: 'assistant', text: last.text || last.kind, at: Date.now() }].slice(-40);
     }
     try { saveAgentSession(); } catch (_) {}
@@ -527,7 +613,12 @@ function runAgentWith(prompt, specCtx) {
     // Stay on Agent so the user can keep prompting the same app.
     try {
       S.screen = 'agent';
-      if (Engine.FS.read('/index.html')) {
+      if (last && last.kind === 'warn') {
+        // Files exist, but the run itself said something didn't verify —
+        // "Files created" in success green would contradict that. Surface
+        // the run's own warning text instead of a generic success message.
+        toast(last.text || 'Run finished, but something did not verify — see the Agent log', '#f59e0b');
+      } else if (Engine.FS.read('/index.html')) {
         toast(followUp
           ? 'App updated — send another prompt or Open IDE'
           : 'Files created — send a follow-up or Open IDE', '#34d399');
@@ -540,7 +631,7 @@ function runAgentWith(prompt, specCtx) {
     try {
       const run = {
         id: runId,
-        agent: 'Sovereign-1.5',
+        agent: S.agent,
         prompt: prompt,
         status: 'completed',
         steps: S.agentSteps.slice(),
@@ -560,12 +651,6 @@ window.runAgent = runAgent;
 window.runAgentWith = runAgentWith;
 window.genApp = genApp;
 
-function approvePlan() {
-  if (S.planApproved) { toast('Plan already approved', '#f59e0b'); return; }
-  S.planApproved = true;
-  toast('Plan approved — continuing execution', '#34d399');
-  renderAll();
-}
 function stopRun() {
   S.agentStopped = !S.agentStopped;
   if (S.agentStopped && S.agentRunning) {
@@ -624,33 +709,6 @@ function recordLastScan(issues) {
   return S.lastScan;
 }
 
-function runValidatorScan() {
-  if (S.scanRunning) { toast('Validator scan already running…', '#f59e0b'); return; }
-  S.scanRunning = true;
-  toast('Running validators against ' + Engine.FS.count() + ' files…', '#22d3ee');
-  // Removed initial renderAll() to prevent render loop flicker
-  // Run the real scan
-  setTimeout(() => {
-    try {
-      const result = Engine.Validator.runAll();
-      recordLastScan(result);
-      try { if (window.Engine && Engine.Recovery && Engine.Recovery.analyze) Engine.Recovery.analyze(); } catch (_) {}
-      const errs = S.lastScan.issues.filter(i => i.severity === 'error').length;
-      const warns = S.lastScan.issues.filter(i => i.severity === 'warning').length;
-      toast('Scan complete — ' + errs + ' errors, ' + warns + ' warnings (score ' + S.lastScan.score + ')',
-            errs === 0 ? '#34d399' : '#f59e0b');
-      // Persist to backend
-      window.Backend && window.Backend.saveScan(S.lastScan).catch(() => {});
-    } catch (e) {
-      console.error('Scan failed:', e);
-      toast('Scan failed: ' + e.message, '#ef4444');
-    } finally {
-      S.scanRunning = false;
-      // Wrap final render in try/catch to avoid breaking scanner on render error
-      try { renderAll(); } catch(_){}
-    }
-  }, 600);
-}
 
 function runPreview() {
   const html = Engine.Preview.build();
@@ -824,7 +882,7 @@ function renderWelcome() {
       <div style="display:flex;align-items:center;gap:10px;font-size:12.5px;color:#8b93a7;margin-bottom:10px">
         <span style="display:inline-flex;align-items:center;gap:6px;color:#34d399"><span style="width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 8px #34d399"></span>Engine online</span>
         <span style="color:#3a4256">·</span>
-        <span>${S.agent} ready · ${Engine.FS.count()} files · ${fmtBytes(Engine.FS.totalSize())}</span>
+        <span>${agentLabel(S.agent)} ready · ${Engine.FS.count()} files · ${fmtBytes(Engine.FS.totalSize())}</span>
       </div>
       <h1 style="font-size:36px;font-weight:700;margin:0 0 6px;letter-spacing:-.02em">Prompt Composer<span style="font-size:13px;font-weight:600;color:#22d3ee;background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.3);border-radius:8px;padding:3px 9px;margin-left:10px;vertical-align:middle;letter-spacing:0">Stage 1 of 19</span></h1>
       <p style="font-size:16px;color:#8b93a7;margin:0 0 28px">Describe your application. We&rsquo;ll normalize, classify, plan, architect, build, test, and ship it — with evidence.</p>
@@ -836,7 +894,7 @@ function renderWelcome() {
           ${platChips}
         </div>
         <div style="display:flex;align-items:center;gap:12px;border-top:1px solid rgba(255,255,255,.06);padding-top:14px">
-          <span id="welcomeAgent" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:#c7cddb;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:7px 11px;cursor:pointer"><span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center;color:#a78bfa">${I.sparkle}</span>${S.agent} <span style="display:inline-flex;width:12px;height:12px;align-items:center;justify-content:center">${I.chev}</span></span>
+          <span id="welcomeAgent" style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:#c7cddb;border:1px solid rgba(255,255,255,.1);border-radius:8px;padding:7px 11px;cursor:pointer"><span style="display:inline-flex;width:14px;height:14px;align-items:center;justify-content:center;color:#a78bfa">${I.sparkle}</span>${agentLabel(S.agent)} <span style="display:inline-flex;width:12px;height:12px;align-items:center;justify-content:center">${I.chev}</span></span>
           <span style="display:inline-flex;align-items:center;gap:7px;font-size:12.5px;color:#8b93a7;cursor:pointer"><span style="display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center">${I.clip}</span>Attach spec</span>
           <div style="flex:1"></div>
           <button id="genAppBtn" style="display:flex;align-items:center;gap:9px;padding:12px 20px;border:none;border-radius:11px;background:linear-gradient(135deg,#7c6ff5,#5b4de8);color:#fff;font:600 14px Inter;cursor:pointer;box-shadow:0 6px 20px rgba(109,93,252,.4)"><span style="display:inline-flex;width:16px;height:16px;align-items:center;justify-content:center">${I.sparkle}</span>Generate App</button>
@@ -867,7 +925,7 @@ function bindWelcome() {
   const btn = document.getElementById('genAppBtn');
   if (btn) btn.onclick = genApp;
   const ab = document.getElementById('welcomeAgent');
-  if (ab) ab.onclick = cycleAgent;
+  if (ab) ab.onclick = cycleAgentQuick;
   document.querySelectorAll('[data-plat]').forEach(el => el.onclick = () => { S.plat[el.dataset.plat] = !S.plat[el.dataset.plat]; renderAll(); });
   document.querySelectorAll('[data-try]').forEach(el => el.onclick = () => { S.prompt = el.dataset.try; renderAll(); });
   const ucBtn = document.getElementById('openUniversalComposer');
@@ -891,27 +949,59 @@ function renderAgent() {
   const steps = S.agentSteps;
   const stepIndex = (kind) => steps.findIndex(s => s.kind === kind);
 
-  const planSteps = [
-    { n: '1', title: 'Requirements', desc: 'Analyze the request and define project requirements.', kind: 'plan' },
-    { n: '2', title: 'Architecture', desc: 'Design system architecture and data flow.', kind: 'plan-result' },
-    { n: '3', title: 'Implementation', desc: 'Write real files into the workspace.', kind: 'write' },
-    { n: '4', title: 'Validation', desc: 'Run validators against the file system.', kind: 'validate' },
-    { n: '5', title: 'Complete', desc: 'Run complete.', kind: 'done' }
-  ];
-  const planState = planSteps.map(s => {
-    if (steps.some(x => x.kind === s.kind)) return 'Complete';
-    if (steps.some(x => x.kind === 'write') && s.kind === 'plan-result') return 'Complete';
-    if (S.agentRunning && steps.length > 0 && planSteps[planSteps.length - 1].kind !== s.kind && !steps.some(x => x.kind === s.kind)) {
-      const kinds = planSteps.map(p => p.kind);
-      const ci = kinds.indexOf(s.kind);
-      const lastDone = kinds.findIndex(k => steps.some(x => x.kind === k));
-      if (ci === lastDone + 1) return 'Active';
-    }
-    return 'Waiting';
-  });
+  // A task-graph run (dist/engine.js's desktop Orchestrator path) names its
+  // real stages in plan-result.taskGraph — when present, show THOSE live
+  // (Scaffold/Integration/Tests, each with its own real status from
+  // task-start/task-done events) instead of the generic 5-step overview,
+  // which has no way to represent per-task progress or a stage that
+  // genuinely failed to verify.
+  const taskGraphStep = steps.find(s => s.kind === 'plan-result' && Array.isArray(s.taskGraph) && s.taskGraph.length);
+  let planSteps, planState;
+  if (taskGraphStep) {
+    planSteps = [
+      { n: '1', title: 'Requirements', desc: 'Analyze the request and derive a machine-readable contract.', kind: 'contract' }
+    ].concat(taskGraphStep.taskGraph.map((t, i) => ({ n: String(i + 2), title: t.name.replace(/:.*/, ''), desc: t.name, taskId: t.id }))).concat([
+      { n: String(taskGraphStep.taskGraph.length + 2), title: 'Complete', desc: 'All stages verified.', kind: 'done' }
+    ]);
+    planState = planSteps.map(p => {
+      if (p.kind === 'contract') return steps.some(x => x.kind === 'contract') ? 'Complete' : (S.agentRunning ? 'Active' : 'Waiting');
+      if (p.kind === 'done') {
+        if (steps.some(x => x.kind === 'done')) return 'Complete';
+        if (steps.some(x => x.kind === 'warn')) return 'Failed';
+        return 'Waiting';
+      }
+      const doneEvt = steps.filter(x => x.kind === 'task-done' && x.taskId === p.taskId).pop();
+      if (doneEvt) {
+        if (doneEvt.status === 'FAILED' || doneEvt.status === 'BLOCKED') return 'Failed';
+        if (doneEvt.status === 'COMPLETE' || doneEvt.status === 'ALREADY_MET') return 'Complete';
+        return 'Active'; // GENERATED — written, still being verified
+      }
+      if (steps.some(x => x.kind === 'task-start' && x.taskId === p.taskId)) return 'Active';
+      return 'Waiting';
+    });
+  } else {
+    planSteps = [
+      { n: '1', title: 'Requirements', desc: 'Analyze the request and define project requirements.', kind: 'plan' },
+      { n: '2', title: 'Architecture', desc: 'Design system architecture and data flow.', kind: 'plan-result' },
+      { n: '3', title: 'Implementation', desc: 'Write real files into the workspace.', kind: 'write' },
+      { n: '4', title: 'Validation', desc: 'Run validators against the file system.', kind: 'validate' },
+      { n: '5', title: 'Complete', desc: 'Run complete.', kind: 'done' }
+    ];
+    planState = planSteps.map(s => {
+      if (steps.some(x => x.kind === s.kind)) return 'Complete';
+      if (steps.some(x => x.kind === 'write') && s.kind === 'plan-result') return 'Complete';
+      if (S.agentRunning && steps.length > 0 && planSteps[planSteps.length - 1].kind !== s.kind && !steps.some(x => x.kind === s.kind)) {
+        const kinds = planSteps.map(p => p.kind);
+        const ci = kinds.indexOf(s.kind);
+        const lastDone = kinds.findIndex(k => steps.some(x => x.kind === k));
+        if (ci === lastDone + 1) return 'Active';
+      }
+      return 'Waiting';
+    });
+  }
   const planPct = Math.round((planState.filter(s => s === 'Complete').length / planSteps.length) * 100);
   const planDone = planState.filter(s => s === 'Complete').length + ' / ' + planSteps.length;
-  const stMap = { Complete: ['#34d399','rgba(52,211,153,.14)','rgba(52,211,153,.4)'], Active: ['#a78bfa','rgba(124,91,214,.18)','rgba(124,91,214,.5)'], Waiting: ['#7b859c','rgba(255,255,255,.05)','rgba(255,255,255,.12)'] };
+  const stMap = { Complete: ['#34d399','rgba(52,211,153,.14)','rgba(52,211,153,.4)'], Active: ['#a78bfa','rgba(124,91,214,.18)','rgba(124,91,214,.5)'], Waiting: ['#7b859c','rgba(255,255,255,.05)','rgba(255,255,255,.12)'], Failed: ['#f87171','rgba(248,113,113,.14)','rgba(248,113,113,.4)'] };
   const planCards = planSteps.map((p, i) => {
     const st = planState[i];
     const m = stMap[st];
@@ -939,9 +1029,31 @@ function renderAgent() {
       ${time ? `<span style="font-size:11px;color:#6b7488;flex:none">${esc(time)}</span>` : ''}
     </div>`;
 
-  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','user':'You','route':'Router','repo':'Repo','deps':'Deps','screenshot':'Observer','evaluate':'Brain','explore':'Explore','think':'Think','act':'Act','observe':'Observe','diagnose':'Diagnose','ask':'Ask','coord':'Coordinator','swarm':'Subagent','model':'Router','goal':'Goal','cloud':'Cloud','steer':'Steer','review':'Bugbot','evidence':'Evidence' };
-  const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket','error':'alert','user':'user','route':'sparkle','repo':'branch','deps':'clip','screenshot':'eye','evaluate':'flask','explore':'branch','coord':'sparkle','swarm':'user','model':'sparkle' };
-  const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c','error':'#f87171','user':'#fbbf24','route':'#a78bfa','repo':'#22d3ee','deps':'#60a5fa','screenshot':'#34d399','evaluate':'#a78bfa','explore':'#22d3ee','coord':'#a78bfa','swarm':'#22d3ee','model':'#fbbf24' };
+  const specialistMap = { 'plan':'Planner','plan-result':'Architect','write':'Coder','validate':'Reviewer','validate-result':'Tester','done':'Deployer','error':'Agent','warn':'Agent','user':'You','route':'Router','repo':'Repo','deps':'Deps','screenshot':'Observer','evaluate':'Brain','explore':'Explore','think':'Thinking','thinking':'Thinking','act':'Act','observe':'Observe','diagnose':'Diagnose','ask':'Ask','coord':'Coordinator','swarm':'Subagent','model':'Router','goal':'Goal','cloud':'Cloud','steer':'Steer','review':'Bugbot','evidence':'Evidence','contract':'Contract','repair':'Repair','task-start':'Builder','task-done':'Builder','suggestions':'Suggestions' };
+  const specialistIcon = { 'plan':'clip','plan-result':'branch','write':'code','validate':'eye','validate-result':'flask','done':'rocket','error':'alert','warn':'alert','user':'user','route':'sparkle','repo':'branch','deps':'clip','screenshot':'eye','evaluate':'flask','explore':'branch','coord':'sparkle','swarm':'user','model':'sparkle','contract':'file','repair':'code','task-start':'box','task-done':'checkc','think':'brain','thinking':'brain','suggestions':'bulb' };
+  const specialistColor = { 'plan':'#22d3ee','plan-result':'#22d3ee','write':'#60a5fa','validate':'#a78bfa','validate-result':'#34d399','done':'#7b859c','error':'#f87171','warn':'#fbbf24','user':'#fbbf24','route':'#a78bfa','repo':'#22d3ee','deps':'#60a5fa','screenshot':'#34d399','evaluate':'#a78bfa','explore':'#22d3ee','coord':'#a78bfa','swarm':'#22d3ee','model':'#fbbf24','contract':'#22d3ee','repair':'#fbbf24','task-start':'#a78bfa','task-done':'#34d399','think':'#c084fc','thinking':'#c084fc','suggestions':'#fbbf24' };
+
+  // A distinct, non-truncated card for the agent's actual reasoning text —
+  // the generic aRow() ellipsizes to one line, which would hide the point
+  // of showing it at all.
+  const thinkingCard = (text, time) => `<div style="display:flex;gap:13px;padding:13px 14px;border-radius:10px;background:rgba(192,132,252,.08);border:1px solid rgba(192,132,252,.25);margin:2px 0">
+    <span style="width:28px;height:28px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;background:rgba(192,132,252,.18);color:#c084fc"><span style="display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center">${I.brain}</span></span>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:3px"><span style="font-size:11.5px;font-weight:700;color:#c084fc;letter-spacing:.03em">THINKING</span>${time ? `<span style="font-size:10.5px;color:#6b7488">${esc(time)}</span>` : ''}</div>
+      <div style="font-size:12.5px;color:#d7d3f5;line-height:1.5">${esc(text)}</div>
+    </div>
+  </div>`;
+  // Suggestions render as clickable chips that fill the follow-up input
+  // (not auto-send — a real generation run shouldn't fire from one click).
+  const suggestionsCard = (items, time) => `<div style="display:flex;gap:13px;padding:13px 14px;border-radius:10px;background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.2);margin:2px 0">
+    <span style="width:28px;height:28px;border-radius:8px;flex:none;display:flex;align-items:center;justify-content:center;background:rgba(251,191,36,.16);color:#fbbf24"><span style="display:inline-flex;width:15px;height:15px;align-items:center;justify-content:center">${I.bulb}</span></span>
+    <div style="flex:1;min-width:0">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:7px"><span style="font-size:11.5px;font-weight:700;color:#fbbf24;letter-spacing:.03em">WHAT NEXT?</span>${time ? `<span style="font-size:10.5px;color:#6b7488">${esc(time)}</span>` : ''}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:7px">
+        ${items.map(it => `<span data-suggestion="${esc(it)}" style="cursor:pointer;font-size:12px;color:#e6e9f2;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);padding:6px 11px;border-radius:999px">${esc(it)}</span>`).join('')}
+      </div>
+    </div>
+  </div>`;
 
   let activityRows;
   if (steps.length === 0) {
@@ -949,20 +1061,33 @@ function renderAgent() {
   } else {
     const shown = steps.slice().reverse();
     activityRows = shown.map((s, i) => {
-      const name = specialistMap[s.kind] || 'Agent';
-      const ik = specialistIcon[s.kind] || 'sparkle';
-      const color = specialistColor[s.kind] || '#a78bfa';
-      const st = s.kind === 'done' ? 'Done' : (s.kind === 'user' ? 'You' : (S.agentRunning && i === 0 ? 'Working' : 'Logged'));
-      const stC = s.kind === 'done' ? '#34d399' : s.kind === 'user' ? '#fbbf24' : '#a78bfa';
+      const time0 = i === 0 ? 'now' : fmtTimeAgo(Date.now() - i * 1000);
+      if (s.kind === 'think' || s.kind === 'thinking') return thinkingCard(s.text, time0);
+      if (s.kind === 'suggestions' && Array.isArray(s.items) && s.items.length) return suggestionsCard(s.items, time0);
+      // Task-graph stages (Scaffold/Integration/Tests) show their own
+      // name — "Scaffold: generating…" reads as live per-stage progress;
+      // a generic "Builder" label for every stage would not.
+      const name = (s.kind === 'task-start' || s.kind === 'task-done') ? (s.taskName || specialistMap[s.kind]) : (specialistMap[s.kind] || 'Agent');
+      const ik = s.kind === 'task-done' && s.status === 'FAILED' ? 'alert' : (specialistIcon[s.kind] || 'sparkle');
+      const color = s.kind === 'task-done' && s.status === 'FAILED' ? '#f87171' : (specialistColor[s.kind] || '#a78bfa');
+      const st = s.kind === 'done' ? 'Done' : s.kind === 'warn' ? 'Warn' :
+                 s.kind === 'task-start' ? 'Working' :
+                 s.kind === 'task-done' ? (s.status === 'FAILED' ? 'Failed' : s.status === 'GENERATED' ? 'Verifying' : 'Verified') :
+                 (s.kind === 'user' ? 'You' : (S.agentRunning && i === 0 ? 'Working' : 'Logged'));
+      const stC = s.kind === 'done' ? '#34d399' : s.kind === 'warn' ? '#fbbf24' :
+                  s.kind === 'task-done' ? (s.status === 'FAILED' ? '#f87171' : s.status === 'GENERATED' ? '#a78bfa' : '#34d399') :
+                  (s.kind === 'user' ? '#fbbf24' : '#a78bfa');
       const desc = s.kind === 'plan' ? s.text :
                    s.kind === 'plan-result' ? s.text :
                    s.kind === 'write' ? 'Wrote ' + s.path :
                    s.kind === 'validate' ? s.text :
+                   s.kind === 'contract' ? s.text :
+                   s.kind === 'task-start' ? 'Generating this stage…' :
+                   s.kind === 'task-done' ? s.text :
                    s.kind === 'validate-result' ? ((s.quality ? ('Quality ' + s.quality.score + (s.quality.pass ? ' pass' : ' — refining') + ' · ') : '') + (s.issues ? s.issues.length + ' issue(s) found' : 'Validation complete')) :
                    s.kind === 'done' ? s.text : s.text;
       const file = s.kind === 'write' ? s.path : null;
-      const time = i === 0 ? 'now' : fmtTimeAgo(Date.now() - i * 1000);
-      return aRow(name, ik, color, st, stC, desc, time, file);
+      return aRow(name, ik, color, st, stC, desc, time0, file);
     }).join('');
   }
 
@@ -1035,27 +1160,12 @@ function renderAgent() {
 
   // Right context panel
   const cTab = S.ctxTab;
-  const ctxTabs = [['context','Context'],['settings','Settings']].map(([k,label]) =>
+  const ctxTabs = [['context','Context']].map(([k,label]) =>
     `<span data-ctx="${k}" style="${subTab(k===cTab)}">${label}</span>`
   ).join('');
 
   let ctxBody = '';
-  if (S.ctxTab === 'settings') {
-    const agentSettings = [
-      { label: 'Auto-approve plans', desc: 'Skip manual approval for low-risk plans', type: 'toggle', def: false },
-      { label: 'Parallel agents', desc: 'Run Coder and Tester concurrently', type: 'toggle', def: true }
-    ];
-    ctxBody = `<div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c;margin-bottom:11px">AGENT BEHAVIOR</div>
-      ${agentSettings.map(r => {
-        const isT = r.type === 'toggle';
-        const sv = S.setToggles[r.label];
-        const on = isT ? (sv === undefined ? r.def : sv) : false;
-        return `<div style="display:flex;align-items:center;gap:12px;padding:11px 0;border-bottom:1px solid rgba(255,255,255,.05)">
-          <div style="flex:1"><div style="font-size:12.5px;font-weight:600">${r.label}</div><div style="font-size:11px;color:#8b93a7;margin-top:2px">${r.desc}</div></div>
-          ${isT ? `<div data-agent-toggle="${r.label}" style="width:34px;height:19px;border-radius:11px;flex:none;cursor:pointer;position:relative;background:${on?'#34d399':'rgba(255,255,255,.14)'}"><span style="position:absolute;top:2px;left:${on?'17px':'2px'};width:15px;height:15px;border-radius:50%;background:#fff;transition:.15s"></span></div>` : ''}
-        </div>`;
-      }).join('')}`;
-  } else {
+  {
     const T = S.tools;
     const contextFiles = files.slice(0, 8).map(p => {
       const ext = fileExt(p).toUpperCase() || 'FILE';
@@ -1083,7 +1193,7 @@ function renderAgent() {
       ${tool('web','Web Fetch','Fetch web resources','globe')}
       ${tool('db','Database','Query database','db')}
       <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c;margin:20px 0 12px">AGENT SETTINGS</div>
-      <div id="agentChip" style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;padding:6px 0;cursor:pointer"><span style="color:#8b93a7">Agent</span><span style="font-weight:600">${S.agent} ▾</span></div>
+      <div id="agentChip" style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;padding:6px 0;cursor:pointer"><span style="color:#8b93a7">Agent</span><span style="font-weight:600">${agentLabel(S.agent)} ▾</span></div>
       <div style="padding:8px 0"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span style="color:#8b93a7">Temperature</span><span style="font-weight:600">${S.temp}</span></div><input id="tempRange" type="range" min="0" max="1" step="0.1" value="${S.temp}" style="width:100%;accent-color:#6d5dfc;height:16px;cursor:pointer"></div>
       <div style="padding:8px 0"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span style="color:#8b93a7">Max Tokens</span><span style="font-weight:600">${S.maxTok}</span></div><input id="maxTokRange" type="range" min="512" max="16384" step="512" value="${S.maxTok}" style="width:100%;accent-color:#6d5dfc;height:16px;cursor:pointer"></div>`;
   }
@@ -1173,16 +1283,15 @@ function bindAgent() {
   if (inp) { inp.oninput = e => S.agentPrompt = e.target.value; inp.onkeydown = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); runAgent(); } }; }
   if (a('tempRange')) a('tempRange').oninput = e => { S.temp = parseFloat(e.target.value); renderAll(); };
   if (a('maxTokRange')) a('maxTokRange').oninput = e => { S.maxTok = parseInt(e.target.value); renderAll(); };
-  if (a('agentChip')) a('agentChip').onclick = cycleAgent;
+  if (a('agentChip')) a('agentChip').onclick = cycleAgentQuick;
   document.querySelectorAll('[data-art]').forEach(el => el.onclick = () => { S.artTab = el.dataset.art; renderAll(); });
   document.querySelectorAll('[data-ctx]').forEach(el => el.onclick = () => { S.ctxTab = el.dataset.ctx; renderAll(); });
   document.querySelectorAll('[data-tool]').forEach(el => el.onclick = () => { S.tools[el.dataset.tool] = !S.tools[el.dataset.tool]; renderAll(); });
-  document.querySelectorAll('[data-agent-toggle]').forEach(el => el.onclick = () => {
-    const k = el.dataset.agentToggle;
-    const def = k === 'Parallel agents';
-    const cur = S.setToggles[k];
-    S.setToggles = { ...S.setToggles, [k]: !(cur === undefined ? def : cur) };
+  document.querySelectorAll('[data-suggestion]').forEach(el => el.onclick = () => {
+    S.agentPrompt = el.dataset.suggestion;
     renderAll();
+    const inp2 = document.getElementById('agentPromptInput');
+    if (inp2) { inp2.focus(); inp2.setSelectionRange(inp2.value.length, inp2.value.length); }
   });
   document.querySelectorAll('[data-artfile]').forEach(el => el.onclick = () => { openFile(el.dataset.artfile); S.screen = 'ide'; renderAll(); });
   document.querySelectorAll('[data-ctxfile]').forEach(el => el.onclick = () => {
@@ -1249,6 +1358,35 @@ function openPipelineModal() {
 function closePipelineModal() {
   const m = document.getElementById('pipelineModal');
   if (m) m.style.display = 'none';
+}
+
+// Electron's sandboxed renderer does not implement window.prompt() at all
+// (it returns null immediately, no dialog shown — a well-known Electron gap,
+// not a bug in Chrome/Firefox where prompt() works) and window.confirm()
+// blocks the whole renderer thread unreliably under contextIsolation+sandbox.
+// This is the real in-app replacement for both, wired once and reused.
+let _promptModalResolve = null;
+function showPromptModal({ title, message, placeholder, defaultValue, confirmLabel, showInput }) {
+  return new Promise((resolve) => {
+    _promptModalResolve = resolve;
+    const m = document.getElementById('promptModal');
+    const input = document.getElementById('promptModalInput');
+    document.getElementById('promptModalTitle').textContent = title || '';
+    document.getElementById('promptModalMessage').textContent = message || '';
+    document.getElementById('promptModalConfirm').textContent = confirmLabel || 'OK';
+    input.style.display = showInput === false ? 'none' : 'block';
+    input.value = defaultValue || '';
+    input.placeholder = placeholder || '';
+    m.style.display = 'flex';
+    if (showInput !== false) { input.focus(); input.select(); }
+  });
+}
+function _closePromptModal(result) {
+  const m = document.getElementById('promptModal');
+  if (m) m.style.display = 'none';
+  const r = _promptModalResolve;
+  _promptModalResolve = null;
+  if (r) r(result);
 }
 
 function runPipelinePick(appType) {
@@ -1331,7 +1469,7 @@ function renderIDE() {
 
   // Panels
   const _hasHtml = !!Engine.FS.read('/index.html');
-  const idePanels = [['workflow','Workflow'],['preview','Live Preview' + (_hasHtml?'' : ' \xc2\xb7 no html')],['problems','Problems'],['terminal','Terminal'],['git','Git']].map(([k,label]) => {
+  const idePanels = [['workflow','Workflow'],['preview','Live Preview' + (_hasHtml?'' : ' \xb7 no html')],['problems','Problems'],['terminal','Terminal'],['git','Git']].map(([k,label]) => {
     const active = (S.idePanel || 'workflow') === k;
     const issueCount = k === 'problems' ? Engine.Validator.runAll().length : 0;
     const isPreview = k === 'preview';
@@ -1365,7 +1503,7 @@ function renderIDE() {
         }).join('')}
       </div>
       <div style="background:#0b0f1a;padding:12px 14px;overflow:auto;display:flex;flex-direction:column">
-        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#7b859c">${S.agent} ACTIVITY</span><span style="font-size:10px;font-weight:600;color:#a78bfa;background:rgba(124,91,214,.16);padding:2px 8px;border-radius:6px">${S.agentRunning?'Working':'Idle'}</span></div>
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#7b859c">${agentLabel(S.agent).toUpperCase()} ACTIVITY</span><span style="font-size:10px;font-weight:600;color:#a78bfa;background:rgba(124,91,214,.16);padding:2px 8px;border-radius:6px">${S.agentRunning?'Working':'Idle'}</span></div>
         ${S.agentSteps.length === 0 ? '<div style="font-size:12px;color:#7b859c">No agent activity yet — run an agent from the Agent screen.</div>' :
           S.agentSteps.slice(-8).map(s => {
             const color = s.kind==='done' ? '#34d399' : s.kind==='write' ? '#60a5fa' : s.kind==='validate-result' ? '#a78bfa' : '#22d3ee';
@@ -1434,7 +1572,7 @@ function renderIDE() {
             <span style="font-size:11.5px;color:#8b93a7">workspace preview <span style="color:#a9b0ff;font-family:'JetBrains Mono',monospace">preview://index.html</span></span>
           </div>
           <div style="display:flex;align-items:center;gap:6px">
-            <span style="font-size:10.5px;color:#7b859c">${Engine.FS.count()} files \xc2\xb7 ${(Engine.FS.read('/index.html')||'').length} bytes</span>
+            <span style="font-size:10.5px;color:#7b859c">${Engine.FS.count()} files \xb7 ${(Engine.FS.read('/index.html')||'').length} bytes</span>
             <span id="refreshPreviewPanel" title="Reload preview" style="width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05);color:#8b93a7;cursor:pointer"><span style="width:13px;height:13px;display:inline-flex">${I.refresh}</span></span>
             <span id="openPreviewPanel" title="Open preview in new tab" style="width:22px;height:22px;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,.05);color:#8b93a7;cursor:pointer"><span style="width:13px;height:13px;display:inline-flex">${I.ext}</span></span>
           </div>
@@ -1445,7 +1583,7 @@ function renderIDE() {
   } else {
     previewBody = `<div style="flex:1;display:flex;align-items:center;justify-content:center;padding:24px;color:#7b859c;font-size:13px;text-align:center;flex-direction:column;gap:10px">
       <span style="width:36px;height:36px;display:inline-flex;color:#5f6980">${I.monitor}</span>
-      <div>No <span style="font-family:'JetBrains Mono',monospace;color:#a9b0ff">/index.html</span> yet \xc2\xb7 Live Preview will appear when the agent writes the entry file.</div>
+      <div>No <span style="font-family:'JetBrains Mono',monospace;color:#a9b0ff">/index.html</span> yet \xb7 Live Preview will appear when the agent writes the entry file.</div>
     </div>`;
   }
   let panelBody = workflowBody;
@@ -1895,8 +2033,13 @@ function bindIDE() {
   if (ideAgent) ideAgent.onclick = () => { S.screen = 'agent'; renderAll(); };
 }
 
-function newFileDialog() {
-  const name = prompt('New file path (e.g. /src/utils.js):');
+async function newFileDialog() {
+  const name = await showPromptModal({
+    title: 'New file',
+    message: 'Enter a path for the new file.',
+    placeholder: '/src/utils.js',
+    confirmLabel: 'Create'
+  });
   if (!name) return;
   const path = name.startsWith('/') ? name : '/' + name;
   if (Engine.FS.exists(path)) { toast('File already exists', '#f59e0b'); return; }
@@ -2001,370 +2144,12 @@ function markArtifactWritten(path) {
   S.buildDone = (pct >= 100);
 }
 
-// Re-run only the components sub-phase: re-classify and re-sync.
-function setBuildSubPhase(k){
-  try {
-    S.buildSubPhase = (k === 'all') ? 'all' : k;
-    renderAll();
-  } catch (e) { console.error('setBuildSubPhase', e); }
-}
-window.setBuildSubPhase = setBuildSubPhase;
-
-function rebuildSubPhase(kind) {
-  syncBuildFromFS();
-  toast('Re-classified ' + kind + ' — ' + (S[buildBucketName(kind)].items.length) + ' files', '#22d3ee');
-  renderAll();
-}
 
 /* ============================================================
    PIPELINES SCREEN — Discovery, Workflow, Engines, Completion,
    Repair, Tool Gateway, Credential Broker, Event Bus, Deployments
    ============================================================ */
 
-function _pplResetState(){
-  S.ppl = S.ppl || {};
-  S.ppl.selectedAppType = S.ppl.selectedAppType || null;
-  S.ppl.discovery = S.ppl.discovery || null;
-  S.ppl.discoveryRunning = !!S.ppl.discoveryRunning;
-  S.ppl.engRunning = !!S.ppl.engRunning;
-  S.ppl.engProgress = S.ppl.engProgress || null;
-  S.ppl.repairIssue = S.ppl.repairIssue || null;
-  S.ppl.repairLog = S.ppl.repairLog || null;
-  S.ppl.credKey = S.ppl.credKey || '';
-  S.ppl.credVal = S.ppl.credVal || '';
-  S.ppl.eventLimit = S.ppl.eventLimit || 20;
-  S.ppl.gateContext = S.ppl.gateContext || {
-    features: ['login','dashboard','settings'],
-    mocksCritical: 0, startupError: null, contractErrors: 0,
-    migrationsPending: 0, securityHigh: 0, reliabilityErrors: 0,
-    metrics: true, logs: true, p95: 320, runbook: 'See /docs/runbook.md', testsFailed: 0,
-    residualRisk: 'low - documented in ADR-014'
-  };
-}
-
-function renderPipelines(){
-  _pplResetState();
-  const E = window.Engine || {};
-  const Ex = window.EngineExtras || {};
-  const types = (Ex.AppTypes && Ex.AppTypes.list()) || {};
-  const typeKeys = Object.keys(types);
-  const selected = S.ppl.selectedAppType || typeKeys[0];
-  if (!S.ppl.selectedAppType) S.ppl.selectedAppType = selected;
-  const selectedDef = types[selected] || null;
-
-  // Workflow state
-  const wfState = (Ex.Workflow && Ex.Workflow.state()) || 'CREATED';
-  const wfTransitions = (Ex.Workflow && Ex.Workflow.TRANSITIONS && Ex.Workflow.TRANSITIONS[wfState]) || [];
-  const wfHistory = (Ex.Workflow && Ex.Workflow.history(10)) || [];
-
-  // Engines
-  const engineList = (Ex.Engines && Ex.Engines.list()) || {};
-  const engineCount = Object.keys(engineList).length;
-
-  // Last discovery
-  const lastDisc = (Ex.Discovery && Ex.Discovery.last()) || null;
-
-  // Deployments
-  const deployments = (Ex.Deployments && Ex.Deployments.list(10)) || [];
-  const events = (Ex.EventBus && Ex.EventBus.history(S.ppl.eventLimit)) || [];
-  const creds = (Ex.CredentialBroker && Ex.CredentialBroker.redact()) || {};
-  const gw = (Ex.ToolGateway && Ex.ToolGateway.list()) || {};
-
-  // Repair state
-  const repairKnown = (Ex.Repair && Ex.Repair.listKnownFailures()) || {};
-  const repairKeys = Object.keys(repairKnown);
-
-  // Completion gates pre-eval
-  const gatePreview = (Ex.Completion && Ex.Completion.evaluateGates) ? Ex.Completion.evaluateGates(S.ppl.gateContext) : { results: [], passed: 0, total: 0 };
-
-  return `
-    <div class="screen-inner">
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px">
-        <div>
-          <div style="font-size:11px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase">${I.flow||I.deploy} Pipelines</div>
-          <h1 class="cs-h1" style="margin:4px 0">Discovery, Engineering &amp; Repair</h1>
-          <div style="color:var(--muted);font-size:13px">${typeKeys.length} app types · ${engineCount} capability engines · ${repairKeys.length} known failure patterns</div>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn ghost" data-ppl-action="run-completion">${I.shield} Run Completion</button>
-          <button class="btn primary" data-ppl-action="run-discovery">${I.run} Run Discovery</button>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px">
-        <div class="card" style="padding:16px">
-          <div class="cs-eyebrow">Workflow</div>
-          <div class="cs-stat" style="margin:6px 0;color:#22d3ee">${esc(wfState)}</div>
-          <div style="font-size:11px;color:var(--muted)">${wfTransitions.length} outgoing transitions</div>
-        </div>
-        <div class="card" style="padding:16px">
-          <div class="cs-eyebrow">Engines</div>
-          <div class="cs-stat" style="margin:6px 0;color:#a78bfa">${engineCount}</div>
-          <div style="font-size:11px;color:var(--muted)">E1 - E${engineCount} registered</div>
-        </div>
-        <div class="card" style="padding:16px">
-          <div class="cs-eyebrow">App Types</div>
-          <div class="cs-stat" style="margin:6px 0;color:#34d399">${typeKeys.length}</div>
-          <div style="font-size:11px;color:var(--muted)">pipelines available</div>
-        </div>
-        <div class="card" style="padding:16px">
-          <div class="cs-eyebrow">Release Gates</div>
-          <div class="cs-stat" style="margin:6px 0;color:${gatePreview.allPass ? '#34d399' : '#f59e0b'}">${gatePreview.passed}/${gatePreview.total}</div>
-          <div style="font-size:11px;color:var(--muted)">${gatePreview.allPass ? 'all passing' : 'attention required'}</div>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px">
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.box} App Type (${typeKeys.length})</h3>
-          <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;max-height:420px;overflow-y:auto">
-            ${typeKeys.map(k => {
-              const t = types[k];
-              const isSel = k === selected;
-              return `<button data-ppl-apptype="${esc(k)}" style="text-align:left;padding:10px 12px;border:1px solid ${isSel ? 'var(--accent)' : 'var(--line)'};border-radius:8px;background:${isSel ? 'rgba(124,111,245,.12)' : 'var(--bg-2)'};cursor:pointer;font-family:inherit;color:inherit;transition:all .15s">
-                <div style="font-weight:600;font-size:12.5px">${esc(t.label)}</div>
-                <div style="font-size:10.5px;color:var(--muted);margin-top:2px">${(t.pipeline || []).length} stages</div>
-              </button>`;
-            }).join('')}
-          </div>
-        </div>
-
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.flow} Pipeline for <span style="color:#22d3ee">${esc(selectedDef ? selectedDef.label : selected)}</span></h3>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
-            ${(selectedDef ? selectedDef.pipeline : []).map((stage, i) => `<div style="padding:6px 10px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line);font-size:12px"><span style="color:var(--muted);font-size:10px;margin-right:6px">${i+1}</span>${esc(stage)}</div>`).join('<span style="color:var(--muted)">→</span>')}
-          </div>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:14px">Selected app type drives the discovery, completion and repair pipelines.</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn primary" data-ppl-action="run-discovery" data-ppl-apptype-arg="${esc(selected)}">${I.run} Run Discovery for ${esc(selectedDef ? selectedDef.label : selected)}</button>
-            <button class="btn ghost" data-ppl-action="run-engineering" data-ppl-apptype-arg="${esc(selected)}">${I.deploy} Execute Engineering</button>
-            <button class="btn ghost" data-ppl-action="run-completion" data-ppl-apptype-arg="${esc(selected)}">${I.shield} Run Completion</button>
-            <button class="btn ghost" data-ppl-action="advance-workflow">${I.run} Advance Workflow</button>
-          </div>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px">
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.run} Discovery (10-step)</h3>
-          <div style="display:flex;flex-direction:column;gap:6px;max-height:340px;overflow-y:auto">
-            ${(Ex.Discovery && Ex.Discovery.STEPS || []).map((step, i) => {
-              const done = lastDisc && lastDisc.steps && lastDisc.steps.find(s => s.step === step && s.status === 'ok');
-              const note = done ? done.note : '';
-              return `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:${done ? 'rgba(52,211,153,.06)' : 'var(--bg-2)'}">
-                <div style="width:22px;height:22px;border-radius:50%;background:${done ? 'var(--good)' : 'var(--line)'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${i+1}</div>
-                <div style="flex:1">
-                  <div style="font-weight:600;font-size:12.5px">${esc(step.replace(/_/g,' '))}</div>
-                  <div style="font-size:10.5px;color:var(--muted)">${esc(note)}</div>
-                </div>
-              </div>`;
-            }).join('')}
-          </div>
-          ${lastDisc ? `<div style="margin-top:10px;padding:10px;border-top:1px dashed var(--line);font-size:11px;color:var(--muted)">Last run: ${esc(lastDisc.appType || '')} · ${lastDisc.elapsed || 0}ms · ${(lastDisc.artifacts && lastDisc.artifacts.engines || []).length} engines mapped</div>` : ''}
-        </div>
-
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.shield} Completion + Release Gates</h3>
-          <div style="display:flex;flex-direction:column;gap:6px;max-height:340px;overflow-y:auto">
-            ${gatePreview.results.map(r => `<div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:${r.pass ? 'rgba(52,211,153,.06)' : 'rgba(248,113,113,.06)'}">
-              <div style="width:18px;height:18px;border-radius:50%;background:${r.pass ? 'var(--good)' : '#ef4444'};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${r.pass ? '✓' : '✕'}</div>
-              <div style="flex:1;font-size:12.5px">${esc(r.label)}</div>
-              <span style="font-size:10px;color:var(--muted);font-family:monospace">${esc(r.id)}</span>
-            </div>`).join('')}
-          </div>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px">
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.alert} Repair Pipeline (9-phase)</h3>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:12px">
-            ${(Ex.Repair && Ex.Repair.PHASES || []).map((p, i) => `<div style="padding:6px 8px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line);font-size:11px"><span style="color:var(--muted);font-size:9.5px;margin-right:4px">${i+1}</span>${esc(p)}</div>`).join('')}
-          </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
-            ${repairKeys.map(k => `<button data-ppl-repair="${esc(k)}" class="btn ghost" style="padding:4px 8px;font-size:11px" title="${esc(repairKnown[k].label)}">${esc(k)}</button>`).join('')}
-          </div>
-          <div style="font-size:11px;color:var(--muted)">${repairKeys.length} known failure patterns. Click any to diagnose &amp; auto-fix.</div>
-          ${S.ppl.repairLog ? `<div style="margin-top:10px;padding:10px;background:var(--bg-2);border-radius:6px;font-size:11px;font-family:monospace;color:${S.ppl.repairLog.ok ? '#34d399' : '#f87171'}">${S.ppl.repairLog.ok ? '✓ Repaired' : '✕ Failed'}: ${esc(S.ppl.repairLog.issue ? S.ppl.repairLog.issue.type : '')} - ${(S.ppl.repairLog.log || []).length} phases executed</div>` : ''}
-        </div>
-
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.cog} Engines (E1-E${engineCount})</h3>
-          <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;max-height:340px;overflow-y:auto">
-            ${Object.keys(engineList).map(k => {
-              const eng = engineList[k];
-              return `<div style="padding:6px 8px;border-radius:6px;background:var(--bg-2);border:1px solid var(--line);font-size:11px" title="${esc(eng.name)} (${esc(eng.domain)})">
-                <div style="font-weight:700;color:#a78bfa">${esc(k)}</div>
-                <div style="font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(eng.name)}</div>
-              </div>`;
-            }).join('')}
-          </div>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px">
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:6px">${I.shield} Tool Gateway</h3>
-          <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Allow / deny is saved in this workspace</div>
-          <div style="display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto">
-            ${Object.keys(gw).map(tool => `<div style="display:flex;align-items:center;gap:10px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2)">
-              <span style="font:500 12px 'JetBrains Mono',monospace;flex:1">${esc(tool)}</span>
-              <span style="font-size:10px;color:${gw[tool] ? '#34d399' : '#ef4444'};font-weight:600">${gw[tool] ? 'ALLOW' : 'DENY'}</span>
-              <button data-ppl-gw="${esc(tool)}" class="btn ghost" style="padding:2px 8px;font-size:10.5px">toggle</button>
-            </div>`).join('')}
-          </div>
-        </div>
-
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.lock} Credential Broker</h3>
-          <div style="display:flex;gap:6px;margin-bottom:10px">
-            <input data-ppl-cred-key type="text" placeholder="key (e.g. STRIPE_API_KEY)" value="${esc(S.ppl.credKey)}" style="flex:1;padding:6px 10px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px;color:inherit;font-size:12px">
-            <input data-ppl-cred-val type="password" placeholder="value" value="${esc(S.ppl.credVal)}" style="flex:1;padding:6px 10px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px;color:inherit;font-size:12px">
-            <button class="btn primary" data-ppl-action="save-credential" style="padding:6px 12px">${I.plus} Save</button>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto">
-            ${Object.keys(creds).length === 0 ? '<div style="color:var(--muted);font-size:12px;padding:8px">No credentials stored</div>' : Object.keys(creds).map(k => `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2);font-size:12px">
-              <span style="font-family:monospace;flex:1">${esc(k)}</span>
-              <span style="font-size:10px;color:var(--good)">stored</span>
-              <button data-ppl-cred-del="${esc(k)}" class="btn ghost" style="padding:2px 8px;font-size:10.5px">delete</button>
-            </div>`).join('')}
-          </div>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:20px">
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.bell} Event Bus (${events.length})</h3>
-          <div style="display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto;font-family:monospace;font-size:11px">
-            ${events.length === 0 ? '<div style="color:var(--muted);padding:8px">No events yet. Run any pipeline to see events here.</div>' : events.map(e => `<div style="padding:6px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2)">
-              <div style="color:#a78bfa">${esc(e.event)}</div>
-              <div style="color:var(--muted);font-size:10px">${new Date(e.t).toISOString().slice(11,19)}</div>
-            </div>`).join('')}
-          </div>
-          <div style="display:flex;gap:6px;margin-top:10px">
-            <button class="btn ghost" data-ppl-action="emit-test-event" style="padding:4px 10px;font-size:11px">${I.plus} Emit test event</button>
-            <button class="btn ghost" data-ppl-action="clear-events" style="padding:4px 10px;font-size:11px">Clear</button>
-          </div>
-        </div>
-
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.deploy} Deployments (${deployments.length})</h3>
-          <div style="display:flex;flex-direction:column;gap:4px;max-height:280px;overflow-y:auto">
-            ${deployments.length === 0 ? '<div style="color:var(--muted);padding:8px">No deployments yet. Run Deploy from the top bar to record one.</div>' : deployments.map(d => `<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2);font-size:12px">
-              <span style="font-family:monospace;color:#a78bfa;flex:1">${esc(d.id)}</span>
-              <span style="font-size:10px;color:var(--muted)">${new Date(d.t).toISOString().slice(0,16).replace('T',' ')}</span>
-              <button data-ppl-rollback="${esc(d.id)}" class="btn ghost" style="padding:2px 8px;font-size:10.5px">rollback</button>
-            </div>`).join('')}
-          </div>
-        </div>
-      </div>
-
-      <div class="card" style="padding:20px">
-        <h3 class="cs-h3" style="margin-bottom:14px">${I.clock} Workflow State Machine</h3>
-        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px">
-          ${Object.keys(Ex.Workflow ? Ex.Workflow.STATES : {}).map(st => {
-            const isCurrent = st === wfState;
-            return `<div style="padding:6px 10px;border-radius:6px;background:${isCurrent ? 'var(--accent)' : 'var(--bg-2)'};border:1px solid ${isCurrent ? 'var(--accent)' : 'var(--line)'};color:${isCurrent ? '#fff' : 'var(--muted)'};font-size:11.5px;font-weight:600">${st}</div>`;
-          }).join('<span style="color:var(--muted);font-size:10px">→</span>')}
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:10px">Current state: <b style="color:#22d3ee">${esc(wfState)}</b>. Allowed next: ${wfTransitions.map(t => '<code style="background:var(--bg-2);padding:1px 6px;border-radius:4px;margin-right:4px">' + t + '</code>').join('') || '<i>none</i>'}</div>
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px">
-          ${wfTransitions.map(t => `<button data-ppl-wf="${esc(t)}" class="btn ghost" style="padding:4px 10px;font-size:11px">→ ${esc(t)}</button>`).join('')}
-        </div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:6px">Recent history</div>
-        <div style="display:flex;flex-direction:column;gap:4px;max-height:180px;overflow-y:auto;font-family:monospace;font-size:10.5px">
-          ${wfHistory.length === 0 ? '<div style="color:var(--muted)">No transitions yet</div>' : wfHistory.map(h => `<div style="padding:4px 8px;background:var(--bg-2);border-radius:4px"><span style="color:#a78bfa">${esc(h.from||'∅')}</span> → <span style="color:#34d399">${esc(h.to)}</span> <span style="color:var(--muted);margin-left:8px">${new Date(h.t).toISOString().slice(11,19)}</span></div>`).join('')}
-        </div>
-      </div>
-    </div>
-  `;
-}
-
-function bindPipelines(){
-  const root = document.getElementById('main');
-  if (!root) return;
-  // App type selector
-  root.querySelectorAll('[data-ppl-apptype]').forEach(el => {
-    el.addEventListener('click', () => {
-      const k = el.getAttribute('data-ppl-apptype');
-      S.ppl = S.ppl || {};
-      S.ppl.selectedAppType = k;
-      if (window.EngineExtras && EngineExtras.AppTypes) EngineExtras.AppTypes.setCurrent(k);
-      renderAll();
-    });
-  });
-  // Generic action buttons
-  root.querySelectorAll('[data-ppl-action]').forEach(el => {
-    el.addEventListener('click', () => {
-      const action = el.getAttribute('data-ppl-action');
-      const arg = el.getAttribute('data-ppl-apptype-arg') || (S.ppl && S.ppl.selectedAppType) || null;
-      if (action === 'run-discovery') runPipelineDiscovery(arg);
-      else if (action === 'run-engineering') runPipelineEngineering(arg);
-      else if (action === 'run-completion') runPipelineCompletion();
-      else if (action === 'advance-workflow') advanceWorkflow();
-      else if (action === 'save-credential') savePipelineCredential();
-      else if (action === 'emit-test-event') emitTestEvent();
-      else if (action === 'clear-events') clearPipelineEvents();
-    });
-  });
-  // Repair issue buttons
-  root.querySelectorAll('[data-ppl-repair]').forEach(el => {
-    el.addEventListener('click', () => {
-      const k = el.getAttribute('data-ppl-repair');
-      runPipelineRepair(k);
-    });
-  });
-  // Gateway toggles
-  root.querySelectorAll('[data-ppl-gw]').forEach(el => {
-    el.addEventListener('click', () => {
-      const tool = el.getAttribute('data-ppl-gw');
-      if (window.EngineExtras && EngineExtras.ToolGateway){
-        const cur = EngineExtras.ToolGateway.isAllowed(tool);
-        EngineExtras.ToolGateway.allow(tool, !cur);
-        renderAll();
-        toast('Gateway: ' + tool + ' → ' + (!cur ? 'ALLOW' : 'DENY') + ' (saved)');
-      }
-    });
-  });
-  // Workflow transitions
-  root.querySelectorAll('[data-ppl-wf]').forEach(el => {
-    el.addEventListener('click', () => {
-      const to = el.getAttribute('data-ppl-wf');
-      if (window.EngineExtras && EngineExtras.Workflow){
-        const ok = EngineExtras.Workflow.transition(to, { source: 'pipelines-ui' });
-        if (ok){ toast('Workflow → ' + to); renderAll(); }
-        else toast('Cannot transition to ' + to);
-      }
-    });
-  });
-  // Rollback buttons
-  root.querySelectorAll('[data-ppl-rollback]').forEach(el => {
-    el.addEventListener('click', () => {
-      const id = el.getAttribute('data-ppl-rollback');
-      if (window.EngineExtras && EngineExtras.Deployments){
-        const r = EngineExtras.Deployments.rollback(id);
-        if (r.ok){ toast('Rolled back to ' + id); renderAll(); }
-        else toast('Rollback failed');
-      }
-    });
-  });
-  // Credential inputs (auto-track value)
-  const credKey = root.querySelector('[data-ppl-cred-key]');
-  const credVal = root.querySelector('[data-ppl-cred-val]');
-  if (credKey) credKey.addEventListener('input', e => { S.ppl.credKey = e.target.value; });
-  if (credVal) credVal.addEventListener('input', e => { S.ppl.credVal = e.target.value; });
-  // Credential delete
-  root.querySelectorAll('[data-ppl-cred-del]').forEach(el => {
-    el.addEventListener('click', () => {
-      const k = el.getAttribute('data-ppl-cred-del');
-      if (window.EngineExtras && EngineExtras.CredentialBroker){
-        EngineExtras.CredentialBroker.delete(k);
-        toast('Deleted credential: ' + k);
-        renderAll();
-      }
-    });
-  });
-}
 
 /* ---------- Pipeline action handlers ---------- */
 function runPipelineDiscovery(appType){
@@ -2438,1077 +2223,14 @@ setTimeout(next, 80);
   toast('Completion started: ' + steps.length + ' steps');
 }
 
-function advanceWorkflow(){
-  if (!window.EngineExtras || !EngineExtras.Workflow){ toast('Workflow not loaded'); return; }
-  const ok = EngineExtras.Workflow.advance();
-  if (ok){ toast('Workflow → ' + EngineExtras.Workflow.state()); renderAll(); }
-  else toast('No auto-advance from ' + EngineExtras.Workflow.state());
-}
-
-function runPipelineRepair(failureType){
-  if (!window.EngineExtras || !EngineExtras.Repair){ toast('Repair not loaded'); return; }
-  S.ppl = S.ppl || {};
-  const issue = { type: failureType, element: 'sample-' + failureType, msg: 'Simulated failure: ' + failureType };
-  const result = EngineExtras.Repair.fix(issue, (iss) => {
-    // In a real run, this would patch the FS / DOM. Here we just emit + log.
-    if (EngineExtras.EventBus) EngineExtras.EventBus.emit('repair:applied', { type: iss.type });
-    return { patched: true };
-  });
-  S.ppl.repairLog = { issue, log: [{ phase: 'all', ok: result.ok }], ok: result.ok };
-  if (EngineExtras.Workflow && result.ok) EngineExtras.Workflow.transition('IMPLEMENTING', { source: 'repair', failureType });
-  if (EngineExtras.Deployments) EngineExtras.Deployments.record({ type: 'repair', failureType, ok: result.ok });
-  toast('Repair: ' + failureType + ' ' + (result.ok ? '✓' : '✕'));
-  renderAll();
-}
-
-function savePipelineCredential(){
-  if (!window.EngineExtras || !EngineExtras.CredentialBroker){ toast('Credential broker not loaded'); return; }
-  S.ppl = S.ppl || {};
-  const k = (S.ppl.credKey || '').trim();
-  const v = (S.ppl.credVal || '').trim();
-  if (!k){ toast('Key required'); return; }
-  EngineExtras.CredentialBroker.set(k, v, { t: Date.now() });
-  S.ppl.credKey = '';
-  S.ppl.credVal = '';
-  toast('Credential saved: ' + k);
-  renderAll();
-}
-
-function emitTestEvent(){
-  if (!window.EngineExtras || !EngineExtras.EventBus){ toast('EventBus not loaded'); return; }
-  EngineExtras.EventBus.emit('test:event', { t: Date.now(), source: 'pipelines-ui' });
-  renderAll();
-}
-
-function clearPipelineEvents(){
-  if (!window.EngineExtras || !EngineExtras.EventBus){ toast('EventBus not loaded'); return; }
-  EngineExtras.EventBus.clear();
-  renderAll();
-}
-
-function renderFactory(){
-  const files = Engine.FS.list();
-  const fileCount = files.filter(f => f.type === 'file').length;
-  const totalSize = Engine.FS.totalSize();
-  // Real line count: use actual content when available, else estimate from size
-  const lines = files.reduce((sum, f) => {
-    if (f.type === 'dir') return sum;
-    if (typeof f.content === 'string') {
-      // count newlines + 1 (if content not empty)
-      const n = f.content.length === 0 ? 0 : (f.content.match(/\n/g) || []).length + 1;
-      return sum + n;
-    }
-    const s = (typeof f.size === 'number' && isFinite(f.size)) ? f.size : 0;
-    return sum + Math.max(1, Math.round(s / 40));
-  }, 0);
-  const proj = Engine.Proj.current();
-  const templateDef = proj && Engine.TEMPLATES[proj.template];
-
-  // Group files by top-level directory for modules (files only)
-  const realFiles = files.filter(f => f.type === 'file');
-  const modules = {};
-  realFiles.forEach(f => {
-    const parts = f.path.split('/').filter(Boolean);
-    if (parts.length < 2) return; // root files are not modules
-    const top = parts[0];
-    if (!modules[top]) modules[top] = { count: 0, size: 0, name: top };
-    modules[top].count++;
-    modules[top].size += (typeof f.size === 'number') ? f.size : 0;
-  });
-  const moduleList = Object.values(modules).sort((a, b) => b.count - a.count);
-
-  // Recent artifacts (last 5 modified files)
-  const recent = [...realFiles]
-    .sort((a, b) => (b.mtime || 0) - (a.mtime || 0))
-    .slice(0, 5);
-
-  // Real build state, driven by the actual file system
-  // Hydrate the build sub-state if the project has files but the buckets
-  // are out of sync (e.g. first render of Factory after a project switch).
-  const pendingPlan = [S.buildComponents, S.buildLogic, S.buildData].some(b => (b && b.items || []).some(i => i.status === 'planned'));
-  if (!pendingPlan) {
-    syncBuildFromFS();
-  }
-  const comp = S.buildComponents || { planned: 0, written: 0, items: [] };
-  const logic = S.buildLogic      || { planned: 0, written: 0, items: [] };
-  const data  = S.buildData       || { planned: 0, written: 0, items: [] };
-
-  const implementTotal = comp.planned + logic.planned + data.planned;
-  const implementDone  = comp.written + logic.written + data.written;
-  const implementPct   = implementTotal === 0 ? 0 : Math.round((implementDone / implementTotal) * 100);
-
-  const validateDone = !!(S.lastScan && (S.lastScan.issues || []).filter(i => i.severity === 'error').length === 0);
-  const packageDone  = !!(S.lastDeploy && S.lastDeploy.ok);
-
-  // 5 top-level phases; each has a real, derived `done` flag
-  const phases = [
-    { name: 'Plan',      desc: 'Architecture & routes',         done: true },
-    { name: 'Scaffold',  desc: 'Project skeleton & files',      done: fileCount > 0 },
-    { name: 'Implement', desc: 'Components, logic, data',       done: implementTotal > 0 && implementDone >= implementTotal },
-    { name: 'Validate',  desc: 'Lint, type, security checks',   done: validateDone },
-    { name: 'Package',   desc: 'Bundle, minify, deploy',        done: packageDone }
-  ];
-  // Percentage is weighted: Plan 10, Scaffold 10, Implement 50, Validate 10, Package 20
-  let phasePct = 0;
-  if (phases[0].done) phasePct += 10;
-  if (phases[1].done) phasePct += 10;
-  if (implementTotal > 0) phasePct += Math.round((implementDone / implementTotal) * 50);
-  if (validateDone) phasePct += 10;
-  if (packageDone)  phasePct += 20;
-  phasePct = Math.min(100, phasePct);
-  S.buildPct = phasePct;
-  S.buildDone = phasePct >= 100;
-  const phaseIdx = phases.findIndex(p => !p.done);
-
-  // Sub-phases for the Implement step
-  const subPhases = [
-    { key: 'component', name: 'Components', icon: I.box || '', color: '#ef4444', bucket: comp, desc: 'UI markup, views, layouts' },
-    { key: 'logic',     name: 'Logic',      icon: I.code || '', color: '#fbbf24', bucket: logic, desc: 'JS / TS runtime code' },
-    { key: 'data',      name: 'Data',       icon: I.dash || '', color: '#22d3ee', bucket: data,  desc: 'JSON, CSS, docs, config' }
-  ];
-
-  return `
-    <div class="screen-inner">
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px">
-        <div>
-          <div style="font-size:11px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase">${I.factory} Factory</div>
-          <h1 class="cs-h1" style="margin:4px 0">Build Pipeline</h1>
-          <div style="color:var(--muted);font-size:13px">Real artifacts from <b>${esc(proj ? proj.name : 'no project')}</b> workspace</div>
-        </div>
-        <div style="display:flex;gap:8px">
-          <button class="btn ghost" onclick="runValidatorScan()">${I.shield} Validate</button>
-          <button class="btn primary" onclick="deploy()">${I.deploy} Build &amp; Deploy</button>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px">
-        <div class="card" style="padding:16px">
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Files</div>
-          <div class="cs-stat" style="margin:6px 0">${fileCount}</div>
-          <div style="font-size:11px;color:var(--muted)">in virtual FS</div>
-        </div>
-        <div class="card" style="padding:16px">
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Size</div>
-          <div class="cs-stat" style="margin:6px 0">${fmtBytes(totalSize)}</div>
-          <div style="font-size:11px;color:var(--muted)">on disk</div>
-        </div>
-        <div class="card" style="padding:16px">
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Lines</div>
-          <div class="cs-stat" style="margin:6px 0">${lines.toLocaleString()}</div>
-          <div style="font-size:11px;color:var(--muted)">estimated</div>
-        </div>
-        <div class="card" style="padding:16px">
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Modules</div>
-          <div class="cs-stat" style="margin:6px 0">${moduleList.length}</div>
-          <div style="font-size:11px;color:var(--muted)">top-level dirs</div>
-        </div>
-      </div>
-
-      <div class="card" style="padding:20px;margin-bottom:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Build Phases</h3>
-          <span class="pill" style="background:var(--accent);color:#fff">${phasePct}%</span>
-        </div>
-        <div style="height:8px;background:var(--bg-2);border-radius:6px;overflow:hidden;margin-bottom:18px">
-          <div style="height:100%;background:linear-gradient(90deg,var(--accent),var(--accent-2));width:${phasePct}%;transition:width .4s"></div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px">
-          ${phases.map((p, i) => `
-            <div style="padding:14px;border:1px solid var(--line);border-radius:8px;background:${p.done ? 'rgba(80,200,120,.07)' : (i === phaseIdx ? 'rgba(120,160,255,.07)' : 'var(--bg-2)')}">
-              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-                <div style="width:22px;height:22px;border-radius:50%;background:${p.done ? 'var(--good)' : (i === phaseIdx ? 'var(--accent)' : 'var(--line)')};color:#fff;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700">${i + 1}</div>
-                <span style="font-weight:600;font-size:13px">${p.name}</span>
-              </div>
-              <div style="font-size:11px;color:var(--muted)">${p.desc}</div>
-            </div>
-          `).join('')}
-        </div>
-
-        <div style="margin-top:18px;padding-top:18px;border-top:1px dashed var(--line)">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-            <div style="font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.2px;font-weight:600">Implement — Sub-phases</div>
-            <div style="display:flex;gap:6px;align-items:center">
-              <span style="font-size:11px;color:var(--muted)">Filter:</span>
-              ${['all','component','logic','data'].map(k => `<button data-buildsub="${k}" class="btn ${(S.buildSubPhase||'all')===k?'primary':'ghost'}" style="padding:4px 10px;font-size:11px" onclick="setBuildSubPhase('${k}')">${k==='all'?'All':k.charAt(0).toUpperCase()+k.slice(1)}</button>`).join(' ')}
-              <button class="btn ghost" style="padding:4px 10px;font-size:11px" onclick="syncBuildFromFS(); renderAll()">${I.refresh||'↻'} Resync</button>
-            </div>
-          </div>
-          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
-            ${subPhases.map(sp => {
-              const b = sp.bucket || {planned:0, written:0, items:[]};
-              const pct = b.planned === 0 ? 0 : Math.round((b.written / b.planned) * 100);
-              const complete = b.planned > 0 && b.written >= b.planned;
-              const active = (S.buildSubPhase||'all') === sp.key;
-              return `
-                <div data-buildsub="${sp.key}" onclick="setBuildSubPhase('${sp.key}')" style="cursor:pointer;padding:14px;border:1px solid ${active ? sp.color : 'var(--line)'};border-radius:10px;background:${active ? sp.color + '14' : 'var(--bg-2)'};transition:all .15s">
-                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
-                    <div style="display:flex;align-items:center;gap:8px">
-                      <div style="width:28px;height:28px;border-radius:7px;background:${sp.color}22;color:${sp.color};display:flex;align-items:center;justify-content:center">${sp.icon}</div>
-                      <div>
-                        <div style="font-weight:600;font-size:13px">${sp.name}</div>
-                        <div style="font-size:10.5px;color:var(--muted)">${sp.desc}</div>
-                      </div>
-                    </div>
-                    <div style="text-align:right">
-                      <div style="font:700 16px 'JetBrains Mono',monospace;color:${complete ? 'var(--good)' : sp.color}">${b.written}<span style="color:var(--muted);font-size:11px;font-weight:400">/${b.planned}</span></div>
-                      <div style="font-size:10px;color:var(--muted)">${pct}%</div>
-                    </div>
-                  </div>
-                  <div style="height:6px;background:var(--bg-2);border-radius:4px;overflow:hidden">
-                    <div style="height:100%;background:${sp.color};width:${pct}%;transition:width .3s"></div>
-                  </div>
-                </div>
-              `;
-            }).join('')}
-          </div>
-        </div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:2fr 1fr;gap:18px">
-        <div class="card" style="padding:20px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <h3 class="cs-h3">${I.box} Artifacts in workspace</h3>
-            <div style="font-size:11px;color:var(--muted)">${(S.buildSubPhase||'all')==='all' ? files.filter(f=>f.type==='file').length+' files' : (()=>{ const m={component:0,logic:0,data:0}; files.filter(f=>f.type==='file').forEach(f=>{ m[classifyArtifact(f.path)]++; }); return (m[(S.buildSubPhase)]||0)+' files'; })()}</div>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:6px;max-height:420px;overflow-y:auto">
-            ${(()=>{
-              const fileList = files.filter(f => f.type === 'file');
-              const sub = S.buildSubPhase || 'all';
-              const filtered = (sub === 'all') ? fileList : fileList.filter(f => classifyArtifact(f.path) === sub);
-              if (filtered.length === 0) {
-                return '<div style="color:var(--muted);padding:18px;text-align:center">No ' + (sub==='all'?'files':sub+' files') + ' yet. ' + (sub==='all'?'Open Agent or Welcome to scaffold a project.':'Switch filter to All or run the agent to create '+sub+' files.') + '</div>';
-              }
-              return filtered.slice(0, 60).map(f => {
-                const kind = classifyArtifact(f.path);
-                const kindColor = kind==='component' ? '#ef4444' : (kind==='logic' ? '#fbbf24' : '#22d3ee');
-                const kindLabel = kind==='component' ? 'UI' : (kind==='logic' ? 'JS' : 'DATA');
-                return `
-                <div style="display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:6px;background:var(--bg-2);cursor:pointer;border-left:3px solid ${kindColor}" onclick="openFile('${esc(f.path)}')">
-                  <span style="font-family:monospace;font-size:10px;color:${fileColor(f.path)};min-width:46px;text-transform:uppercase">${fileExt(f.path)}</span>
-                  <span style="flex:1;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(f.path)}</span>
-                  <span style="font-size:9.5px;color:${kindColor};font-weight:600;text-transform:uppercase;letter-spacing:0.5px">${kindLabel}</span>
-                  <span style="font-size:11px;color:var(--muted);min-width:60px;text-align:right">${fmtBytes(f.size)}</span>
-                </div>`;
-              }).join('');
-            })()}
-            ${(()=>{
-              const fileList = files.filter(f => f.type === 'file');
-              const sub = S.buildSubPhase || 'all';
-              const filtered = (sub === 'all') ? fileList : fileList.filter(f => classifyArtifact(f.path) === sub);
-              return filtered.length > 60 ? `<div style="text-align:center;color:var(--muted);font-size:12px;padding:8px">+${filtered.length - 60} more in IDE</div>` : '';
-            })()}
-          </div>
-        </div>
-
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">${I.dash} Modules</h3>
-          ${moduleList.length === 0
-            ? '<div style="color:var(--muted);font-size:13px">No modules yet</div>'
-            : moduleList.map(m => `
-              <div style="padding:10px;border-bottom:1px solid var(--line)">
-                <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
-                  <span>${I.folder} <b>${esc(m.name)}/</b></span>
-                  <span style="color:var(--muted)">${m.count} file${m.count === 1 ? '' : 's'}</span>
-                </div>
-                <div style="height:4px;background:var(--bg-2);border-radius:2px;overflow:hidden">
-                  <div style="height:100%;width:${Math.min(100, m.count * 18)}%;background:var(--accent)"></div>
-                </div>
-              </div>
-            `).join('')
-          }
-        </div>
-      </div>
-
-      <div class="card" style="padding:20px;margin-top:18px">
-        <h3 class="cs-h3" style="margin-bottom:14px">${I.clock} Recently modified</h3>
-        ${recent.length === 0
-          ? '<div style="color:var(--muted)">No file activity yet</div>'
-          : recent.map(f => `
-            <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px">
-              <span style="color:${fileColor(f.path)};font-family:monospace;font-size:11px;min-width:60px">${fileExt(f.path)}</span>
-              <span style="flex:1">${esc(f.path)}</span>
-              <span style="color:var(--muted);font-size:11px">${fmtTimeAgo(f.mtime || Date.now())}</span>
-            </div>
-          `).join('')
-        }
-      </div>
-    </div>
-  `;
-}
-
-function bindFactory(){
-  // No additional bindings needed (all onclick handlers)
-}
-
 
 /* ==== .\_addons_recovery.js ==== */
 /* ============================================================
    Recovery screen - runs real Engine.Validator across FS
    Shows real issues, real file paths, real severity counts
    ============================================================ */
-function renderRecovery(){
-  // Drop a scan that no longer matches the workspace (e.g. after Clear workspace).
-  if (S.lastScan && S.lastScan.fileCount !== Engine.FS.count()) S.lastScan = null;
-  // Run the real validator to get live results, including suite classification
-  if (!S.lastScan) {
-    var _ri = Engine.Validator.runAll();
-    recordLastScan(_ri);
-  } else if (!S.lastScan.suites || !S.lastScan.suites.length) {
-    S.lastScan.suites = classifyValidatorSuites(S.lastScan.issues || []);
-  }
-  try { if (window.Engine && Engine.Recovery && Engine.Recovery.analyze) Engine.Recovery.analyze(); } catch (_) {}
-  const scan = S.lastScan;
-
-  const errors = (scan.issues || []).filter(i => i.severity === 'error');
-  const warnings = (scan.issues || []).filter(i => i.severity === 'warning');
-  const info = (scan.issues || []).filter(i => i.severity === 'info');
-
-  // Group by file
-  const byFile = {};
-  (scan.issues || []).forEach(i => {
-    if (!byFile[i.file]) byFile[i.file] = [];
-    byFile[i.file].push(i);
-  });
-
-  const score = scan.score != null ? scan.score : Math.max(0, 100 - errors.length * 8 - warnings.length * 2);
-  const healthLabel = score >= 90 ? 'Excellent' : score >= 75 ? 'Good' : score >= 60 ? 'Fair' : 'Needs attention';
-  const healthColor = score >= 90 ? 'var(--good)' : score >= 75 ? 'var(--accent)' : score >= 60 ? 'var(--warn)' : 'var(--err)';
-
-  return `
-    <div class="screen-inner">
-      <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:24px">
-        <div>
-          <div style="font-size:11px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase">${I.shield} Recovery</div>
-          <h1 class="cs-h1" style="margin:4px 0">System Health &amp; Recovery</h1>
-          <div style="color:var(--muted);font-size:13px">Live scan of ${Engine.FS.count()} files in workspace</div>
-        </div>
-        <div style="display:flex;gap:8px"><button class="btn" onclick="repairWorkspace()" style="background:linear-gradient(135deg,#34d399,#10b981);color:#0a0e1a;border:none;font-weight:600;display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:14px;display:inline-flex">${I.wrench}</span> Repair All</button><button class="btn" onclick="repairWorkspaceV3()" style="background:linear-gradient(135deg,#7c5cff,#5b3bd1);color:#fff;border:none;font-weight:600;display:inline-flex;align-items:center;gap:6px" title="V3: Atomic repair transaction + convergence + strategy + certificate"><span style="width:14px;height:14px;display:inline-flex">${I.shield}</span> Run V3</button><button class="btn primary" onclick="runValidatorScan()">${I.run} Re-scan</button></div>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;margin-bottom:24px">
-        <div class="card" style="padding:18px;text-align:center">
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Health Score</div>
-          <div class="cs-stat" style="margin:6px 0;color:${healthColor}">${score}</div>
-          <div style="font-size:12px;color:var(--muted)">${healthLabel}</div>
-        </div>
-        <div class="card" style="padding:18px;text-align:center;border-left:3px solid var(--err)">
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Errors</div>
-          <div class="cs-stat" style="margin:6px 0;color:var(--err)">${errors.length}</div>
-          <div style="font-size:12px;color:var(--muted)">blocking issues</div>
-        </div>
-        <div class="card" style="padding:18px;text-align:center;border-left:3px solid var(--warn)">
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Warnings</div>
-          <div class="cs-stat" style="margin:6px 0;color:var(--warn)">${warnings.length}</div>
-          <div style="font-size:12px;color:var(--muted)">should review</div>
-        </div>
-        <div class="card" style="padding:18px;text-align:center;border-left:3px solid var(--info)">
-          <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:1px">Suggestions</div>
-          <div class="cs-stat" style="margin:6px 0;color:var(--info)">${info.length}</div>
-          <div style="font-size:12px;color:var(--muted)">info &amp; tips</div>
-        </div>
-      </div>
-
-      ${renderRecoveryAcceptanceGoal()}
-      ${renderRequirementsVerification()}
-      ${renderWiringTrace()}
-      ${renderBuildMatrix()}
-      ${renderFeasibility()}
-      ${renderCompletionAudit()}
-
-      <div style="display:grid;grid-template-columns:2fr 1fr;gap:18px">
-        <div class="card" style="padding:20px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <h3 class="cs-h3">Issues</h3>
-            <span style="font-size:12px;color:var(--muted)">last scan: ${fmtTimeAgo(scan.at || Date.now())}</span>
-          </div>
-          ${(scan.issues || []).length === 0
-            ? `<div style="text-align:center;padding:40px 0">
-                <div style="color:var(--good);width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center">${I.checkc}</div>
-                <h4 style="margin:8px 0">No issues found</h4>
-                <div style="color:var(--muted);font-size:13px">Your workspace is clean and ready to ship.</div>
-              </div>`
-            : `<div>
-                ${errors.map(i => _issueRow(i, 'error')).join('')}
-                ${warnings.map(i => _issueRow(i, 'warning')).join('')}
-                ${info.map(i => _issueRow(i, 'info')).join('')}
-              </div>`
-          }
-        </div>
-
-        <div class="card" style="padding:20px">
-          <h3 class="cs-h3" style="margin-bottom:14px">Files affected</h3>
-          ${Object.keys(byFile).length === 0
-            ? '<div style="color:var(--muted);font-size:13px">No affected files</div>'
-            : Object.entries(byFile).map(([file, issues]) => `
-              <div style="padding:8px;border-bottom:1px solid var(--line);cursor:pointer" onclick="openFile('${esc(file)}')">
-                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                  <span style="font-family:monospace;font-size:11px;color:${fileColor(file)};min-width:36px">${fileExt(file)}</span>
-                  <span style="font-size:12px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(file)}</span>
-                </div>
-                <div style="font-size:11px;color:var(--muted)">
-                  ${issues.filter(i => i.severity === 'error').length} err,
-                  ${issues.filter(i => i.severity === 'warning').length} warn,
-                  ${issues.filter(i => i.severity === 'info').length} info
-                </div>
-              </div>
-            `).join('')
-          }
-        </div>
-      </div>
-
-      <!-- Sovereign project memory (.sovereign/) -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">${I.box} Sovereign Project Memory <span class="cs-mono" style="color:var(--muted);font-weight:400">.sovereign/</span></h3>
-          <div style="display:flex;gap:6px">
-            <button class="btn" onclick="sovereignSnapshot()">+ Snapshot</button>
-            <button class="btn" onclick="runSovereignAnalysis()">${I.run} Analyze</button>
-            <button class="btn" onclick="openSovereignFile('product-brief.md')" title="Detected archetypes, domain-pack mandatory checklist, contradictions">Requirements</button>
-            ${(window.desktop && window.desktop.isDesktop) ? `<button class="btn" onclick="runSovereignObserve()" title="Drive the running app and record what every control actually does">${I.eye||I.run} Observe</button><button class="btn primary" onclick="runSovereignEvidence()" title="Run the project's real npm test / build / lint / typecheck">${I.flask||I.run} Analyze + Test</button>` : ''}
-          </div>
-        </div>
-        ${renderSovereignMemory()}
-      </div>
-
-      ${renderRuntimeAdapters()}
-
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Validator Suites</h3>
-          <span style="font-size:12px;color:var(--muted)">HTML / JavaScript / CSS / console / references / files</span>
-        </div>
-        ${renderRecoverySuites()}
-      </div>
-
-      <!-- Recovery Engine v2: Validation Layers (Step 7) -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Recovery Levels (L1-L5)</h3>
-          <span style="font-size:12px;color:var(--muted)">V2 - Syntax / Build / Runtime / Functional / Architecture</span>
-        </div>
-        ${renderRecoveryLayers()}
-      </div>
-
-      <!-- Recovery Engine v2: Weighted Health by Subsystem -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Weighted Health</h3>
-          <span style="font-size:12px;color:var(--muted)">Score by subsystem (Build 20% / Runtime 20% / Functional 20% / ...)</span>
-        </div>
-        ${renderRecoveryWeightedHealth()}
-      </div>
-
-      <!-- Recovery Engine v2: Root Cause -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Root-Cause Analysis</h3>
-          <span style="font-size:12px;color:var(--muted)">symptom → affected components → causal chain → root cause</span>
-        </div>
-        ${renderRecoveryRootCause()}
-      </div>
-
-      <!-- §59: Blast radius / change-impact -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Change Impact / Blast Radius</h3>
-          <span style="font-size:12px;color:var(--muted)">pick a file — see every file, test, migration and route a change touches</span>
-        </div>
-        ${renderRecoveryBlastRadius()}
-      </div>
-
-      <!-- Recovery Engine v2: Mock / Placeholder Detector -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Mock &amp; Placeholder Detector</h3>
-          <div style="display:flex;gap:6px;align-items:center">
-            <span style="font-size:12px;color:var(--muted)">empty handlers, fake async, TODOs, hardcoded secrets</span>
-            <button class="btn" onclick="runMockDetectorScan()">Scan</button>
-            <button class="btn btn-primary" onclick="runMockDetectorFix()">Fix placeholders</button>
-          </div>
-        </div>
-        ${renderRecoveryMockDetector()}
-      </div>
-
-      <!-- Recovery Engine v2: Repair Diff (Step 10) -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Last Repair Diff</h3>
-          <span style="font-size:12px;color:var(--muted)">before / after of every file changed by Recovery Engine v2</span>
-        </div>
-        ${renderRecoveryDiff()}
-      </div>
-
-      <!-- Recovery Engine v2: Last Run (Step 10) -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Last Recovery Run</h3>
-          <span style="font-size:12px;color:var(--muted)">agent: Sovereign-1.5 - plan / patch / verify / commit or rollback</span>
-        </div>
-        ${renderRecoveryLastRun()}
-      </div>
-
-      <!-- Recovery Engine V3: Convergence + Strategy -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">V3 - Convergence &amp; Repair Strategy</h3>
-          <span style="font-size:12px;color:var(--muted)">knows when to stop, picks the right fix, escalates when stuck</span>
-        </div>
-        ${renderRecoveryV3Convergence()}
-      </div>
-
-      <!-- Recovery Engine V3: Issue Memory -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">V3 - Issue Memory</h3>
-          <span style="font-size:12px;color:var(--muted)">persistent fingerprints - never re-apply a fix that already failed</span>
-        </div>
-        ${renderRecoveryV3IssueMemory()}
-      </div>
-
-      <!-- Recovery Engine V3: Contracts -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">V3 - Contract Validation</h3>
-          <span style="font-size:12px;color:var(--muted)">imports vs exports, fetch vs routes, form fields vs handler</span>
-        </div>
-        ${renderRecoveryV3Contracts()}
-      </div>
-
-      <!-- Recovery Engine V3: Golden Paths -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">V3 - Golden-Path Tests</h3>
-          <span style="font-size:12px;color:var(--muted)">critical workflows per app type - must pass before VERIFIED</span>
-        </div>
-        ${renderRecoveryV3GoldenPaths()}
-      </div>
-
-      <!-- Recovery Engine V3: Fault Injection (benchmark) -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">V3 - Fault Injection (Benchmark)</h3>
-          <div style="display:flex;gap:6px">
-            <button class="btn" onclick="runFaultInjectionBenchmark()">Inject + Repair All Faults</button>
-          </div>
-        </div>
-        ${renderRecoveryV3FaultInjection()}
-      </div>
-
-      <!-- Recovery Engine V3: Certificate + Benchmark -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">V3 - Recovery Certificate &amp; Benchmark</h3>
-          <span style="font-size:12px;color:var(--muted)">auditable artifact + measurable engineering performance</span>
-        </div>
-        ${renderRecoveryV3Certificate()}
-      </div>
-
-      
-      <!-- Recovery Engine V4: Real Execution & Autonomous Validation -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">V4 - Real Execution &amp; Autonomous Validation</h3>
-          <span style="font-size:12px;color:var(--muted)">real browser - real processes - sandboxing - multi-framework benchmark - blind tests - evidence-backed certificate</span>
-        </div>
-        ${renderRecoveryV4Cards()}
-      </div>
-
-      <!-- Plugin & MCP Hub -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Plugin &amp; MCP Hub</h3>
-          <span style="font-size:12px;color:var(--muted)">10 free external MCPs + 16 CodeSovereign Sovereign MCPs - install, detect, run, audit</span>
-        </div>
-        ${renderRecoveryPluginHub()}
-      </div>
-      <!-- Cross-Tab Communication Audit -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Cross-Tab Communication</h3>
-          <span style="font-size:12px;color:var(--muted)">request / response / audit / service matrix - tabs fulfill each other</span>
-        </div>
-        <div id="crossTabHost"><!-- filled by app.bus_ui.js --></div>
-        <script>
-          (function(){
-            try {
-              var host = document.getElementById('crossTabHost');
-              if (host && window.renderCrossTabCard) host.innerHTML = window.renderCrossTabCard();
-            } catch(_){}
-          })();
-        </script>
-      </div>
-
-<!-- Recovery Engine v2: Snapshots (Step 5) -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Workspace Snapshots</h3>
-          <div style="display:flex;gap:6px">
-            <button class="btn" onclick="captureSnapshot()">+ Capture</button>
-          </div>
-        </div>
-        ${renderRecoverySnapshots()}
-      </div>
-
-      <!-- Recovery Engine v2: Generate App (Step 13) -->
-      <div class="card" style="padding:20px;margin-top:18px">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 class="cs-h3">Generate App</h3>
-          <span style="font-size:12px;color:var(--muted)">Recovery-as-control-loop - choose a type, scaffold, validate, repair</span>
-        </div>
-        ${renderRecoveryGenerator()}
-      </div>
-    </div>
-  `;
-}
 
 /* ==== V4 helpers ==== */
-function renderRecoveryV4Cards(){
-  if (!window.Engine || !window.Engine.V4Benchmark) {
-    return '<div style="padding:20px;color:var(--muted);text-align:center">V4 module not loaded - ensure engine.recovery.v4.js is included</div>';
-  }
-  const FC = window.FaultClasses || window.Engine.FaultClasses;
-  const fcCount = FC ? FC.count() : 0;
-  const MF = window.MultiFramework || window.Engine.MultiFramework;
-  const mfList = MF ? MF.list : [];
-  const BT = window.BlindTests || window.Engine.BlindTests;
-  const btSize = BT ? BT.size() : 0;
-  const DR = window.DependencyResolver || window.Engine.DependencyResolver;
-  const drSize = DR ? DR.size() : 0;
-  const SC = (window.SelfCheck && window.SelfCheck.run) ? window.SelfCheck.run() : (window.Engine.SelfCheck ? window.Engine.SelfCheck.run() : null);
-  return `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:14px">
-      <div class="cs-mini" style="padding:14px;border:1px solid #6ee7b733;border-radius:8px;background:#0f172a">
-        <div style="font-size:11px;color:#6ee7b7;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Fault Classes</div>
-        <div style="font-size:24px;font-weight:700">${fcCount}</div>
-        <div style="font-size:11px;color:var(--muted)">across 8 categories</div>
-      </div>
-      <div class="cs-mini" style="padding:14px;border:1px solid #60a5fa33;border-radius:8px;background:#0f172a">
-        <div style="font-size:11px;color:#60a5fa;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Frameworks</div>
-        <div style="font-size:24px;font-weight:700">${mfList.length}</div>
-        <div style="font-size:11px;color:var(--muted)">${(mfList||[]).join(", ")||"none"}</div>
-      </div>
-      <div class="cs-mini" style="padding:14px;border:1px solid #fbbf2433;border-radius:8px;background:#0f172a">
-        <div style="font-size:11px;color:#fbbf24;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Blind Tests</div>
-        <div style="font-size:24px;font-weight:700">${btSize}</div>
-        <div style="font-size:11px;color:var(--muted)">held-out, never seen during tuning</div>
-      </div>
-      <div class="cs-mini" style="padding:14px;border:1px solid #a78bfa33;border-radius:8px;background:#0f172a">
-        <div style="font-size:11px;color:#a78bfa;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Dependency Index</div>
-        <div style="font-size:24px;font-weight:700">${drSize}</div>
-        <div style="font-size:11px;color:var(--muted)">JS + Python packages</div>
-      </div>
-      <div class="cs-mini" style="padding:14px;border:1px solid ${SC && SC.ok ? "#34d39933" : "#ef444433"};border-radius:8px;background:#0f172a">
-        <div style="font-size:11px;color:${SC && SC.ok ? "#34d399" : "#ef4444"};text-transform:uppercase;letter-spacing:1px;margin-bottom:6px">Self-Check</div>
-        <div style="font-size:24px;font-weight:700">${SC ? SC.score + "%" : "n/a"}</div>
-        <div style="font-size:11px;color:var(--muted)">${SC ? SC.passed + " of " + SC.total + " modules" : "engine not loaded"}</div>
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px">
-      <!-- V4.1 Real Browser -->
-      <div class="cs-v4card" style="padding:14px;border:1px solid #22d3ee33;border-radius:8px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-size:13px;font-weight:600;color:#22d3ee">V4.1 Real Browser</div>
-          <span style="font-size:10px;background:#22d3ee22;color:#22d3ee;padding:2px 6px;border-radius:3px">SANDBOXED</span>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Playwright-style API against synthetic HTML in iframe. Click, fill, expect, screenshot.</div>
-        <button class="btn" onclick="runV4BrowserDemo()">Run Browser Demo</button>
-        <div id="v4-browser-out" style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)"></div>
-      </div>
-      <!-- V4.2 Real Process -->
-      <div class="cs-v4card" style="padding:14px;border:1px solid #34d39933;border-radius:8px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-size:13px;font-weight:600;color:#34d399">V4.2 Real Process</div>
-          <span style="font-size:10px;background:#34d39922;color:#34d399;padding:2px 6px;border-radius:3px">SHIM</span>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Process exec with timeouts, exit codes, stdout/stderr capture. Pluggable to real OS bridge.</div>
-        <button class="btn" onclick="runV4ProcessDemo()">Run Process Demo</button>
-        <div id="v4-process-out" style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)"></div>
-      </div>
-      <!-- V4.3 Sandbox -->
-      <div class="cs-v4card" style="padding:14px;border:1px solid #f59e0b33;border-radius:8px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-size:13px;font-weight:600;color:#f59e0b">V4.3 Sandbox</div>
-          <span style="font-size:10px;background:#f59e0b22;color:#f59e0b;padding:2px 6px;border-radius:3px">ISOLATED</span>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Per-repair env: memory cap, timeout cap, network/exec policy, deny-listed paths.</div>
-        <button class="btn" onclick="runV4SandboxDemo()">Check Sandbox</button>
-        <div id="v4-sandbox-out" style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)"></div>
-      </div>
-      <!-- V4.4 Dependency Resolver -->
-      <div class="cs-v4card" style="padding:14px;border:1px solid #a78bfa33;border-radius:8px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-size:13px;font-weight:600;color:#a78bfa">V4.4 Dependency Resolver</div>
-          <span style="font-size:10px;background:#a78bfa22;color:#a78bfa;padding:2px 6px;border-radius:3px">REAL INDEX</span>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Resolves missing imports against ${drSize}-entry package index, returns install command.</div>
-        <button class="btn" onclick="runV4DependencyDemo()">Resolve Missing Pkgs</button>
-        <div id="v4-dep-out" style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)"></div>
-      </div>
-      <!-- V4.5 Server Lifecycle -->
-      <div class="cs-v4card" style="padding:14px;border:1px solid #60a5fa33;border-radius:8px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-size:13px;font-weight:600;color:#60a5fa">V4.5 Server Lifecycle</div>
-          <span style="font-size:10px;background:#60a5fa22;color:#60a5fa;padding:2px 6px;border-radius:3px">HEALTH PROBE</span>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Start/stop servers, health-probe loop with degraded/healthy states.</div>
-        <button class="btn" onclick="runV4ServerDemo()">Start Test Server</button>
-        <div id="v4-server-out" style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)"></div>
-      </div>
-      <!-- V4.6 API Runtime -->
-      <div class="cs-v4card" style="padding:14px;border:1px solid #f472b633;border-radius:8px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-size:13px;font-weight:600;color:#f472b6">V4.6 API Runtime</div>
-          <span style="font-size:10px;background:#f472b622;color:#f472b6;padding:2px 6px;border-radius:3px">REAL FETCH</span>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Same-origin fetch() against this workspace — retries, status check, body shape. No third-party placeholder APIs.</div>
-        <button class="btn" onclick="runV4ApiDemo()">Call workspace API</button>
-        <div id="v4-api-out" style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)"></div>
-      </div>
-      <!-- V4.7 DB Validator -->
-      <div class="cs-v4card" style="padding:14px;border:1px solid #fb923c33;border-radius:8px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-size:13px;font-weight:600;color:#fb923c">V4.7 DB Validator</div>
-          <span style="font-size:10px;background:#fb923c22;color:#fb923c;padding:2px 6px;border-radius:3px">INDEXEDDB</span>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Schema ensure + CRUD smoke tests against real IndexedDB. Not a mock.</div>
-        <button class="btn" onclick="runV4DBDemo()">Run CRUD Smoke</button>
-        <div id="v4-db-out" style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)"></div>
-      </div>
-      <!-- V4.8 Fault Classifier -->
-      <div class="cs-v4card" style="padding:14px;border:1px solid #c084fc33;border-radius:8px;background:linear-gradient(135deg,#0f172a 0%,#1e293b 100%)">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-size:13px;font-weight:600;color:#c084fc">V4.8 Fault Classifier</div>
-          <span style="font-size:10px;background:#c084fc22;color:#c084fc;padding:2px 6px;border-radius:3px">${fcCount} CLASSES</span>
-        </div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:10px">Map issue messages to ${fcCount}-class taxonomy across JS/HTML/CSS/Build/Runtime/Net/DB/Dep/Sec.</div>
-        <button class="btn" onclick="runV4FaultClassifierDemo()">Classify Issues</button>
-        <div id="v4-fc-out" style="margin-top:8px;font-size:11px;font-family:monospace;color:var(--muted)"></div>
-      </div>
-    </div>
-    <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
-      <button class="btn btn-primary" onclick="runV4FullBenchmark()">Run V4 Full Benchmark</button>
-      <button class="btn" onclick="runV4SelfCheck()">Engine Self-Check</button>
-      <button class="btn" onclick="runV4UnresolvedInspector()">Inspect Unresolved</button>
-      <button class="btn btn-primary" onclick="runV4UnresolvedFix()">Fix unresolved</button>
-      <button class="btn" onclick="runV4IssueV4Certificate()">Issue V4 Certificate</button>
-    </div>
-    <div id="v4-actions-out" style="margin-top:14px"></div>
-  `;
-}
-
-async function runV4BrowserDemo(){
-  const out = document.getElementById("v4-browser-out");
-  if (!out) return;
-  out.textContent = "starting browser session...";
-  try {
-    const RB = window.RealBrowser || window.Engine.RealBrowser;
-    const sess = RB.newSession("demo");
-    const html = "<!doctype html><html><body><h1 id=t>Hello</h1><button id=b>Click</button><input id=i value=\"\"></body></html>";
-    const result = await RB.runActions(sess.id, [
-      { type: "expectText", selector: "#t", value: "Hello" },
-      { type: "click", selector: "#b" },
-      { type: "fill", selector: "#i", value: "typed" },
-      { type: "expectVisible", selector: "#b" },
-      { type: "screenshot", label: "after-fill" }
-    ], html);
-    out.textContent = "ok=" + result.ok + " actions=" + result.results.length + " state=" + result.state;
-    RB.closeSession(sess.id);
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "browser-demo", ok: result.ok, actions: result.results.length });
-    toast("V4.1 Browser " + (result.ok ? "PASSED" : "FAILED"), result.ok ? "#34d399" : "#ef4444");
-  } catch(e){ out.textContent = "error: " + e.message; toast("V4.1 error: " + e.message, "#ef4444"); }
-}
-
-async function runV4ProcessDemo(){
-  const out = document.getElementById("v4-process-out");
-  if (!out) return;
-  out.textContent = "running 3 process shims...";
-  try {
-    const RP = window.RealProcess || window.Engine.RealProcess;
-    const r1 = await RP.exec("echo hello");
-    const r2 = await RP.exec("exit 1");
-    const r3 = await RP.exec("sleep 1", { timeout: 2000 });
-    out.textContent = "r1=" + r1.status + " r2=" + r2.status + "(code " + r2.code + ") r3=" + r3.status;
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "process-demo", r1: r1.status, r2: r2.status, r3: r3.status });
-    toast("V4.2 Process demo complete", "#34d399");
-  } catch(e){ out.textContent = "error: " + e.message; toast("V4.2 error: " + e.message, "#ef4444"); }
-}
-
-function runV4SandboxDemo(){
-  const out = document.getElementById("v4-sandbox-out");
-  if (!out) return;
-  try {
-    const SB = window.Sandbox || window.Engine.Sandbox;
-    const sb = SB.create({ memoryMB: 128, allowNetwork: false, allowExec: false });
-    const c1 = SB.check(sb, { kind: "exec" });
-    const c2 = SB.check(sb, { kind: "write", path: "/etc/passwd" });
-    const c3 = SB.check(sb, { kind: "read", path: "/home/user/file.txt" });
-    out.textContent = "exec=" + c1.ok + "(expected false) path-deny=" + c2.ok + "(expected false) read=" + c3.ok + "(expected true)";
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "sandbox-demo", execDenied: !c1.ok, pathDenied: !c2.ok, readAllowed: c3.ok });
-    toast("V4.3 Sandbox checks complete", "#34d399");
-  } catch(e){ out.textContent = "error: " + e.message; toast("V4.3 error: " + e.message, "#ef4444"); }
-}
-
-function runV4DependencyDemo(){
-  const out = document.getElementById("v4-dep-out");
-  if (!out) return;
-  try {
-    const DR = window.DependencyResolver || window.Engine.DependencyResolver;
-    const missing = ["lodash", "react", "missing-pkg-xyz", "fastapi", "@angular/core"];
-    const results = DR.resolveMany(missing);
-    out.innerHTML = results.map(r => esc(r.resolved ? (r.pkg + "@" + r.version + " - " + r.install) : "UNRESOLVED: " + r.importName)).join("<br>");
-    const resolved = results.filter(r => r.resolved).length;
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "dependency-demo", total: missing.length, resolved });
-    toast("V4.4 Dependency resolver: " + resolved + "/" + missing.length + " resolved", resolved === missing.length ? "#34d399" : "#f59e0b");
-  } catch(e){ out.textContent = "error: " + e.message; toast("V4.4 error: " + e.message, "#ef4444"); }
-}
-
-async function runV4ServerDemo(){
-  const out = document.getElementById("v4-server-out");
-  if (!out) return;
-  out.textContent = "starting test server...";
-  try {
-    const SL = window.ServerLifecycle || window.Engine.ServerLifecycle;
-    const srv = await SL.start("demo-server", { port: 8080, healthEveryMs: 150, healthyAfter: 1 });
-    out.textContent = "started id=" + srv.id.slice(-6) + " - waiting for healthy...";
-    const ok = await SL.waitHealthy(srv.id, 5000);
-    const fresh = SL.get(srv.id);
-    out.textContent = "state=" + (fresh ? fresh.state : "gone") + " checks=" + (fresh ? fresh.healthChecks : 0) + " fails=" + (fresh ? fresh.healthFails : 0) + " healthy=" + ok;
-    await SL.stop(srv.id);
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "server-demo", healthy: ok });
-    toast("V4.5 Server " + (ok ? "HEALTHY" : "DEGRADED"), ok ? "#34d399" : "#f59e0b");
-  } catch(e){ out.textContent = "error: " + e.message; toast("V4.5 error: " + e.message, "#ef4444"); }
-}
-
-async function runV4ApiDemo(){
-  const out = document.getElementById("v4-api-out");
-  if (!out) return;
-    out.textContent = "calling same-origin workspace…";
-  try {
-    const API = window.APIRuntime || window.Engine.APIRuntime;
-    const loc = (typeof location !== "undefined" && location.href) ? location.href : "/";
-    const r = await API.call({
-      url: loc,
-      expectStatus: 200
-    });
-    out.textContent = "ok=" + r.ok + " status=" + r.status + " ms=" + r.durationMs + " same-origin=" + !r.fallback;
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "api-demo", ok: r.ok, status: r.status, url: "workspace" });
-    toast("V4.6 workspace API " + (r.ok ? "OK" : "FAIL"), r.ok ? "#34d399" : "#ef4444");
-  } catch(e){ out.textContent = "error: " + e.message; toast("V4.6 error: " + e.message, "#ef4444"); }
-}
-
-async function runV4DBDemo(){
-  const out = document.getElementById("v4-db-out");
-  if (!out) return;
-  out.textContent = "running IndexedDB CRUD smoke...";
-  try {
-    const DB = window.DBValidator || window.Engine.DBValidator;
-    await DB.ensure("cs-bench-db", 1, "items");
-    const r = await DB.crud("cs-bench-db", "items", { name: "test", value: 42 });
-    out.textContent = "ok=" + r.ok + " steps=" + (r.steps || []).map(s => s.op + ":" + s.ok).join(",");
-    await DB.close("cs-bench-db");
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "db-demo", ok: r.ok });
-    toast("V4.7 DB " + (r.ok ? "CRUD OK" : "CRUD FAIL"), r.ok ? "#34d399" : "#ef4444");
-  } catch(e){ out.textContent = "error: " + e.message; toast("V4.7 error: " + e.message, "#ef4444"); }
-}
-
-function runV4FaultClassifierDemo(){
-  const out = document.getElementById("v4-fc-out");
-  if (!out) return;
-  try {
-    const FC = window.FaultClasses || window.Engine.FaultClasses;
-    const samples = [
-      { message: "ReferenceError: items is not defined" },
-      { message: "TypeError: Cannot read property x of undefined" },
-      { message: "Tag imbalance detected" },
-      { message: "Failed to fetch: CORS preflight failed" },
-      { message: "Hard-coded API key detected" },
-      { message: "Missing alt attribute on img" },
-      { message: "ENOENT: file not found" }
-    ];
-    const classified = samples.map(s => ({ msg: s.message, cls: FC.classify(s) || "unknown" }));
-    out.innerHTML = classified.map(c => "<span style=\"color:#c084fc\">" + esc(c.cls) + "</span> &lt;- " + esc(c.msg)).join("<br>");
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "fault-classify-demo", samples: samples.length, classified: classified.filter(c => c.cls !== "unknown").length });
-    toast("V4.8 Classified " + classified.filter(c => c.cls !== "unknown").length + "/" + samples.length, "#34d399");
-  } catch(e){ out.textContent = "error: " + e.message; toast("V4.8 error: " + e.message, "#ef4444"); }
-}
-
-async function runV4FullBenchmark(){
-  const out = document.getElementById("v4-actions-out");
-  if (!out) return;
-  out.innerHTML = "<div style=\"color:var(--muted);font-size:12px\">running V4 full benchmark (may take 5-15s)...</div>";
-  try {
-    const VB = window.V4Benchmark || window.Engine.V4Benchmark;
-    const summary = await VB.run({ frameworks: ["react","vue","svelte","angular"], includeBlind: true, includeSelfCheck: true });
-    const cert = summary.certificate || {};
-    out.innerHTML = `
-      <div style="padding:14px;border:1px solid ${summary.verdict === "V4-PASS" ? "#34d39955" : "#ef444455"};border-radius:8px;background:${summary.verdict === "V4-PASS" ? "#0f2a1a" : "#2a0f0f"}">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-          <div style="font-size:14px;font-weight:700;color:${summary.verdict === "V4-PASS" ? "#34d399" : "#ef4444"}">${esc(summary.verdict)}</div>
-          <div style="font-size:11px;color:var(--muted)">${summary.durationMs}ms</div>
-        </div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;font-size:12px">
-          <div><span style="color:var(--muted)">Detection</span><div style="font-size:18px;font-weight:600">${(summary.detectionRate * 100).toFixed(0)}%</div></div>
-          <div><span style="color:var(--muted)">Repair</span><div style="font-size:18px;font-weight:600">${(summary.repairRate * 100).toFixed(0)}%</div></div>
-          <div><span style="color:var(--muted)">RCA</span><div style="font-size:18px;font-weight:600">${(summary.rcaMean).toFixed(2)}</div></div>
-          ${summary.blind ? "<div><span style=\"color:var(--muted)\">Blind</span><div style=\"font-size:18px;font-weight:600\">" + (summary.blind.meanScore).toFixed(2) + "</div></div>" : ""}
-          ${summary.selfCheck ? "<div><span style=\"color:var(--muted)\">Self</span><div style=\"font-size:18px;font-weight:600\">" + summary.selfCheck.score + "%</div></div>" : ""}
-        </div>
-        <div style="margin-top:8px;font-size:11px;color:var(--muted)">
-          Frameworks: ${(summary.frameworkRows || []).map(r => r.framework + (r.detected ? "&#10003;" : "&#10007;")).join(" ")}
-        </div>
-        ${cert.claims ? "<div style=\"margin-top:8px;font-size:11px;color:var(--muted)\">Cert " + esc(cert.verdict) + " (" + cert.passed + "/" + cert.total + " claims, " + (cert.evidenceCount||0) + " evidence items)</div>" : ""}
-      </div>
-    `;
-    toast("V4 Full Benchmark: " + summary.verdict, summary.verdict === "V4-PASS" ? "#34d399" : "#ef4444");
-  } catch(e){ out.innerHTML = "<div style=\"color:#ef4444\">error: " + esc(e.message) + "</div>"; toast("V4 benchmark error: " + e.message, "#ef4444"); }
-}
-
-function runV4SelfCheck(){
-  const out = document.getElementById("v4-actions-out");
-  if (!out) return;
-  try {
-    const SC = window.SelfCheck || window.Engine.SelfCheck;
-    const r = SC.run();
-    out.innerHTML = `
-      <div style="padding:14px;border:1px solid ${r.ok ? "#34d39955" : "#ef444455"};border-radius:8px">
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px"><div style="font-weight:700;color:${r.ok ? "#34d399" : "#ef4444"}">Self-Check ${r.score}%</div><div style="font-size:11px;color:var(--muted)">${r.passed} / ${r.total}</div></div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:4px;font-size:11px">
-          ${r.checks.map(c => "<div style=\"color:" + (c.ok ? "#34d399" : "#ef4444") + "\">" + (c.ok ? "&#10003;" : "&#10007;") + " " + esc(c.name) + " - " + esc(c.note) + "</div>").join("")}
-        </div>
-      </div>`;
-    if (window.Engine && window.Engine.V4Certificate) window.Engine.V4Certificate.recordEvidence({ kind: "selfcheck", score: r.score, passed: r.passed, total: r.total });
-    toast("Self-check " + r.passed + "/" + r.total, r.ok ? "#34d399" : "#f59e0b");
-    if (typeof renderAll === "function") setTimeout(renderAll, 100);
-  } catch(e){ out.textContent = "error: " + e.message; toast("Self-check error: " + e.message, "#ef4444"); }
-}
-
-function runV4UnresolvedInspector(){
-  const out = document.getElementById("v4-actions-out");
-  if (!out) return;
-  try {
-    const UI = window.UnresolvedInspector || window.Engine.UnresolvedInspector;
-    const report = UI.inspectWorkspace ? UI.inspectWorkspace() : { inspected: UI.inspectAll(UI.collect ? UI.collect() : []), count: 0 };
-    const sorted = report.inspected || UI.byPriority(report.inspected || []);
-    let capture = null;
-    try { capture = window.Engine.Preview && window.Engine.Preview.capture(); } catch(_){}
-    if (!sorted.length) {
-      out.innerHTML = `
-        <div style="padding:14px;border:1px solid #34d39955;border-radius:8px">
-          <div style="font-weight:700;color:#34d399;margin-bottom:8px">Unresolved Inspector — workspace is clean</div>
-          <div style="font-size:12px;color:var(--muted)">No validator, mock, secret, timeout, or DB findings. Auto-workarounds are ready for db.connect, rt.timeout, sec.secret, and html.alt when they appear.</div>
-          ${capture && capture.dataUrl ? '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid #ffffff14"/>' : ''}
-        </div>`;
-      toast("No unresolved issues", "#34d399");
-      return;
-    }
-    out.innerHTML = `
-      <div style="padding:14px;border:1px solid #fbbf2433;border-radius:8px">
-        <div style="font-weight:700;color:#fbbf24;margin-bottom:8px">Unresolved Inspector - Triage by Priority (${sorted.length} live finding${sorted.length === 1 ? '' : 's'})</div>
-        <div style="font-size:12px">
-          ${sorted.map(i => "<div style=\"padding:6px 0;border-bottom:1px solid #ffffff10\"><span style=\"color:" + (i.priority === 1 ? "#ef4444" : i.priority === 2 ? "#f59e0b" : "#34d399") + ";font-weight:600\">P" + i.priority + "</span> <span style=\"color:#fbbf24\">" + esc(i.category) + "</span> " + esc(i.severity) + " - " + esc((i.issue && i.issue.message) || "") + (i.issue && i.issue.file ? " <span style=\"color:var(--muted)\">(" + esc(i.issue.file) + ")</span>" : "") + "<br><span style=\"color:var(--muted);font-size:11px\">Next: " + esc(i.nextStep) + " — Workaround: " + esc(i.workaround) + (i.canAutoFix ? " — auto-fix ready" : "") + "</span></div>").join("")}
-        </div>
-        ${capture && capture.dataUrl ? '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid #ffffff14"/>' : ''}
-      </div>`;
-    toast("Inspected " + sorted.length + " unresolved issues", "#fbbf24");
-  } catch(e){ out.textContent = "error: " + e.message; toast("Inspector error: " + e.message, "#ef4444"); }
-}
-
-async function runV4UnresolvedFix(){
-  const out = document.getElementById("v4-actions-out");
-  if (!out) return;
-  out.textContent = "inspect → plan → patch → preview…";
-  try {
-    const LLM = window.Engine && window.Engine.LLM;
-    let result;
-    if (LLM && typeof LLM.smartLoop === "function") {
-      result = await LLM.smartLoop({ kind: "unresolved" });
-    } else {
-      const UI = window.UnresolvedInspector || window.Engine.UnresolvedInspector;
-      const auto = UI.autoFixAll();
-      const capture = window.Engine.Preview && window.Engine.Preview.capture && window.Engine.Preview.capture();
-      result = { patched: auto.patched, remaining: auto.remaining, capture: capture, steps: [{ kind: "patch", text: "Applied " + auto.patched.length + " workaround(s)" }], llm: { skipped: true } };
-    }
-    const remaining = result.remaining || [];
-    const insps = (window.UnresolvedInspector || window.Engine.UnresolvedInspector).inspectAll(remaining);
-    out.innerHTML = `
-      <div style="padding:14px;border:1px solid #34d39933;border-radius:8px">
-        <div style="font-weight:700;color:#34d399;margin-bottom:8px">Unresolved fix loop</div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">${(result.steps || []).map(s => esc(s.kind) + ": " + esc(s.text)).join(" → ")}</div>
-        <div style="font-size:12px">Patched ${((result.patched && result.patched.length) || 0)} · remaining ${remaining.length}${result.llm && result.llm.skipped ? " · LLM skipped" : ""}</div>
-        ${insps.length ? insps.map(i => "<div style=\"padding:6px 0;border-bottom:1px solid #ffffff10\"><span style=\"color:" + (i.priority === 1 ? "#ef4444" : "#f59e0b") + ";font-weight:600\">P" + i.priority + "</span> " + esc((i.issue && i.issue.message) || "") + " — " + esc(i.workaround) + "</div>").join("") : "<div style=\"color:#34d399;margin-top:8px\">All unresolved findings patched.</div>"}
-        ${result.capture && result.capture.dataUrl ? '<img alt="Live preview snapshot" src="' + result.capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid #ffffff14"/>' : ''}
-      </div>`;
-    toast("Unresolved fix: " + ((result.patched && result.patched.length) || 0) + " patched, " + remaining.length + " left", remaining.length ? "#f59e0b" : "#34d399");
-    S.lastScan = null;
-    if (typeof runValidatorScan === "function") runValidatorScan();
-    if (typeof renderAll === "function") setTimeout(renderAll, 80);
-  } catch(e){ out.textContent = "error: " + e.message; toast("Unresolved fix error: " + e.message, "#ef4444"); }
-}
-
-function runV4IssueV4Certificate(){
-  const out = document.getElementById("v4-actions-out");
-  if (!out) return;
-  try {
-    const VC = window.V4Certificate || window.Engine.V4Certificate;
-    const SC = window.SelfCheck || window.Engine.SelfCheck;
-    const sc = SC.run();
-    const cert = VC.issue({ name: "CodeSovereign V4 - Manual Issue", selfCheck: sc, target: "manual-trigger" });
-    out.innerHTML = `
-      <div style="padding:14px;border:1px solid #60a5fa55;border-radius:8px;background:#0f1a2a">
-        <div style="display:flex;justify-content:space-between;margin-bottom:8px"><div style="font-weight:700;color:#60a5fa">${esc(cert.name)}</div><div style="font-size:11px;color:var(--muted)">${esc(cert.id)}</div></div>
-        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">issued ${new Date(cert.issuedAt).toISOString()}</div>
-        <div style="font-size:13px;font-weight:600;color:${cert.verdict === "CERTIFIED" ? "#34d399" : "#f59e0b"};margin-bottom:8px">${esc(cert.verdict)} - ${cert.passed}/${cert.total} claims pass</div>
-        <div style="font-size:12px">
-          ${cert.claims.map(c => "<div style=\"color:" + (c.ok ? "#34d399" : "#ef4444") + ";padding:2px 0\">" + (c.ok ? "&#10003;" : "&#10007;") + " " + esc(c.claim) + "</div>").join("")}
-        </div>
-        <div style="margin-top:8px;font-size:11px;color:var(--muted)">Evidence recorded: ${cert.evidenceCount}</div>
-      </div>`;
-    toast("V4 Certificate: " + cert.verdict, cert.verdict === "CERTIFIED" ? "#34d399" : "#f59e0b");
-  } catch(e){ out.textContent = "error: " + e.message; toast("Cert error: " + e.message, "#ef4444"); }
-}
-
-
-function _issueRow(issue, sev){
-  const color = sev === 'error' ? 'var(--err)' : sev === 'warning' ? 'var(--warn)' : 'var(--info)';
-  const icon = sev === 'error' ? I.bell : sev === 'warning' ? I.clock : I.sparkle;
-  return `
-    <div style="padding:12px;border-left:3px solid ${color};background:var(--bg-2);margin-bottom:6px;border-radius:4px;cursor:pointer" onclick="openFile('${esc(issue.file)}')">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <span style="color:${color}">${icon}</span>
-        <span style="font-weight:600;font-size:13px">${esc(issue.message || issue.title || 'Issue')}</span>
-        <span style="font-size:10px;background:${color};color:#fff;padding:2px 6px;border-radius:3px;text-transform:uppercase">${sev}</span>
-      </div>
-      <div style="font-size:11px;color:var(--muted);font-family:monospace">
-        ${esc(issue.file)}${issue.line ? ':' + issue.line : ''}
-        ${issue.rule ? ' - ' + esc(issue.rule) : ''}
-      </div>
-    </div>
-  `;
-}
-
-function bindRecovery(){
-  document.querySelectorAll('[data-sovfile]').forEach(function(el){
-    el.onclick = function(){ openSovereignFile(el.dataset.sovfile); };
-  });
-  var bf = document.getElementById('blastFileSel');
-  if (bf) bf.onchange = function(){ S.blastFile = bf.value; renderAll(); };
-  document.querySelectorAll('[data-adapter]').forEach(function(b){ b.onclick = function(){ runAdapterVerify(b.dataset.adapter); }; });
-  if (window.desktop && window.desktop.trust && !window.__csTrustChecked) {
-    window.__csTrustChecked = true;
-    csRefreshTrust().then(function(){ if (S.screen === 'recovery') renderAll(); });
-  }
-  try {
-    const host = document.getElementById('crossTabHost');
-    if (host && window.renderCrossTabCard) host.innerHTML = window.renderCrossTabCard();
-  } catch (_) {}
-  // Only auto-scan on entry if no recent scan exists (fixes render loop / flicker)
-  try {
-    var _fresh = (S && S.lastScan && S.lastScan.at) ? (Date.now() - S.lastScan.at) : Infinity;
-    if (_fresh > 30000 && !S.scanRunning) {
-      setTimeout(function(){ try { if (!S.scanRunning) runValidatorScan(); } catch(_){} }, 200);
-    }
-  } catch(_) {}
-}
 
 
 /* ==== .\_addons_settings_main.js ==== */
@@ -3518,6 +2240,17 @@ function bindRecovery(){
 function renderSettings(){
   // Real source of truth: Engine.AGENTS (defined in engine.js)
   const agents = (window.Engine && window.Engine.AGENTS) ? window.Engine.AGENTS : [];
+
+  // Live OpenClaw install/gateway status for the Agents card below — fired
+  // once per Settings mount (guarded), cached on S, re-render on arrival.
+  // Mirrors the fetch-then-cache-then-rerender pattern app.ai.extras.js
+  // already uses for hardware/OmniRoute status.
+  if (window.Engine && Engine.AIRouter && Engine.AIRouter.OpenClaw && !S._openclawStatusFetching && !S.openclawStatus) {
+    S._openclawStatusFetching = true;
+    Engine.AIRouter.OpenClaw.status().then(function (st) {
+      S.openclawStatus = st; S._openclawStatusFetching = false; renderAll();
+    }).catch(function () { S._openclawStatusFetching = false; });
+  }
 
   const proj = Engine.Proj.current();
   const files = Engine.FS.count();
@@ -3569,19 +2302,22 @@ function renderSettings(){
         <h3 class="cs-h3" style="margin-bottom:14px">${I.agent} Agents</h3>
         <div style="display:flex;flex-direction:column;gap:10px">
           ${agents.map(a => `
-            <div style="padding:14px;border:1px solid ${S.agent === a.id ? 'var(--accent)' : 'var(--line)'};border-radius:8px;display:flex;align-items:center;gap:14px;background:${S.agent === a.id ? 'rgba(120,160,255,.06)' : 'transparent'}">
-              <div style="width:42px;height:42px;border-radius:8px;background:var(--bg-2);display:flex;align-items:center;justify-content:center;color:${a.available ? 'var(--accent)' : 'var(--muted)'}">${I.agent}</div>
-              <div style="flex:1">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-                  <span style="font-weight:600;font-size:14px">${esc(a.id)}</span>
-                  <span class="pill" style="background:var(--bg-2);color:var(--muted);font-size:10px">${a.role}</span>
-                  <span class="pill" style="background:var(--bg-2);color:var(--muted);font-size:10px">${a.tone}</span>
-                  <span class="pill" style="background:var(--bg-2);color:var(--muted);font-size:10px">${a.ctx} ctx</span>
-                  ${S.agent === a.id ? '<span class="pill" style="background:var(--good);color:#fff;font-size:10px">Active</span>' : ''}
+            <div style="padding:14px;border:1px solid ${S.agent === a.id ? 'var(--accent)' : 'var(--line)'};border-radius:8px;display:flex;flex-direction:column;gap:10px;background:${S.agent === a.id ? 'rgba(120,160,255,.06)' : 'transparent'}">
+              <div style="display:flex;align-items:center;gap:14px">
+                <div style="width:42px;height:42px;border-radius:8px;background:var(--bg-2);display:flex;align-items:center;justify-content:center;color:var(--accent)">${I.agent}</div>
+                <div style="flex:1">
+                  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;flex-wrap:wrap">
+                    <span style="font-weight:600;font-size:14px">${esc(agentLabel(a.id))}</span>
+                    <span class="pill" style="background:var(--bg-2);color:var(--muted);font-size:10px">${esc(a.role)}</span>
+                    <span class="pill" style="background:var(--bg-2);color:var(--muted);font-size:10px">${esc(a.ctx)}</span>
+                    ${renderAgentStatusPill(a.id)}
+                    ${S.agent === a.id ? '<span class="pill" style="background:var(--good);color:#fff;font-size:10px">Active</span>' : ''}
+                  </div>
+                  <div style="font-size:12px;color:var(--muted)">${esc(a.desc)}</div>
                 </div>
-                <div style="font-size:12px;color:var(--muted)">${esc(a.desc)}</div>
+                <button class="btn ${S.agent === a.id ? 'primary' : 'ghost'}" onclick="setExecutionBackend('${a.id}')">${S.agent === a.id ? 'In use' : 'Use'}</button>
               </div>
-              <button class="btn ${S.agent === a.id ? 'primary' : 'ghost'}" ${a.available ? '' : 'disabled'} onclick="cycleAgent()">${S.agent === a.id ? 'In use' : 'Use'}</button>
+              ${a.id === 'hermes' ? renderHermesKeyRow() : ''}
             </div>
           `).join('')}
         </div>
@@ -3611,7 +2347,7 @@ function renderSettings(){
             const sup = (window.Backend && window.Backend._supabase) || { online: false, reason: 'not-checked' };
             const devId = (window.Backend && window.Backend.deviceId) || 'unassigned';
             const integrations = [
-              { name: 'Supabase',    status: sup.online ? 'connected (sync online)' : ('local-only (' + (sup.reason || 'no-table') + ')'), icon: I.shield, on: !!sup.online },
+              { name: 'Supabase',    status: sup.online ? 'connected (sync online)' : sup.reason === 'not-configured' ? 'not configured — local-only' : ('local-only (' + (sup.reason || 'no-table') + ')'), icon: I.shield, on: !!sup.online },
               { name: 'IndexedDB',   status: (eng === 'indexeddb')   ? 'active' : 'fallback', icon: I.folder, on: eng === 'indexeddb' },
               { name: 'localStorage',status: (eng === 'localstorage') ? 'active' : 'idle',     icon: I.save || I.folder, on: eng === 'localstorage' },
               { name: 'Device id',   status: String(devId).slice(0, 18) + (String(devId).length > 18 ? '...' : ''), icon: I.user, on: devId !== 'unassigned' }
@@ -3628,6 +2364,17 @@ function renderSettings(){
             `).join('');
           })()}
         </div>
+        <details style="margin-top:12px" ${(window.Backend && window.Backend.supabaseConfig && window.Backend.supabaseConfig()) ? '' : 'open'}>
+          <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Cloud sync (optional) — connect your own Supabase project</summary>
+          <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px;align-items:center">
+            <input id="supaUrl" placeholder="https://your-project.supabase.co" value="${esc(((window.Backend && window.Backend.supabaseConfig && window.Backend.supabaseConfig()) || {}).url || '')}" style="padding:6px 10px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px;color:inherit;font-size:12px;min-width:0;flex:1 1 220px">
+            <input id="supaKey" type="password" placeholder="Publishable (anon) key" style="padding:6px 10px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px;color:inherit;font-size:12px;min-width:0;flex:1 1 220px">
+            <button id="supaSave" class="btn primary" style="padding:5px 11px;font-size:12px">Save</button>
+            <button id="supaTest" class="btn ghost" style="padding:5px 11px;font-size:12px">Test</button>
+            <button id="supaClear" class="btn ghost" style="padding:5px 11px;font-size:12px">Disconnect</button>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px">Projects stay in this device's storage either way. With a project connected, saves are also mirrored to its <code>projects</code> table.</div>
+        </details>
       </div>
 
       <div class="card" style="padding:20px;margin-bottom:18px">
@@ -3668,7 +2415,7 @@ function renderSettings(){
         <div style="font-size:13px;color:var(--muted);line-height:1.7">
           <b>CodeSovereign</b> <span id="aboutVersion" style="font:600 12px ui-monospace,monospace;color:var(--fg)">v…</span> — a sovereign, agentic build environment. Everything runs in your browser
           via a virtual file system (<code>cs.fs.v1</code>) and project store (<code>cs.proj.v1</code>).<br>
-          The agent fleet &mdash; ${(window.Engine && window.Engine.AGENTS ? window.Engine.AGENTS.map(a => a.id).join(', ') : 'Sovereign-1.5')} &mdash; plan, scaffold, implement,
+          The agent fleet &mdash; ${(window.Engine && window.Engine.AGENTS ? window.Engine.AGENTS.map(a => agentLabel(a.id)).join(', ') : 'Direct')} &mdash; plan, scaffold, implement,
           validate, and package real working code with no mock data.
         </div>
       </div>
@@ -3751,6 +2498,23 @@ function renderArtTab(tab) {
 }
 
 function bindSettings(){
+  // Cloud sync (Supabase) — optional, user-supplied project
+  const supaMsg = (r, okText) => toast(r && r.ok ? okText : ('Cloud sync: ' + ((r && r.error) || 'failed')), r && r.ok ? '#34d399' : '#ef4444');
+  const supaCheck = () => window.Backend.checkSupabase().then(online => {
+    const reason = (window.Backend._supabase || {}).reason;
+    toast(online ? 'Supabase connected — sync online' : 'Supabase not reachable (' + reason + ')', online ? '#34d399' : '#f59e0b');
+    renderAll();
+  });
+  const ss = document.getElementById('supaSave');
+  if (ss && window.Backend && window.Backend.configureSupabase) ss.onclick = () => {
+    const r = window.Backend.configureSupabase((document.getElementById('supaUrl') || {}).value, (document.getElementById('supaKey') || {}).value);
+    supaMsg(r, 'Supabase project saved — checking…');
+    if (r.ok) supaCheck();
+  };
+  const st = document.getElementById('supaTest');
+  if (st && window.Backend && window.Backend.checkSupabase) st.onclick = () => supaCheck();
+  const sc = document.getElementById('supaClear');
+  if (sc && window.Backend && window.Backend.configureSupabase) sc.onclick = () => { supaMsg(window.Backend.configureSupabase('', ''), 'Cloud sync disconnected — local-only'); renderAll(); };
   // Art tabs
   document.querySelectorAll('[data-art]').forEach(el => el.onclick = () => { S.artTab = el.dataset.art; renderAll(); });
   // Tool toggles
@@ -4031,40 +2795,13 @@ function renderAll(){
   renderToasts();
 }
 
-// Phase 8 screens (Marketplace, GitHub, Workspaces, Ratings, Actions, OAuth) live
-// in separate modules. Some paint #main themselves; the rest return an HTML string.
-const PHASE8_SCREENS = { marketplace: 1, github: 1, workspaces: 1, ratings: 1, actions: 1, oauth: 1 };
-function bindPhase8(screen) {
-  const ui = ({
-    marketplace: window.MarketplaceUI, github: window.GitHubUI,
-    workspaces: window.WorkspacesUI, ratings: window.RatingsUI,
-    actions: window.ActionsUI, oauth: window.OAuthUI
-  })[screen];
-  const main = document.getElementById('main');
-  if (!ui || !main) {
-    if (main) main.innerHTML = '<div class="screen-inner"><div class="card" style="padding:24px;color:var(--muted)">' + esc(screen) + ' module not loaded.</div></div>';
-    return;
-  }
-  let out;
-  try { out = ui.render(); } catch (e) { console.error('bindPhase8', screen, e); }
-  if (typeof out === 'string') main.innerHTML = out;   // string modules
-  if (typeof ui.mount === 'function') { try { ui.mount(); } catch (_) {} }
-}
 
 // [duplicate DOMContentLoaded handler removed by audit fix #5]
 
 
 function bindTopNav() {
-  document.querySelectorAll('#topNavInner button[data-screen]').forEach(b => {
-    b.onclick = () => {
-      const from = S.screen;
-      S.screen = b.dataset.screen;
-      if (window.TabBus) { window.TabBus.broadcast('tab:clicked', { from: from, to: b.dataset.screen, source: 'topnav' }); }
-      renderAll();
-    };
-  });
   const mc = document.getElementById('modelChip');
-  if (mc) mc.onclick = () => { cycleAgent(); };
+  if (mc) mc.onclick = cycleAgentQuick;
   const ec = document.getElementById('envChip');
   if (ec) ec.onclick = () => { toggleEnv(); };
   const rp = document.getElementById('runPreviewBtn');
@@ -4112,10 +2849,25 @@ document.addEventListener('DOMContentLoaded', () => {
     return;
   }
 
+  // Prompt/confirm modal — bound once, globally, since it's usable from any screen.
+  const pmCancel = document.getElementById('promptModalCancel');
+  const pmConfirm = document.getElementById('promptModalConfirm');
+  const pmInput = document.getElementById('promptModalInput');
+  const pmRoot = document.getElementById('promptModal');
+  if (pmCancel) pmCancel.onclick = () => _closePromptModal(null);
+  if (pmConfirm) pmConfirm.onclick = () => _closePromptModal(pmInput.style.display === 'none' ? true : pmInput.value);
+  if (pmInput) pmInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); _closePromptModal(pmInput.value); }
+    else if (e.key === 'Escape') { e.preventDefault(); _closePromptModal(null); }
+  });
+  if (pmRoot) pmRoot.onclick = (e) => { if (e.target === pmRoot) _closePromptModal(null); };
+
   // Init defaults
   S.screen = S.screen || 'welcome';
   S.env = S.env || 'dev';
-  S.agent = S.agent || 'Sovereign-1.5';
+  // Seed from the real persisted backend choice (Engine.LLM's config store)
+  // rather than a literal default, so a reload doesn't silently forget it.
+  S.agent = S.agent || ((window.Engine && Engine.LLM && Engine.LLM.getConfig && Engine.LLM.getConfig().executionBackend) || 'direct');
   S.theme = S.theme || 'dark';
   S.agentSteps = S.agentSteps || [];
   S.agentRuns = S.agentRuns || [];
@@ -4179,1330 +2931,6 @@ if (typeof globalThis !== 'undefined') {
 }
 
 
-
-
-/* ==== Sovereign project memory (.sovereign/) ==== */
-function renderSovereignMemory(){
-  if (!window.Engine || !Engine.Sovereign) {
-    return '<div style="color:var(--muted);font-size:13px">Sovereign engine not loaded.</div>';
-  }
-  const S9 = Engine.Sovereign;
-  let st; try { st = S9.status(); } catch (e) { st = { initialized:false, files:[] }; }
-  const desktop = !!(window.desktop && window.desktop.isDesktop);
-  const loc = desktop
-    ? 'Real files under <span class="cs-mono">' + esc((window.CSDesktop && CSDesktop.project && CSDesktop.project.root) || 'the open folder') + '\\.sovereign\\</span>'
-    : 'In-workspace files (browser mode) — export the project to keep them';
-
-  let trustRow = '';
-  if (desktop) {
-    const tr = window.__csTrust || { trusted: false };
-    trustRow = '<div style="margin-bottom:12px;padding:9px 12px;border:1px solid ' + (tr.trusted ? 'rgba(52,211,153,.3)' : 'rgba(245,158,11,.35)')
-      + ';border-radius:9px;background:' + (tr.trusted ? 'rgba(52,211,153,.06)' : 'rgba(245,158,11,.06)') + ';font-size:12px;display:flex;align-items:center;gap:10px">'
-      + '<span style="color:' + (tr.trusted ? 'var(--good)' : 'var(--warn)') + ';font-weight:600">'
-      + (tr.trusted ? '✓ Trusted folder' : '⚠ Untrusted folder') + '</span>'
-      + '<span style="color:var(--muted);flex:1">' + (tr.trusted
-          ? 'project commands (npm test / build) may run — auto-verification enabled'
-          : 'project commands are blocked until you trust this folder') + '</span>'
-      + (tr.trusted
-          ? '<button class="btn ghost" style="padding:3px 9px;font-size:11px" onclick="csTrustRevoke()">Revoke</button>'
-          : '<button class="btn" style="padding:3px 9px;font-size:11px" onclick="csTrustGrant()">Trust</button>')
-      + '<button class="btn ghost" style="padding:3px 9px;font-size:11px" onclick="csTrustAudit()">Audit log</button>'
-      + '</div>';
-  }
-
-  if (!st.initialized) {
-    return '<div style="font-size:13px;color:var(--muted);line-height:1.6">'
-      + 'No <span class="cs-mono">.sovereign/</span> memory yet. Run the analysis to inventory this workspace’s '
-      + 'components, connection graph, simulated controls and pipelines, and write the evidence that every Sovereign engine resumes from.<br>'
-      + '<span style="font-size:11.5px">' + loc + '</span></div>';
-  }
-
-  const c = st.counts || {};
-  const stat = (label, val, color) => '<div style="text-align:center;padding:10px;border:1px solid var(--line);border-radius:9px">'
-    + '<div style="font:700 18px \'JetBrains Mono\',monospace;color:' + (color||'#e6e9f2') + '">' + (val==null?'–':val) + '</div>'
-    + '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">' + label + '</div></div>';
-
-  let obsRow = '';
-  const rt = S9.read('runtime-trace.json');
-  if (rt && rt.byStatus) {
-    const chip = (k, col) => rt.byStatus[k] ? '<span style="font-size:11px;padding:3px 9px;border-radius:20px;margin-right:6px;background:'
-      + col + '22;color:' + col + '">' + k + ': ' + rt.byStatus[k] + '</span>' : '';
-    obsRow = '<div style="margin:12px 0;padding:10px;border:1px solid var(--line);border-radius:9px">'
-      + '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Runtime crawl · '
-      + esc(rt.url || '') + ' · ' + fmtTimeAgo(rt.at) + '</div>'
-      + chip('REAL', '#34d399') + chip('MOCK', '#f59e0b') + chip('BROKEN', '#ef4444')
-      + chip('HIDDEN', '#8b93a7') + chip('DISABLED', '#8b93a7')
-      + ((rt.consoleErrors && rt.consoleErrors.length) ? '<span style="font-size:11px;color:var(--err);margin-left:6px">' + rt.consoleErrors.length + ' console errors</span>' : '')
-      + '</div>';
-  }
-
-  let execRow = '';
-  const evd = S9.read('execution-evidence.json');
-  if (evd && evd.gates) {
-    const g = evd.gates;
-    const pill = (k, v) => '<span style="font-size:11px;padding:3px 9px;border-radius:20px;margin-right:6px;background:'
-      + (v===null?'rgba(255,255,255,.06)':v?'rgba(52,211,153,.14)':'rgba(239,68,68,.16)') + ';color:'
-      + (v===null?'var(--muted)':v?'var(--good)':'var(--err)') + '">' + k + ': ' + (v===null?'—':v?'pass':'FAIL') + '</span>';
-    execRow = '<div style="margin:12px 0;padding:10px;border:1px solid var(--line);border-radius:9px">'
-      + '<div style="font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">Real execution · ' + fmtTimeAgo(evd.generatedAt) + '</div>'
-      + pill('tests', g.testsPass) + pill('build', g.buildPasses) + pill('lint', g.lintClean) + pill('types', g.typesClean)
-      + '</div>';
-  }
-
-  const fileRows = (st.files || []).filter(f => f.indexOf('history/') !== 0).map(f =>
-    '<div data-sovfile="' + esc(f) + '" style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer;font:500 12px \'JetBrains Mono\',monospace;color:#c7cddb" '
-    + 'onmouseover="this.style.background=\'rgba(255,255,255,.04)\'" onmouseout="this.style.background=\'\'">'
-    + '<span style="color:#6b7488">' + (/\.json$/.test(f) ? '{}' : 'md') + '</span>'
-    + '<span style="flex:1">' + esc(f) + '</span>'
-    + '<span style="font-size:10px;color:var(--muted)">' + esc((Engine.Sovereign.FILES[f]||'').slice(0,42)) + '</span></div>'
-  ).join('');
-
-  const dsFull = S9.read('decision-state.json') || {};
-  let reqLine = '';
-  const reqj = S9.read('requirements.json');
-  if (reqj && reqj.detectedArchetypes && reqj.detectedArchetypes.length) {
-    reqLine = '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">'
-      + 'archetype: ' + reqj.detectedArchetypes.slice(0,2).map(a => '<b style="color:#c7cddb">' + esc(a.label) + '</b>').join(', ')
-      + ' · <span style="color:' + (reqj.missingCount ? 'var(--warn)' : 'var(--good)') + '">' + reqj.missingCount + ' mandatory items not found</span>'
-      + (reqj.contradictions && reqj.contradictions.length ? ' · <span style="color:var(--err)">' + reqj.contradictions.length + ' contradictions</span>' : '')
-      + ' · <span data-sovfile="product-brief.md" style="color:#8b93f8;cursor:pointer">product-brief.md</span></div>';
-  }
-  let metaLine = '';
-  if (dsFull.graphFingerprint) {
-    metaLine = '<div style="font-size:11.5px;color:var(--muted);margin-bottom:10px">'
-      + (dsFull.diagrams ? dsFull.diagrams.length + ' diagrams · ' : '')
-      + 'graph <span class="cs-mono">' + esc(dsFull.graphFingerprint) + '</span>'
-      + (dsFull.driftDetected ? ' · <span style="color:var(--warn)">⚠ drift — diagrams regenerated</span>' : ' · <span style="color:var(--good)">in sync</span>')
-      + (dsFull.externals && dsFull.externals.length ? ' · externals: ' + dsFull.externals.slice(0,4).map(esc).join(', ') : '')
-      + ' · <span data-sovfile="architecture.md" style="color:#8b93f8;cursor:pointer">open architecture.md</span></div>';
-  }
-
-  return ''
-    + '<div style="font-size:11.5px;color:var(--muted);margin-bottom:12px">' + loc
-    + (st.lastAnalysisAt ? '  ·  last analysis ' + fmtTimeAgo(st.lastAnalysisAt) : '') + '</div>'
-    + trustRow + reqLine + metaLine + obsRow + execRow
-    + '<div style="display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:14px">'
-      + stat('Health', st.health, st.health>=75?'var(--good)':st.health>=50?'var(--warn)':'var(--err)')
-      + stat('Components', c.components)
-      + stat('Edges', c.edges + (c.brokenEdges?(' / '+c.brokenEdges+'✗'):''), c.brokenEdges?'var(--err)':'#e6e9f2')
-      + stat('Mock signals', c.mockSignals, c.mockSignals?'var(--warn)':'var(--good)')
-      + stat('Controls', c.interactions)
-      + stat('Pipeline gaps', c.pipelineGaps != null ? c.pipelineGaps : c.pipelines, c.pipelineGaps ? 'var(--warn)' : '#e6e9f2')
-    + '</div>'
-    + '<div style="display:flex;flex-direction:column;gap:1px;max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:9px;padding:6px">'
-      + (fileRows || '<div style="color:var(--muted);font-size:12px;padding:8px">(no files)</div>')
-    + '</div>';
-}
-
-function runSovereignAnalysis(){
-  if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
-  toast('Running Sovereign analysis…', '#a78bfa');
-  setTimeout(() => {
-    try {
-      const r = Engine.Sovereign.analyze();
-      toast('Analysis complete — ' + r.summary.components + ' components, ' + r.summary.edges + ' edges, '
-        + r.summary.mockSignals + ' mock signals → .sovereign/', '#34d399');
-      if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
-    } catch (e) { toast('Analysis failed: ' + e.message, '#ef4444'); console.error(e); }
-    renderAll();
-  }, 60);
-}
-
-var CS_ADAPTERS = [
-  ['signing',       'Signing',        'Signing',        'SBOM + provenance + checksums; cosign sign-blob/verify-blob if present'],
-  ['observability', 'Observability',  'Observability',  'Ship a probe span to a local OpenTelemetry Collector'],
-  ['registry',      'Registry',       'Registry',       'npm pack → clean-consumer install → require() smoke (Verdaccio optional)'],
-  ['audio',         'Audio',          'Audio',          'ffmpeg normalize → whisper.cpp / faster-whisper transcription'],
-  ['vision',        'Vision',         'Vision',         'offline screenshot → component tree (runs in the browser)'],
-  ['desktop',       'Desktop',        'Desktop',        'Tauri: cargo check + cargo test; Electron: headless boot smoke'],
-  ['extension',     'Extension',      'Extension',      'MV3 static validation → pack → Playwright load-unpacked']
-];
-
-function renderRuntimeAdapters(){
-  try {
-    if (!window.Engine) return '';
-    var haveBridge = !!(window.desktop && window.desktop.isDesktop && window.CSAdapters && window.CSAdapters.run);
-    var rows = CS_ADAPTERS.filter(function (a){ return window.Engine[a[1]]; }).map(function (a){
-      var eng = window.Engine[a[1]];
-      var ev = null; try { ev = eng.load && eng.load(); } catch (_) {}
-      var st = ev && (ev.status || (ev.support ? (ev.present === false ? 'not present' : (ev.status || 'ready')) : null));
-      var col = /PASS|VERIFIED|SUPPORTED|GENERATED|VALID/i.test(st || '') ? 'var(--good)'
-        : /PARTIAL|BLOCKED|CREDENTIAL/i.test(st || '') ? 'var(--warn)'
-        : /FAIL|ERROR/i.test(st || '') ? 'var(--err)' : 'var(--muted)';
-      return '<div style="display:grid;grid-template-columns:110px 1fr auto;gap:10px;align-items:center;padding:7px 0;border-top:1px solid var(--line)">' +
-        '<span style="font:600 12px Inter">' + esc(a[2]) + '</span>' +
-        '<span style="font-size:11.5px;color:var(--muted)" title="' + esc(a[3]) + '">' + esc(a[3]) + (st ? ' · <b style="color:' + col + '">' + esc(String(st)) + '</b>' : '') + '</span>' +
-        '<button class="btn" data-adapter="' + a[0] + '" style="padding:4px 10px;font-size:11px">Verify</button>' +
-        '</div>';
-    }).join('');
-    if (!rows) return '';
-    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
-      '<h3 class="cs-h3" style="margin:0">Runtime Adapters</h3>' +
-      '<span class="cs-muted" style="font-size:11.5px">' + (haveBridge ? 'local toolchain bridge available' : 'desktop app + an open folder needed to run these') + '</span></div>' +
-      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">Each capability routes to a local / self-hosted runtime — a missing tool → BLOCKED with the exact install command, never "unsupported".</div>' +
-      rows + '</div>';
-  } catch (e) { return ''; }
-}
-
-function runAdapterVerify(name){
-  var map = { signing: 'Signing', observability: 'Observability', registry: 'Registry', audio: 'Audio', vision: 'Vision', desktop: 'Desktop', extension: 'Extension' };
-  var eng = window.Engine && window.Engine[map[name]];
-  if (!eng || !eng.verify) { toast(name + ' engine not loaded', '#ef4444'); return; }
-  if (name === 'vision') {
-    toast('Vision analysis runs from a design reference — add one via Universal, then Analyze', '#22d3ee');
-    return;
-  }
-  toast('Verifying ' + map[name] + ' adapter…', '#a78bfa');
-  var btn = document.querySelector('[data-adapter="' + name + '"]');
-  if (btn) { btn.disabled = true; btn.textContent = '…'; }
-  Promise.resolve(eng.verify({})).then(function (r){
-    r = r || {};
-    var s = r.status || 'DONE';
-    var col = /PASS|VERIFIED/i.test(s) ? '#34d399' : /PARTIAL|BLOCKED/i.test(s) ? '#f59e0b' : '#ef4444';
-    var msg = map[name] + ': ' + s + (r.reason ? ' (' + r.reason + ')' : '') + (r.need ? ' — provide: ' + r.need : '');
-    toast(msg, col);
-    if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
-    renderAll();
-  }).catch(function (e){ toast(map[name] + ' verify error: ' + (e && e.message || e), '#ef4444'); if (btn) { btn.disabled = false; btn.textContent = 'Verify'; } });
-}
-window.runAdapterVerify = runAdapterVerify;
-
-function runSovereignEvidence(){
-  if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
-  if (!(window.CSExec && CSExec.available())) { toast('Open a project folder in the desktop app first', '#f59e0b'); return; }
-  toast('Analyzing + running real test / build / lint…', '#a78bfa');
-  setTimeout(() => {
-    try { Engine.Sovereign.analyze(); } catch (e) { console.error(e); }
-    Engine.Sovereign.runEvidence().then(r => {
-      if (!r.ok) { toast(r.reason || 'evidence run failed', '#f59e0b'); }
-      else if (r.failed.length) { toast('Executed — FAILED: ' + r.failed.join(', ') + ' (see .sovereign/execution-evidence.json)', '#ef4444'); }
-      else { toast('Executed — all gates pass ✓ → .sovereign/execution-evidence.json', '#34d399'); }
-      if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
-      renderAll();
-    }).catch(e => { toast('Evidence run error: ' + e.message, '#ef4444'); console.error(e); });
-  }, 60);
-}
-window.runSovereignEvidence = runSovereignEvidence;
-
-function runSovereignObserve(){
-  if (!window.Engine || !Engine.Sovereign) { toast('Sovereign engine not loaded', '#ef4444'); return; }
-  if (!(window.CSObserve && CSObserve.available())) { toast('Open a project folder in the desktop app first', '#f59e0b'); return; }
-  var url = window.prompt('Runtime URL (blank = detect / start the dev server):', '') || undefined;
-  var interactive = window.confirm('Interactive mode?\n\nOK = also click controls that submit forms / trigger actions (dev env with test data only).\nCancel = observation-only (safe: destructive controls are skipped).');
-  var opts = { mode: interactive ? 'interactive' : 'observe' };
-  if (url) opts.url = url;
-  toast('Observing the running app (' + opts.mode + ')…', '#a78bfa');
-  Engine.Sovereign.observe(opts).then(function(r){
-    if (!r.ok) { toast(r.reason || 'observation failed', '#f59e0b'); return; }
-    var t = r.trace;
-    toast('Observed ' + t.controlsExercised + ' controls — ' + JSON.stringify(t.byStatus)
-      + (t.consoleErrors && t.consoleErrors.length ? ' · ' + t.consoleErrors.length + ' console errors' : ''), '#34d399');
-    if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
-    renderAll();
-  }).catch(function(e){ toast('Observation error: ' + e.message, '#ef4444'); console.error(e); });
-}
-window.runSovereignObserve = runSovereignObserve;
-
-function sovereignSnapshot(){
-  if (!window.Engine || !Engine.Sovereign) return;
-  try {
-    const r = Engine.Sovereign.snapshot('manual');
-    toast('Snapshot ' + r.id + ' — ' + r.fileCount + ' files', '#34d399');
-    if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
-  } catch (e) { toast('Snapshot failed: ' + e.message, '#ef4444'); }
-  renderAll();
-}
-
-function csRefreshTrust(){
-  if (!(window.desktop && window.desktop.trust)) return Promise.resolve();
-  return window.desktop.trust.status().then(function(s){ window.__csTrust = s || { trusted:false }; });
-}
-function csTrustGrant(){
-  if (!(window.desktop && window.desktop.trust)) return;
-  window.desktop.trust.grant().then(function(){ toast('Folder trusted — project commands enabled', '#34d399'); csRefreshTrust().then(renderAll); });
-}
-function csTrustRevoke(){
-  if (!(window.desktop && window.desktop.trust)) return;
-  window.desktop.trust.revoke().then(function(){ toast('Trust revoked', '#f59e0b'); csRefreshTrust().then(renderAll); });
-}
-function csTrustAudit(){
-  if (!(window.desktop && window.desktop.trust)) return;
-  window.desktop.trust.audit(100).then(function(rows){
-    var body = (rows||[]).slice(-40).reverse().map(function(r){ return r.at + '  ' + (r.kind||'?') + '  ' + (r.cmd || r.pid || '') + (r.code!=null?'  ('+r.code+')':''); }).join('\n');
-    if (window.Engine && Engine.Sovereign) { Engine.Sovereign.write('command-audit.txt', body || '(no commands run yet)'); openSovereignFile('command-audit.txt'); }
-    else alert(body || 'no commands run yet');
-  });
-}
-window.csTrustGrant = csTrustGrant; window.csTrustRevoke = csTrustRevoke; window.csTrustAudit = csTrustAudit;
-
-function openSovereignFile(f){
-  const path = (Engine.Sovereign.ROOT + '/' + String(f).replace(/^\/+/, ''));
-  if (!Engine.FS.exists(path)) { toast('Not written yet — run the analysis', '#f59e0b'); return; }
-  openFile(path);
-  S.screen = 'ide';
-  renderAll();
-}
-window.runSovereignAnalysis = runSovereignAnalysis;
-window.sovereignSnapshot = sovereignSnapshot;
-window.openSovereignFile = openSovereignFile;
-
-function renderRecoveryLayers(){
-  try {
-    if (!window.Engine || !window.Engine.Recovery) return '<div style="color:var(--muted);font-size:13px">Engine.Recovery not loaded</div>';
-    // V2: prefer the 5-level model (L1-L5) when available
-    var layers = null;
-    if (window.Engine.Recovery.analyze) {
-      try { var a = window.Engine.Recovery.analyze(); if (a && a.levels) layers = a.levels; } catch(_){}
-    }
-    if (!layers && window.Engine.Recovery.layers) {
-      layers = window.Engine.Recovery.layers.run();
-    }
-    if (!layers) return '<div style="color:var(--muted);font-size:13px">No levels available</div>';
-
-    // Detect if this is the L1-L5 form (has L1, L2, ...) or the legacy
-    // STATIC/BUILD/RUNTIME/FUNCTIONAL form.
-    var isLevels = (typeof layers.L1 !== 'undefined');
-    var keys;
-    if (isLevels) {
-      keys = ['L1','L2','L3','L4','L5'];
-    } else {
-      keys = ['STATIC','BUILD','RUNTIME','FUNCTIONAL'];
-    }
-    var cols = keys.length === 5 ? 'repeat(5,1fr)' : 'repeat(4,1fr)';
-    var html = '<div style="display:grid;grid-template-columns:' + cols + ';gap:10px">';
-    keys.forEach(function(k){
-      var v = layers[k] || { ok:false, label:k, detail:'' };
-      var color  = v.ok ? 'var(--good)' : 'var(--err)';
-      var bg     = v.ok ? 'rgba(52,211,153,.06)' : 'rgba(239,68,68,.06)';
-      var border = v.ok ? 'var(--good)' : 'var(--err)';
-      var label  = v.label || k;
-      var detail = v.detail || (v.ok ? 'gate passed' : 'gate failed');
-      html += '<div style="padding:14px;border:1px solid ' + border + ';border-radius:8px;background:' + bg + '">';
-      html +=   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
-      html +=     '<span style="width:9px;height:9px;border-radius:50%;background:' + color + '"></span>';
-      html +=     '<span style="font-weight:700;font-size:12px;letter-spacing:.4px">' + esc(label) + '</span>';
-      html +=     '<span style="margin-left:auto;font:600 10px Inter;padding:2px 7px;border-radius:9px;background:' + (v.ok ? 'var(--good)' : 'var(--err)') + ';color:#fff">' + (v.ok ? 'PASS' : 'FAIL') + '</span>';
-      html +=   '</div>';
-      html +=   '<div style="font-size:10.5px;color:var(--muted);line-height:1.4">' + esc(detail) + '</div>';
-      html += '</div>';
-    });
-    html += '</div>';
-    if (isLevels && layers.passed != null) {
-      var passing = (layers.passingGates != null) ? layers.passingGates : layers.passed;
-      html += '<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Reached <b style="color:var(--fg)">' + esc(layers.level || ('L' + layers.passed)) + '</b> — consecutive from L1 · ' + passing + ' / ' + layers.total + ' gates passing</div>';
-    }
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">layers error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoveryWeightedHealth(){
-  try {
-    if (!window.Engine) return '<div style="color:var(--muted);font-size:13px">Engine not loaded</div>';
-    var fn = window.Engine.weightedHealth || (window.Engine.Recovery && window.Engine.Recovery.weightedHealth);
-    if (!fn) return '<div style="color:var(--muted);font-size:13px">weightedHealth not available</div>';
-    var report = (typeof fn === 'function') ? fn() : fn;
-    if (!report) return '<div style="color:var(--muted);font-size:13px">No weighted health data</div>';
-
-    // Engine returns: { score, bySubsystem, total, weights }
-    var subs = report.bySubsystem || report.subsystems || {};
-    var weights = report.weights || {};
-    var overall = (typeof report.score === 'number') ? report.score : 0;
-    var color = overall >= 90 ? 'var(--good)' : overall >= 70 ? 'var(--accent)' : overall >= 50 ? 'var(--warn)' : 'var(--err)';
-
-    // Derive per-subsystem score: 100 minus a weighted penalty
-    var rows = [];
-    Object.keys(subs).forEach(function(k){
-      var count = subs[k] || 0;
-      var weight = (typeof weights[k] === 'number') ? weights[k] : 0.05;
-      // score per bucket: start at 100, lose 8 points per issue, weighted by subsystem importance
-      var subScore = Math.max(0, Math.min(100, Math.round(100 - count * 8 * (weight * 5))));
-      rows.push({ name: k, count: count, weight: weight, score: subScore });
-    });
-    rows.sort(function(a, b){ return b.weight - a.weight; });
-
-    var html = '<div style="display:grid;grid-template-columns:200px 1fr;gap:18px;align-items:center">';
-    // Big number
-    html += '<div style="text-align:center">';
-    html +=   '<div style="font:700 48px Inter;color:' + color + '">' + Math.round(overall) + '</div>';
-    html +=   '<div style="font:600 11px Inter;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-top:4px">Weighted Health</div>';
-    html +=   '<div style="font-size:11px;color:var(--muted);margin-top:6px">' + (report.total || 0) + ' issue' + ((report.total || 0) === 1 ? '' : 's') + ' tracked</div>';
-    html += '</div>';
-    // Subsystem bars
-    html += '<div>';
-    rows.forEach(function(r){
-      var barColor = r.score >= 90 ? 'var(--good)' : r.score >= 70 ? 'var(--accent)' : r.score >= 50 ? 'var(--warn)' : 'var(--err)';
-      var pct = Math.max(0, Math.min(100, r.score));
-      html += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">';
-      html +=   '<div style="width:120px;font-size:12px;color:var(--fg)">' + esc(r.name) + '</div>';
-      html +=   '<div style="flex:1;height:8px;background:var(--bg-2);border-radius:4px;overflow:hidden;border:1px solid var(--line)">';
-      html +=     '<div style="height:100%;width:' + pct + '%;background:' + barColor + ';transition:width .3s"></div>';
-      html +=   '</div>';
-      html +=   '<div style="width:46px;text-align:right;font:600 11.5px Inter;color:' + barColor + '">' + Math.round(r.score) + '</div>';
-      html +=   '<div style="width:40px;text-align:right;font:600 10px Inter;color:var(--muted)">' + Math.round(r.weight*100) + '%</div>';
-      html += '</div>';
-    });
-    html += '</div>';
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">weighted-health error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderWiringTrace(){
-  try {
-    var w = null;
-    try { w = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('wiring-trace.json'); } catch (_) {}
-    if (!w || !w.present || !w.entities) return '';
-    var tt = w.totals || {};
-    var sc = tt.brokenChains === 0 ? 'var(--good)' : 'var(--err)';
-    var rows = w.entities.map(function (e){
-      var chain = (e.chain || []).map(function (c){
-        var col = c.ok ? 'var(--good)' : 'var(--err)';
-        return '<span style="color:' + col + '" title="' + esc(c.detail || (c.ok ? '' : 'missing')) + '">' + (c.ok ? '●' : '○') + ' ' + esc(c.link) + '</span>';
-      }).join(' <span style="color:var(--muted)">→</span> ');
-      return '<div style="font-size:11.5px;padding:4px 0;border-top:1px solid var(--line)">' +
-        '<b>' + esc(e.entity) + '</b>' + (e.complete ? '' : ' <span style="color:var(--err)">— ' + esc((e.breaks || [])[0] || 'broken') + '</span>') +
-        '<div style="margin-top:3px">' + chain + '</div></div>';
-    }).join('');
-    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
-      '<h3 class="cs-h3" style="margin:0">Wiring Trace <span class="cs-muted" style="font-weight:400;font-size:12px">control → fetch → route → service → data layer → table</span></h3>' +
-      '<span style="font:800 15px Inter;color:' + sc + '">' + (tt.fullyWired || 0) + '/' + (tt.entities || 0) + '</span></div>' +
-      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">' + esc(w.summary || '') + '</div>' + rows + '</div>';
-  } catch (e) { return ''; }
-}
-
-function renderRequirementsVerification(){
-  try {
-    var rec = null;
-    try { rec = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('requirements-verification.json'); } catch (_) {}
-    if (!rec || !rec.requirements) return '';
-    var tt = rec.totals || {};
-    var sc = tt.coverage >= 85 ? 'var(--good)' : tt.coverage >= 55 ? 'var(--warn)' : 'var(--err)';
-    var dot = function (s){ return s === 'verified' ? 'var(--good)' : s === 'partial' ? 'var(--warn)' : (s === 'failing' || s === 'unmet') ? 'var(--err)' : 'var(--muted)'; };
-    var rows = rec.requirements.slice(0, 24).map(function (r){
-      return '<div style="display:grid;grid-template-columns:60px 70px 1fr;gap:8px;align-items:baseline;font-size:11.5px;padding:3px 0">' +
-        '<span style="font:600 10.5px ui-monospace,monospace">' + esc(r.id) + '</span>' +
-        '<span style="color:' + dot(r.status) + ';font-weight:600">' + esc(r.status) + '</span>' +
-        '<span style="color:var(--muted)">' + esc(String(r.statement).slice(0, 90)) + (r.origin === 'implied' ? ' <i>(implied)</i>' : '') + '</span></div>';
-    }).join('');
-    var missing = (rec.missing || []).length
-      ? '<div style="margin-top:8px;font-size:11.5px;color:var(--warn)">Missing (domain-implied): ' + rec.missing.map(function (m){ return esc(m.requirement); }).join(', ') + '</div>' : '';
-    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
-      '<h3 class="cs-h3" style="margin:0">Requirements — verification record <span class="cs-muted" style="font-weight:400;font-size:12px">requested · implied · missing · verified</span></h3>' +
-      '<span style="font:800 15px Inter;color:' + sc + '">' + (tt.verified || 0) + '/' + (tt.total || 0) + '</span></div>' +
-      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">' + esc(rec.summary || '') + '</div>' +
-      rows + missing + '</div>';
-  } catch (e) { return ''; }
-}
-
-function renderBuildMatrix(){
-  try {
-    var BM = window.Engine && window.Engine.BuildMatrix;
-    var m = null;
-    try { m = (Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('build-matrix.json')) || (BM && BM.compute && BM.compute()); } catch (_) { m = BM && BM.compute && BM.compute(); }
-    if (!m || !m.rows) return '';
-    var col = function (s){ return /PASS|VERIFIED/.test(s) ? 'var(--good)' : /PARTIAL|GENERATED/.test(s) ? 'var(--warn)' : /BLOCKED/.test(s) ? 'var(--warn)' : /FAIL/.test(s) ? 'var(--err)' : 'var(--muted)'; };
-    var rows = m.rows.filter(function (r){ return r.status !== 'NOT_REQUESTED'; }).map(function (r){
-      var b = (r.blockers || []).slice(0, 1).join('; ');
-      return '<div style="display:grid;grid-template-columns:150px 90px 1fr;gap:10px;align-items:baseline;font-size:11.5px;padding:4px 0;border-top:1px solid var(--line)">' +
-        '<span style="font-weight:600">' + esc(r.label) + (r.target === m.requestedTarget ? ' <span style="color:var(--accent)">◀ requested</span>' : '') + '</span>' +
-        '<span style="color:' + col(r.status) + ';font-weight:700">' + esc(r.status) + '</span>' +
-        '<span style="color:var(--muted)">' + esc(b || (r.stages && Object.keys(r.stages).map(function (k){ return k + ':' + r.stages[k]; }).join(' · ')) || '') + '</span></div>';
-    }).join('');
-    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">' +
-      '<h3 class="cs-h3" style="margin:0">Build Matrix <span class="cs-muted" style="font-weight:400;font-size:12px">truthful per-target status</span></h3></div>' +
-      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:4px">' + esc(m.summary || '') + '</div>' + rows + '</div>';
-  } catch (e) { return ''; }
-}
-
-function renderFeasibility(){
-  try {
-    var f = null;
-    try { f = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('feasibility.json'); } catch (_) {}
-    if (!f || !f.effort) return '';
-    var hc = f.host && f.host.ready === 'ready' ? 'var(--good)' : f.host && f.host.ready === 'missing-tools' ? 'var(--err)' : 'var(--muted)';
-    var missing = (f.host && f.host.checks || []).filter(function (c){ return c.present === false; });
-    return '<div class="card" style="padding:16px 20px;margin-top:18px">' +
-      '<h3 class="cs-h3" style="margin:0 0 6px">Feasibility <span class="cs-muted" style="font-weight:400;font-size:12px">host toolchain · effort · cost</span></h3>' +
-      '<div style="font-size:12px;color:var(--fg)">' + esc(f.summary || '') + '</div>' +
-      (missing.length ? '<div style="margin-top:6px;font-size:11.5px;color:' + hc + '">Install on this machine: ' + missing.map(function (c){ return '<code>' + esc(c.tool) + '</code> (' + esc(c.install) + ')'; }).join(' · ') + '</div>' : '') +
-      ((f.contradictions || []).length ? '<ul style="margin:8px 0 0;padding-left:18px;font-size:11.5px;color:var(--warn)">' + f.contradictions.map(function (c){ return '<li>' + esc(c.conflict) + ' — ' + esc(c.resolution) + '</li>'; }).join('') + '</ul>' : '') +
-      '</div>';
-  } catch (e) { return ''; }
-}
-
-function renderCompletionAudit(){
-  try {
-    var A = window.Engine && window.Engine.Audit;
-    if (!A || !A.run) return '';
-    var a = null;
-    try { a = (Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('completion-audit.json')) || A.run(); } catch (_) { a = A.run(); }
-    if (!a || !a.dimensions) return '';
-    var oc = a.overall >= 85 ? 'var(--good)' : a.overall >= 60 ? 'var(--warn)' : 'var(--err)';
-    var bar = function (d){
-      var c = !d.measured ? 'var(--line)' : d.pct >= 85 ? 'var(--good)' : d.pct >= 55 ? 'var(--warn)' : 'var(--err)';
-      var w = d.measured ? Math.max(2, d.pct) : 100;
-      return '<div style="display:grid;grid-template-columns:130px 1fr 44px;gap:10px;align-items:center;font-size:12px;margin:5px 0">' +
-        '<span title="' + esc(d.basis) + '">' + esc(d.name) + '</span>' +
-        '<span style="height:8px;border-radius:5px;background:var(--bg-2);overflow:hidden"><span style="display:block;height:100%;width:' + w + '%;background:' + c + (d.measured ? '' : ';opacity:.3') + '"></span></span>' +
-        '<span style="text-align:right;color:var(--muted)">' + (d.measured ? d.pct + '%' : '—') + '</span></div>';
-    };
-    return '<div class="card" style="padding:18px 20px;margin-top:18px">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
-      '<h3 class="cs-h3" style="margin:0">Completion Audit <span class="cs-muted" style="font-weight:400;font-size:12px">— evidence-backed, per dimension</span></h3>' +
-      '<span style="font:800 18px Inter;color:' + oc + '">' + a.overall + '%</span></div>' +
-      '<div style="font-size:11.5px;color:var(--muted);margin-bottom:8px">' + esc(a.summary) + '</div>' +
-      a.dimensions.map(bar).join('') + '</div>';
-  } catch (e) { return ''; }
-}
-
-function renderRecoveryAcceptanceGoal(){
-  try {
-    var AG = window.Engine && window.Engine.AcceptanceGoal;
-    if (!AG || !AG.evaluate) return '';
-    var g = AG.evaluate({ rebuild: false });
-    var lastLoop = null;
-    try { lastLoop = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('recovery-loop.json'); } catch (_) {}
-    var col = g.met ? 'var(--good)' : (g.hasContract ? 'var(--warn)' : 'var(--muted)');
-    var label = g.met ? 'ACCEPTANCE CRITERIA MET' : (g.hasContract ? (g.satisfied + '/' + g.total + ' REQUIREMENTS VERIFIED') : 'NO CONTRACT — TARGETING VALIDATOR HEALTH');
-    var html = '<div class="card" style="padding:16px 20px;margin-top:18px;border-left:3px solid ' + col + '">' +
-      '<div style="display:flex;justify-content:space-between;align-items:center">' +
-      '<h3 class="cs-h3" style="margin:0">Recovery target — the contract’s acceptance criteria</h3>' +
-      '<span style="font:700 11px Inter;color:' + col + '">' + esc(label) + '</span></div>' +
-      '<div style="font-size:12px;color:var(--muted);margin-top:6px">The autonomous loop stops when these are satisfied against real evidence (Evidence Ledger + Definition-of-Done) — not merely when the validator is clean.</div>';
-    if ((g.gaps || []).length) {
-      html += '<ul style="margin:10px 0 0;padding-left:18px;font-size:12px;color:var(--fg)">' +
-        g.gaps.slice(0, 8).map(function (x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>';
-    }
-    if (lastLoop && lastLoop.acceptance) {
-      var a = lastLoop.acceptance;
-      html += '<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Last loop: ' + esc(lastLoop.status) +
-        ' · ' + (lastLoop.cycles || 0) + ' cycle(s) · ' + (lastLoop.repairedCount || 0) + ' repaired' +
-        (a.improvedFrom ? ' · criteria ' + esc(a.improvedFrom) + ' → ' + (a.criteriaSatisfied != null ? a.criteriaSatisfied + '/' + a.criteriaTotal : '?') : '') + '</div>';
-      if ((lastLoop.hypotheses || []).length) {
-        var held = lastLoop.hypotheses.filter(function (h){ return h.held === true; }).length;
-        html += '<div style="font-size:11.5px;color:var(--muted)">Hypotheses tested: ' + lastLoop.hypotheses.length + ' · held: ' + held + '</div>';
-      }
-    }
-    var prev = null;
-    try { prev = Engine.Sovereign && Engine.Sovereign.read && Engine.Sovereign.read('recovery-prevention.json'); } catch (_) {}
-    if (prev && (prev.items || []).length) {
-      html += '<details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px;font-weight:600">Prevention — stop these classes recurring (' + prev.items.length + ')</summary>' +
-        '<ul style="margin:6px 0 0;padding-left:18px;font-size:12px;color:var(--fg)">' +
-        prev.items.map(function (p){ return '<li><b>' + esc(p.code) + '</b> (' + esc(p.class) + '): ' + esc(p.guidance) + '</li>'; }).join('') + '</ul></details>';
-    }
-    return html + '</div>';
-  } catch (e) { return ''; }
-}
-
-function renderRecoveryBlastRadius(){
-  try {
-    var G = window.Engine && window.Engine.Graph;
-    if (!G || !G.blastRadius) return '<div style="color:var(--muted);font-size:13px">Engine.Graph not loaded</div>';
-    G.build();
-    var files = (G.files || []).filter(function(p){ return /\.(js|mjs|ts|jsx|tsx|sql|json|ya?ml)$/.test(p) && !/\/(node_modules|\.sovereign)\//.test(p); }).sort();
-    if (!files.length) return '<div style="color:var(--muted);font-size:13px">No project files yet — generate or open a project.</div>';
-    var sel = (S.blastFile && files.indexOf(S.blastFile) >= 0) ? S.blastFile : files[0];
-    var r = G.blastRadius(sel);
-    var riskColor = r.risk === 'high' ? 'var(--err)' : r.risk === 'medium' ? 'var(--warn)' : 'var(--good)';
-    var chip = function(label, arr, col){
-      if (!arr || !arr.length) return '';
-      return '<div style="margin-top:8px"><div style="font:600 10.5px Inter;color:' + col + ';text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">' + label + ' (' + arr.length + ')</div>' +
-        '<div style="display:flex;flex-wrap:wrap;gap:4px">' + arr.map(function(x){ return '<span style="font:11px ui-monospace,monospace;padding:2px 7px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px">' + esc(x) + '</span>'; }).join('') + '</div></div>';
-    };
-    var html = '<label style="font-size:12px;color:var(--muted)">File changed</label>' +
-      '<select id="blastFileSel" style="display:block;width:100%;max-width:520px;margin:6px 0 12px;padding:7px 9px;background:var(--bg);border:1px solid var(--line);border-radius:7px;color:var(--fg);font:12px ui-monospace,monospace">' +
-      files.map(function(f){ return '<option value="' + esc(f) + '"' + (f === sel ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('') + '</select>';
-    html += '<div style="padding:12px;border-left:3px solid ' + riskColor + ';background:rgba(124,92,255,.04);border-radius:4px">' +
-      '<div style="font-size:13px;line-height:1.6">' + esc(r.summary) + '</div>' +
-      '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' +
-      '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;background:' + riskColor + ';color:#0a0e1a">RISK: ' + esc(r.risk.toUpperCase()) + '</span>' +
-      (r.needsMigration ? '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;border:1px solid var(--warn);color:var(--warn)">MIGRATION</span>' : '') +
-      (r.needsRebuild ? '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;border:1px solid var(--accent);color:var(--accent)">REBUILD</span>' : '') +
-      (r.needsRedeploy ? '<span style="font:600 11px Inter;padding:2px 9px;border-radius:9px;border:1px solid var(--info);color:var(--info)">REDEPLOY</span>' : '') +
-      '</div></div>';
-    html += chip('Source files', r.buckets.sourceFiles, 'var(--fg)');
-    html += chip('Tests to re-run', r.buckets.tests, 'var(--good)');
-    html += chip('Migrations', r.buckets.migrations, 'var(--warn)');
-    html += chip('Routes affected', r.routesTouched, 'var(--accent)');
-    html += chip('DB tables', r.tablesTouched, 'var(--info)');
-    html += chip('Config / build', r.buckets.config, 'var(--muted)');
-    return html;
-  } catch (e) { return '<div style="color:var(--err);font-size:13px">Blast radius failed: ' + esc(e && e.message || e) + '</div>'; }
-}
-
-function renderRecoveryRootCause(){
-  try {
-    if (!window.Engine || !window.Engine.Recovery) return '<div style="color:var(--muted);font-size:13px">Engine.Recovery not loaded</div>';
-    var analysis = window.Engine.Recovery.analyze();
-    var rc = analysis && analysis.rootCause;
-    if (!rc) return '<div style="color:var(--muted);font-size:13px">No root-cause analysis available.</div>';
-    if (!rc.symptom && !rc.rootCause) {
-      return '<div style="color:var(--muted);font-size:13px">No symptoms detected. Workspace is clean.</div>';
-    }
-
-    var html = '<div style="display:grid;grid-template-columns:1fr;gap:10px">';
-    // Symptom
-    html += '<div style="padding:12px;border-left:3px solid var(--err);background:rgba(239,68,68,.05);border-radius:4px">';
-    html +=   '<div style="font:600 11px Inter;color:var(--err);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Symptom</div>';
-    html +=   '<div style="font-size:13px">' + esc(rc.symptom || 'No symptoms detected') + '</div>';
-    html += '</div>';
-    // Affected files
-    var affected = rc.affectedFiles || rc.affected || [];
-    if (affected.length) {
-      html += '<div style="padding:12px;border-left:3px solid var(--warn);background:rgba(245,158,11,.05);border-radius:4px">';
-      html +=   '<div style="font:600 11px Inter;color:var(--warn);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Affected files (impact)</div>';
-      html +=   '<div style="display:flex;flex-wrap:wrap;gap:4px">';
-      affected.forEach(function(f){
-        html += '<span style="font:600 11px Inter;padding:2px 8px;background:var(--bg-2);border:1px solid var(--line);border-radius:9px;color:var(--fg)">' + esc(f) + '</span>';
-      });
-      html +=   '</div>';
-      html += '</div>';
-    }
-    // Dependency chain
-    var chain = rc.dependencyChain || rc.chain || [];
-    if (chain.length) {
-      html += '<div style="padding:12px;border-left:3px solid var(--accent);background:rgba(124,92,255,.05);border-radius:4px">';
-      html +=   '<div style="font:600 11px Inter;color:var(--accent);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Causal chain</div>';
-      html +=   '<div style="font-size:12.5px;line-height:1.7">';
-      chain.forEach(function(step, i){
-        if (i > 0) html += '<span style="color:var(--muted);margin:0 6px">→</span>';
-        html += '<span style="padding:2px 8px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px">' + esc(step) + '</span>';
-      });
-      html +=   '</div>';
-      html += '</div>';
-    }
-    // Root cause
-    if (rc.rootCause) {
-      html += '<div style="padding:12px;border-left:3px solid var(--good);background:rgba(52,211,153,.05);border-radius:4px">';
-      html +=   '<div style="font:600 11px Inter;color:var(--good);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Probable root cause</div>';
-      html +=   '<div style="font-size:13px;font-weight:600">' + esc(rc.rootCause) + '</div>';
-      if (rc.probableCause) {
-        html += '<div style="margin-top:6px;font-size:12px;color:var(--muted)">' + esc(rc.probableCause) + '</div>';
-      }
-      html += '</div>';
-    }
-    // Repair candidates
-    if (rc.repairCandidates && rc.repairCandidates.length) {
-      html += '<div style="padding:10px 12px;border:1px dashed var(--line);border-radius:4px">';
-      html +=   '<div style="font:600 11px Inter;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Repair candidates</div>';
-      html +=   '<div style="display:flex;flex-wrap:wrap;gap:4px">';
-      rc.repairCandidates.forEach(function(c){
-        html += '<span style="font:600 10.5px Inter;padding:2px 8px;background:rgba(124,92,255,.15);color:var(--accent);border-radius:9px">' + esc(c) + '</span>';
-      });
-      html +=   '</div>';
-      html += '</div>';
-    }
-    // Affected subsystems (extra)
-    if (rc.affectedSubsystems && rc.affectedSubsystems.length) {
-      html += '<div style="padding:10px 12px;border:1px dashed var(--line);border-radius:4px">';
-      html +=   '<div style="font:600 11px Inter;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Affected subsystems</div>';
-      html +=   '<div style="display:flex;flex-wrap:wrap;gap:4px">';
-      rc.affectedSubsystems.forEach(function(s){
-        html += '<span style="font:600 10.5px Inter;padding:2px 8px;background:var(--bg-2);border:1px solid var(--line);border-radius:9px;color:var(--mut)">' + esc(s) + '</span>';
-      });
-      html +=   '</div>';
-      html += '</div>';
-    }
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">root-cause error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoveryMockDetector(){
-  try {
-    if (!window.Engine || !window.Engine.MockDetect) return '<div style="color:var(--muted);font-size:13px">Mock detector not loaded</div>';
-    var findings = window.Engine.MockDetect.run() || [];
-    var capture = null;
-    try { capture = window.Engine.Preview && window.Engine.Preview.lastCapture && window.Engine.Preview.lastCapture(); } catch (_) {}
-    if (!findings.length) {
-      return '<div style="display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--good);border-radius:8px;background:rgba(52,211,153,.06)">'
-        + '<span style="color:var(--good)">' + I.checkc + '</span>'
-        + '<div><div style="font-weight:600;font-size:13px;color:var(--good)">No mocks or placeholders detected</div>'
-        + '<div style="font-size:11.5px;color:var(--muted)">Empty handlers, fake async, TODOs, and hardcoded secrets are scanned on every Recovery visit. Use Fix placeholders after a scan that finds them.</div></div>'
-        + '</div>'
-        + (capture && capture.dataUrl ? '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:10px;max-width:100%;border-radius:8px;border:1px solid var(--line)"/>' : '');
-    }
-    var html = '<div style="font:600 12px Inter;color:var(--warn);margin-bottom:8px">' + findings.length + ' mock / placeholder finding' + (findings.length === 1 ? '' : 's') + '</div>';
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px">';
-    findings.slice(0, 24).forEach(function(f){
-      var kindLabel = (f.kind || 'mock').replace(/-/g, ' ');
-      html += '<div style="padding:12px;border:1px solid var(--warn);border-radius:8px;background:rgba(245,158,11,.05)">';
-      html +=   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">';
-      html +=     '<span style="font:600 10.5px Inter;padding:2px 8px;background:var(--warn);color:#0a0e1a;border-radius:9px;text-transform:uppercase">' + esc(kindLabel) + '</span>';
-      html +=     '<span style="font:600 11px Inter;color:var(--muted);margin-left:auto">x' + (f.count || 1) + '</span>';
-      html +=   '</div>';
-      html +=   '<div style="font:600 12px Inter;margin-bottom:4px">' + esc(f.file || '') + (f.line ? ':' + f.line : '') + '</div>';
-      html +=   '<div style="font-size:11.5px;color:var(--muted);line-height:1.45">' + esc(f.why || '') + '</div>';
-      if (f.sample) {
-        html += '<div style="margin-top:6px;padding:6px 8px;background:var(--bg-2);border:1px solid var(--line);border-radius:4px;font:500 11px/1.4 monospace;color:var(--fg);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.sample) + '</div>';
-      }
-      html += '</div>';
-    });
-    html += '</div>';
-    if (capture && capture.dataUrl) {
-      html += '<img alt="Live preview snapshot" src="' + capture.dataUrl + '" style="margin-top:12px;max-width:100%;border-radius:8px;border:1px solid var(--line)"/>';
-    }
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">mock-detect error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function runMockDetectorScan(){
-  try {
-    if (window.Engine && window.Engine.Preview && window.Engine.Preview.capture) window.Engine.Preview.capture();
-    if (window.Engine && window.Engine.MockDetect) window.Engine.MockDetect.run();
-    toast('Mock detector scanned the current workspace', '#22d3ee');
-    if (typeof renderAll === 'function') renderAll();
-  } catch (e) {
-    toast('Mock scan failed: ' + (e && e.message || e), '#ef4444');
-  }
-}
-
-async function runMockDetectorFix(){
-  try {
-    toast('Fixing placeholders (inspect → patch → preview)…', '#7c5cff');
-    const LLM = window.Engine && window.Engine.LLM;
-    let result;
-    if (LLM && typeof LLM.smartLoop === 'function') {
-      result = await LLM.smartLoop({ kind: 'mocks' });
-    } else if (window.Engine.MockDetect && window.Engine.MockDetect.fix) {
-      result = window.Engine.MockDetect.fix();
-    } else {
-      toast('Mock detector not loaded', '#ef4444'); return;
-    }
-    const left = (result.remaining && (result.remaining.length || result.remaining.total)) || 0;
-    const n = (result.patched && result.patched.length) || 0;
-    toast('Placeholder fix: ' + n + ' file(s) patched, ' + (typeof left === 'number' ? left : 0) + ' left', left ? '#f59e0b' : '#34d399');
-    S.lastScan = null;
-    if (typeof runValidatorScan === 'function') runValidatorScan();
-    if (typeof renderAll === 'function') renderAll();
-  } catch (e) {
-    toast('Placeholder fix failed: ' + (e && e.message || e), '#ef4444');
-  }
-}
-
-function renderRecoveryDiff(){
-  try {
-    if (!window.Engine || !window.Engine.Recovery) return '<div style="color:var(--muted);font-size:13px">Engine.Recovery not loaded</div>';
-    var diffs = window.Engine.Recovery.getDiffs ? window.Engine.Recovery.getDiffs() : [];
-    if (!diffs.length) {
-      return '<div style="color:var(--muted);font-size:13px">No repair diffs yet. Run <b>Repair All</b> to record an audit trail.</div>';
-    }
-    var last = diffs[diffs.length - 1];
-    var entries = last.diff || [];
-    if (!entries.length) {
-      return '<div style="color:var(--muted);font-size:13px">Last run produced no diffs (nothing changed).</div>';
-    }
-    var html = '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:8px">' + entries.length + ' file change' + (entries.length === 1 ? '' : 's') + ' - run <span class="cs-mono">' + esc(last.runId) + '</span></div>';
-    html += '<div style="display:grid;grid-template-columns:1fr;gap:8px">';
-    entries.forEach(function(d){
-      var before = d.before || '';
-      var after  = d.after  || '';
-      // Truncate to first 280 chars
-      if (before.length > 280) before = before.slice(0, 280) + '\n... [truncated]';
-      if (after.length  > 280) after  = after.slice(0, 280)  + '\n... [truncated]';
-      var conf = d.confidence != null ? Math.round(d.confidence * 100) + '%' : '-';
-      var riskColor = d.risk === 'high' ? 'var(--err)' : d.risk === 'medium' ? 'var(--warn)' : 'var(--good)';
-      html += '<div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">';
-      html +=   '<div style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg-2);border-bottom:1px solid var(--line)">';
-      html +=     '<span style="font:600 12px Inter">' + esc(d.file || '') + '</span>';
-      html +=     '<span style="font:600 10.5px Inter;padding:2px 7px;background:var(--accent);color:#0a0e1a;border-radius:9px">' + esc(d.code|| 'patch') + '</span>';
-      html +=     '<span style="font:600 10.5px Inter;color:var(--muted);margin-left:auto">conf ' + conf + '</span>';
-      html +=     '<span style="font:600 10.5px Inter;color:' + riskColor + '">risk: ' + esc(d.risk || 'low') + '</span>';
-      html +=   '</div>';
-      html +=   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:0">';
-      html +=     '<div style="padding:8px 12px;background:rgba(239,68,68,.04);border-right:1px solid var(--line)">';
-      html +=       '<div style="font:600 10px Inter;color:var(--err);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Before</div>';
-      html +=       '<pre style="margin:0;font:500 11px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--fg)">' + esc(before) + '</pre>';
-      html +=     '</div>';
-      html +=     '<div style="padding:8px 12px;background:rgba(52,211,153,.04)">';
-      html +=       '<div style="font:600 10px Inter;color:var(--good);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">After</div>';
-      html +=       '<pre style="margin:0;font:500 11px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-all;color:var(--fg)">' + esc(after) + '</pre>';
-      html +=     '</div>';
-      html +=   '</div>';
-      html += '</div>';
-    });
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">diff error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoverySuites(){
-  try {
-    if (!S || !S.lastScan) return '<div style="color:var(--muted);font-size:13px">No scan yet. Click <b>Re-scan</b> to populate validator suites.</div>';
-    var suites = S.lastScan.suites;
-    if (!suites || !suites.length) {
-      suites = classifyValidatorSuites(S.lastScan.issues || []);
-      S.lastScan.suites = suites;
-    }
-    var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px">';
-    suites.forEach(function(s){
-      var has = s.count > 0;
-      var color = has ? 'var(--warn)' : 'var(--good)';
-      var bg    = has ? 'rgba(245,158,11,.06)' : 'rgba(52,211,153,.06)';
-      var border= has ? 'var(--warn)' : 'var(--line)';
-      var status= has ? (s.count + ' finding' + (s.count === 1 ? '' : 's')) : 'clean';
-      html += '<div style="padding:14px;border:1px solid ' + border + ';border-radius:8px;background:' + bg + '">';
-      html +=   '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">';
-      html +=     '<span style="width:8px;height:8px;border-radius:50%;background:' + color + '"></span>';
-      html +=     '<span style="font-weight:700;font-size:13px;letter-spacing:.4px">' + esc(s.name) + '</span>';
-      html +=     '<span style="margin-left:auto;font:600 10.5px Inter;padding:1px 7px;border-radius:9px;background:' + color + ';color:#0a0e1a">' + status + '</span>';
-      html +=   '</div>';
-      html +=   '<div style="font-size:11px;color:var(--muted);line-height:1.4">' + esc(s.desc) + '</div>';
-      html += '</div>';
-    });
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">suites error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoveryLastRun(){
-  try {
-    if (!window.Engine || !window.Engine.Recovery) return '<div style="color:var(--muted);font-size:13px">Engine.Recovery not loaded</div>';
-    var runs = window.Engine.Recovery.history();
-    var analysis = window.Engine.Recovery.lastAnalysis ? window.Engine.Recovery.lastAnalysis() : null;
-    var lastRepair = runs.length ? runs[runs.length - 1] : null;
-    var r = lastRepair;
-    if (!r) r = analysis;
-    else if (analysis && (!lastRepair.repairedCount) && (lastRepair.status === 'NOOP' || lastRepair.status === 'SCANNED') && analysis.at && lastRepair.finishedAt && analysis.at >= lastRepair.finishedAt) {
-      r = analysis;
-    } else if (analysis && lastRepair.status === 'NOOP' && (lastRepair.repairedCount || 0) === 0 && !lastRepair.diffCount) {
-      r = analysis;
-    }
-    if (!r) {
-      return '<div style="color:var(--muted);font-size:13px">No runs yet. Open Recovery to scan, or click <b>Repair All</b> to start an autonomous repair cycle.</div>';
-    }
-    var isScan = r.status === 'SCANNED';
-    var statusColor = r.status === 'VERIFIED' ? 'var(--good)' : r.status === 'ROLLED_BACK' ? 'var(--err)' : (isScan ? 'var(--accent)' : 'var(--warn)');
-    var verifyFailed = (r.verify && r.verify.failed) || [];
-    var beforeH = r.before ? r.before.health : 0;
-    var afterH  = r.after  ? r.after.health  : 0;
-    var beforeColor = beforeH >= 90 ? 'var(--good)' : 'var(--warn)';
-    var afterColor  = afterH >= 90 ? 'var(--good)' : (afterH > beforeH ? 'var(--good)' : 'var(--err)');
-    var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
-    html += '<div>';
-    html +=   '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:6px">' + (isScan ? 'Last diagnostic' : 'Run') + '</div>';
-    html +=   '<div class="cs-mono" style="font-size:12px">' + esc(r.runId || '—') + '</div>';
-    html +=   '<div style="margin-top:8px"><span style="font:700 12px Inter;padding:3px 10px;border-radius:9px;background:' + statusColor + ';color:#fff">' + esc(r.status || 'UNKNOWN') + '</span></div>';
-    html +=   '<div style="margin-top:8px;font-size:12px;color:var(--muted)">Agent: ' + esc(r.agent || 'Sovereign-1.5') + (isScan ? (' — ' + (r.issueCount || 0) + ' issue' + ((r.issueCount||0)===1?'':'s')) : (' - Repaired: ' + (r.repairedCount || 0) + ' - Rolled back: ' + (r.rolledBack ? 'yes' : 'no'))) + '</div>';
-    html += '</div>';
-    html += '<div>';
-    html +=   '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:6px">Before / After</div>';
-    html +=   '<div style="display:flex;align-items:center;gap:10px">';
-    html +=     '<div style="font:700 22px Inter;color:' + beforeColor + '">' + beforeH + '</div>';
-    html +=     '<div style="color:var(--muted)">-&gt;</div>';
-    html +=     '<div style="font:700 22px Inter;color:' + afterColor + '">' + afterH + '</div>';
-    html +=   '</div>';
-    if (verifyFailed.length) {
-      html += '<div style="margin-top:8px;font-size:12px;color:var(--err)">Failed gates: ' + verifyFailed.join(', ') + '</div>';
-    } else {
-      html += '<div style="margin-top:8px;font-size:12px;color:var(--good)">' + (isScan ? 'Diagnostic scan complete' : 'All gates passed') + '</div>';
-    }
-    html += '</div>';
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">last-run error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoverySnapshots(){
-  try {
-    if (!window.Engine || !window.Engine.Snapshots) return '<div style="color:var(--muted);font-size:13px">Engine.Snapshots not loaded</div>';
-    var snaps = window.Engine.Snapshots.list().slice().reverse().slice(0, 8);
-    if (!snaps.length) {
-      return '<div style="color:var(--muted);font-size:13px">No snapshots yet. Capture one before running <b>Repair All</b> to enable rollback.</div>';
-    }
-    var html = '';
-    snaps.forEach(function(s){
-      var dotColor = s.reason === 'pre-repair' ? 'var(--accent)' : 'var(--good)';
-      html += '<div style="display:flex;align-items:center;gap:10px;padding:10px;border-bottom:1px solid var(--line)">';
-      html +=   '<span style="width:8px;height:8px;border-radius:50%;background:' + dotColor + '"></span>';
-      html +=   '<div style="flex:1">';
-      html +=     '<div class="cs-mono" style="font-size:12px">' + esc(s.snapshotId) + '</div>';
-      html +=     '<div style="font-size:11px;color:var(--muted)">' + esc(s.reason) + ' - ' + s.fileCount + ' files - ' + fmtTimeAgo(s.capturedAt) + '</div>';
-      html +=   '</div>';
-      html +=   '<button class="btn" onclick="restoreSnapshot(\'' + s.snapshotId + '\')">Restore</button>';
-      html += '</div>';
-    });
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">snapshots error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoveryGenerator(){
-  try {
-    if (!window.Engine || !window.Engine.Generator) return '<div style="color:var(--muted);font-size:13px">Engine.Generator not loaded</div>';
-    var types = window.Engine.Generator.availableTypes();
-    var chips = '';
-    var _prompts = {
-      'saas-dashboard': 'A SaaS dashboard with analytics, charts, admin panel and auth login',
-      'landing-page':   'A landing page with hero, marketing copy, waitlist signup and contact form',
-      'ecommerce':      'An ecommerce store with product catalog, cart, checkout and payment',
-      'blog':           'A blog with articles, post detail, search and tag pages',
-      'portfolio':      'A portfolio site with project gallery, resume and contact form',
-      'todo':           'A todo app with task list, kanban board, dark mode and search',
-      'chat':           'A real-time chat app with messenger UI, channels and direct messages',
-      'api':            'A REST API with auth, GraphQL endpoint and microservices',
-      'static':         'A static single page site with simple sections and contact form'
-    };
-    types.forEach(function(t){
-      var p = _prompts[t.id] || ('A ' + t.name + ' app with auth, dark mode and charts');
-      chips += '<button class="btn" onclick="document.getElementById(\'genPrompt\').value=\'' + esc(p) + '\'" style="font-size:11px;padding:5px 9px">' + esc(t.name) + '</button>';
-    });
-    var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
-    html += '<div>';
-    html +=   '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:6px">Describe your app</div>';
-    html +=   '<textarea id="genPrompt" style="width:100%;min-height:90px;padding:10px;border-radius:8px;background:var(--bg-2);color:var(--fg);border:1px solid var(--line);font:inherit" placeholder="e.g. A SaaS dashboard for analytics with auth, dark mode, and charts">A SaaS dashboard with auth, charts and dark mode</textarea>';
-    html +=   '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">' + chips + '</div>';
-    html +=   '<div style="margin-top:10px"><button class="btn primary" onclick="generateApp()" style="display:inline-flex;align-items:center;gap:6px"><span style="width:14px;height:14px;display:inline-flex">${I.rocket}</span> Generate + Repair</button></div>';
-    html += '</div>';
-    html += '<div>';
-    html +=   '<div style="font:600 12px Inter;color:var(--muted);margin-bottom:6px">Pipeline</div>';
-    html +=   '<ol style="margin:0;padding-left:18px;line-height:1.85;color:var(--muted);font-size:13px">';
-    html +=     '<li>Intent Engine: detect app type and features from prompt</li>';
-    html +=     '<li>Template scaffolder: write files to virtual FS</li>';
-    html +=     '<li>Recovery Engine: analyze, plan, patch, verify</li>';
-    html +=     '<li>Hard verification gate: all 4 layers must pass</li>';
-    html +=   '</ol>';
-    html += '</div>';
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">generator error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-// ============================================================
-// V3 Render Functions
-// ============================================================
-function renderRecoveryV3Convergence(){
-  try {
-    if (!window.Engine || !window.Engine.Convergence) return '<div style="color:var(--muted);font-size:13px">V3 Convergence not loaded</div>';
-    var runs = (window.Engine.Recovery && window.Engine.Recovery.history) ? window.Engine.Recovery.history() : [];
-    var cycleRecords = (runs.length && runs[runs.length - 1] && runs[runs.length - 1].cycleRecords) || [];
-    var conv = window.Engine.Convergence.evaluate(cycleRecords);
-    var state = conv.state || 'COMPLETE';
-    var stateColor = state === 'COMPLETE' ? 'var(--good)' : state === 'CONVERGING' ? 'var(--accent)' : state === 'PLATEAU' ? 'var(--warn)' : state === 'OSCILLATION' ? 'var(--warn)' : state === 'REGRESSION' ? 'var(--err)' : state === 'NO_PROGRESS' ? 'var(--muted)' : 'var(--muted)';
-    var stateIcon  = state === 'COMPLETE' ? I.checkc : state === 'CONVERGING' ? I.run : I.clock;
-
-    // Strategy summary
-    var stratSummary = window.Engine.RepairStrategy ? window.Engine.RepairStrategy.summary() : { trackedIssues: 0, exhausted: 0 };
-    var issueSummary = window.Engine.IssueMemory ? window.Engine.IssueMemory.summary() : { total: 0, open: 0, repaired: 0, persistent: 0 };
-
-    var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
-    // Convergence state
-    html += '<div style="padding:14px;border:1px solid ' + stateColor + ';border-radius:8px;background:rgba(124,92,255,.04)">';
-    html +=   '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">';
-    html +=     '<span style="color:' + stateColor + '">' + stateIcon + '</span>';
-    html +=     '<span style="font-weight:700;font-size:13px;letter-spacing:.4px">Convergence State</span>';
-    html +=     '<span style="margin-left:auto;font:700 11px Inter;padding:3px 9px;border-radius:9px;background:' + stateColor + ';color:#fff">' + esc(state) + '</span>';
-    html +=   '</div>';
-    html +=   '<div style="font-size:11.5px;color:var(--muted);line-height:1.5">' + esc(conv.reason || 'no history') + '</div>';
-    if (conv.details) {
-      var dKeys = Object.keys(conv.details);
-      if (dKeys.length) {
-        html += '<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">';
-        dKeys.forEach(function(k){
-          var v = conv.details[k];
-          html += '<span style="font:600 10.5px Inter;padding:2px 7px;background:var(--bg-2);border:1px solid var(--line);border-radius:9px;color:var(--mut)">' + esc(k) + ': ' + esc(String(v)) + '</span>';
-        });
-        html += '</div>';
-      }
-    }
-    html += '</div>';
-    // Strategy + Issue Memory summary
-    html += '<div style="padding:14px;border:1px solid var(--line);border-radius:8px">';
-    html +=   '<div style="font:600 12px Inter;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Strategy &amp; Memory</div>';
-    html +=   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">';
-    html +=     '<div><div style="color:var(--mut);font-size:11px">Tracked issues</div><div style="font:700 18px Inter">' + issueSummary.total + '</div></div>';
-    html +=     '<div><div style="color:var(--mut);font-size:11px">Open</div><div style="font:700 18px Inter;color:var(--warn)">' + issueSummary.open + '</div></div>';
-    html +=     '<div><div style="color:var(--mut);font-size:11px">Repaired</div><div style="font:700 18px Inter;color:var(--good)">' + issueSummary.repaired + '</div></div>';
-    html +=     '<div><div style="color:var(--mut);font-size:11px">Persistent</div><div style="font:700 18px Inter;color:var(--err)">' + issueSummary.persistent + '</div></div>';
-    html +=   '</div>';
-    html +=   '<div style="margin-top:10px;font-size:11.5px;color:var(--muted)">Strategies tracked: ' + stratSummary.trackedIssues + ' - Exhausted: ' + stratSummary.exhausted + '</div>';
-    html += '</div>';
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">V3 convergence error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoveryV3IssueMemory(){
-  try {
-    if (!window.Engine || !window.Engine.IssueMemory) return '<div style="color:var(--muted);font-size:13px">V3 IssueMemory not loaded</div>';
-    var items = window.Engine.IssueMemory.list();
-    if (!items.length) {
-      return '<div style="color:var(--muted);font-size:13px">No issues tracked yet. Run <b>Run V3</b> to populate the persistent issue memory.</div>';
-    }
-    var html = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px">';
-    items.slice(-12).reverse().forEach(function(it){
-      var statusColor = it.status === 'repaired' ? 'var(--good)' : it.persistent ? 'var(--err)' : it.status === 'open' ? 'var(--warn)' : 'var(--mut)';
-      html += '<div style="padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg-2)">';
-      html +=   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">';
-      html +=     '<span style="font:600 10.5px Inter;padding:2px 7px;background:var(--accent);color:#0a0e1a;border-radius:9px">' + esc(it.code || 'unknown') + '</span>';
-      html +=     '<span style="margin-left:auto;font:600 10.5px Inter;padding:2px 7px;background:' + statusColor + ';color:#fff;border-radius:9px">' + esc(it.status || 'open') + '</span>';
-      html +=   '</div>';
-      html +=   '<div style="font:500 11.5px ui-monospace,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:4px">' + esc(it.file || '') + '</div>';
-      html +=   '<div style="font-size:11px;color:var(--mut);line-height:1.4;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">' + esc(it.message || '') + '</div>';
-      html +=   '<div style="margin-top:6px;display:flex;gap:6px;font-size:10.5px;color:var(--mut)">';
-      html +=     '<span>attempts: ' + (it.attempts || 0) + '</span>';
-      if (it.strategies && it.strategies.length) html += '<span>strategies: ' + it.strategies.length + '</span>';
-      if (it.persistent) html += '<span style="color:var(--err);font-weight:600">persistent</span>';
-      html +=   '</div>';
-      html += '</div>';
-    });
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">V3 issue-memory error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoveryV3Contracts(){
-  try {
-    if (!window.Engine || !window.Engine.Contracts) return '<div style="color:var(--muted);font-size:13px">V3 Contracts not loaded</div>';
-    var res = window.Engine.Contracts.validate();
-    var findings = res.findings || [];
-    if (!findings.length) {
-      return '<div style="display:flex;align-items:center;gap:10px;padding:12px;border:1px solid var(--good);border-radius:8px;background:rgba(52,211,153,.06)">'
-        + '<span style="color:var(--good)">' + I.checkc + '</span>'
-        + '<div><div style="font-weight:600;font-size:13px;color:var(--good)">All producer/consumer contracts are valid</div>'
-        + '<div style="font-size:11.5px;color:var(--muted)">Checked ' + res.checkedFiles + ' files - imports resolve, fetches match routes, forms are wired</div></div>'
-        + '</div>';
-    }
-    var html = '<div style="font:600 12px Inter;color:var(--warn);margin-bottom:8px">' + findings.length + ' contract issue' + (findings.length === 1 ? '' : 's') + ' across ' + res.checkedFiles + ' files</div>';
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:10px">';
-    findings.forEach(function(f){
-      var sev = f.severity || 'warning';
-      var color = sev === 'error' ? 'var(--err)' : sev === 'warning' ? 'var(--warn)' : 'var(--info)';
-      html += '<div style="padding:10px;border:1px solid ' + color + ';border-radius:8px;background:rgba(245,158,11,.04)">';
-      html +=   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">';
-      html +=     '<span style="font:600 10.5px Inter;padding:2px 7px;background:' + color + ';color:#fff;border-radius:9px">' + esc(f.kind) + '</span>';
-      html +=     '<span style="margin-left:auto;font:600 10.5px Inter;color:var(--mut)">' + esc(sev) + '</span>';
-      html +=   '</div>';
-      html +=   '<div style="font:500 11.5px ui-monospace,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(f.from) + '</div>';
-      if (f.to) html += '<div style="font-size:11px;color:var(--mut)">→ expects: ' + esc(f.to) + (f.missing ? ' (missing ' + esc(f.missing) + ')' : '') + '</div>';
-      if (f.fetch) html += '<div style="font-size:11px;color:var(--mut)">→ fetch: ' + esc(f.fetch) + ' (no route)</div>';
-      html += '</div>';
-    });
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">V3 contracts error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoveryV3GoldenPaths(){
-  try {
-    if (!window.Engine || !window.Engine.GoldenPaths) return '<div style="color:var(--muted);font-size:13px">V3 GoldenPaths not loaded</div>';
-    var proj = (window.Engine.Proj && window.Engine.Proj.current) ? (window.Engine.Proj.current() || {}) : {};
-    var appType = (proj && proj.template) || 'saas-dashboard';
-    var gp = window.Engine.GoldenPaths.run(appType);
-    var color = gp.allCriticalPassed ? 'var(--good)' : 'var(--err)';
-    var html = '<div style="display:grid;grid-template-columns:180px 1fr;gap:14px;align-items:center">';
-    html +=   '<div style="text-align:center">';
-    html +=     '<div style="font:700 36px Inter;color:' + color + '">' + gp.criticalPassed + '/' + gp.criticalTotal + '</div>';
-    html +=     '<div style="font:600 11px Inter;color:var(--mut);text-transform:uppercase;letter-spacing:1px;margin-top:4px">Critical Golden Paths</div>';
-    html +=     '<div style="font-size:11px;color:var(--mut);margin-top:6px">' + gp.passed + ' / ' + gp.total + ' total pass</div>';
-    html +=   '</div>';
-    html +=   '<div>';
-    gp.results.forEach(function(r){
-      var dotColor = r.passed ? 'var(--good)' : 'var(--err)';
-      var label = r.passed ? 'PASS' : (r.critical ? 'CRITICAL' : 'FAIL');
-      html += '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;margin-bottom:6px;background:var(--bg-2)">';
-      html +=   '<span style="width:8px;height:8px;border-radius:50%;background:' + dotColor + '"></span>';
-      html +=   '<span style="font:600 12px Inter;flex:1">' + esc(r.name) + '</span>';
-      html +=   '<span style="font:600 10.5px Inter;color:var(--mut)">' + esc(r.steps.join(' → ')) + '</span>';
-      html +=   '<span style="font:600 10.5px Inter;padding:2px 7px;background:' + dotColor + ';color:#fff;border-radius:9px;margin-left:6px">' + label + '</span>';
-      html += '</div>';
-    });
-    html +=   '</div>';
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">V3 golden-paths error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoveryV3FaultInjection(){
-  try {
-    if (!window.Engine || !window.Engine.FaultInjector) return '<div style="color:var(--muted);font-size:13px">V3 FaultInjector not loaded</div>';
-    var faults = window.Engine.FaultInjector.FAULTS || {};
-    var keys = Object.keys(faults);
-    var last = window.Engine.FaultInjector.lastBenchmark ? window.Engine.FaultInjector.lastBenchmark() : null;
-    var html = '<div style="font:600 12px Inter;color:var(--mut);margin-bottom:8px">' + keys.length + ' controllable fault classes — inject each, run repair, record metrics</div>';
-    if (last) {
-      html += '<div style="margin-bottom:10px;padding:10px;border:1px solid var(--accent);border-radius:8px;background:rgba(124,92,255,.06);font-size:12px">Last benchmark: ' + last.injected + ' injected · ' + Math.round((last.detected/(last.injected||1))*100) + '% detected · ' + Math.round((last.repaired/(last.injected||1))*100) + '% repaired</div>';
-    }
-    html += '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px">';
-    keys.forEach(function(k){
-      var f = faults[k];
-      var lastR = last && last.results && last.results.find(function(x){ return x.fault === k; });
-      html += '<div style="padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--bg-2)">';
-      html +=   '<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">';
-      html +=     '<span style="font:600 10.5px Inter;padding:2px 7px;background:var(--warn);color:#0a0e1a;border-radius:9px">' + esc(k) + '</span>';
-      html +=     '<span style="font:600 10.5px Inter;color:var(--mut);margin-left:auto">' + esc(f.code) + '</span>';
-      html +=   '</div>';
-      html +=   '<div style="font-size:11px;color:var(--mut);line-height:1.4">' + esc(f.desc) + '</div>';
-      if (lastR) html += '<div style="margin-top:6px;font-size:10.5px;color:' + (lastR.repaired ? 'var(--good)' : 'var(--warn)') + '">' + (lastR.detected ? 'detected' : 'missed') + ' · ' + (lastR.repaired ? 'repaired' : 'not repaired') + '</div>';
-      html += '</div>';
-    });
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">V3 fault-injector error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function renderRecoveryV3Certificate(){
-  try {
-    if (!window.Engine || !window.Engine.Certificate) return '<div style="color:var(--muted);font-size:13px">V3 Certificate not loaded</div>';
-    var last = window.Engine.Certificate.last();
-    var report = window.Engine.Benchmark ? window.Engine.Benchmark.report() : {};
-    if (!last) {
-      return '<div style="color:var(--mut);font-size:13px">No certificate yet. Run <b>Run V3</b> to generate an auditable Recovery Certificate.</div>';
-    }
-    var verified = last.verified100;
-    var color = verified ? 'var(--good)' : (last.rolledBack ? 'var(--err)' : 'var(--warn)');
-    var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:14px">';
-    // Certificate panel
-    html += '<div style="padding:14px;border:1px solid ' + color + ';border-radius:8px;background:rgba(52,211,153,.04)">';
-    html +=   '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">';
-    html +=     '<span style="font:600 10.5px Inter;padding:2px 7px;background:' + color + ';color:#fff;border-radius:9px">CERTIFICATE</span>';
-    html +=     '<span style="font:500 11.5px ui-monospace,Menlo,monospace;color:var(--mut)">' + esc(last.certificateId) + '</span>';
-    html +=   '</div>';
-    html +=   '<div style="font:700 20px Inter;color:' + color + '">' + (verified ? 'VERIFIED RECOVERY: 100%' : (last.rolledBack ? 'ROLLED BACK' : 'PARTIAL RECOVERY')) + '</div>';
-    html +=   '<div style="margin-top:10px;font-size:12px;line-height:1.7">';
-    html +=     '<div><b>Project:</b> ' + esc(last.projectName) + '</div>';
-    html +=     '<div><b>Health:</b> ' + last.initialHealth + ' → ' + last.finalHealth + '</div>';
-    html +=     '<div><b>Detected:</b> ' + last.detectedIssues + ' - <b>Repaired:</b> ' + last.repairedIssues + ' - <b>Unresolved:</b> ' + last.unresolvedIssues + '</div>';
-    html +=     '<div><b>Build:</b> ' + last.buildStatus + ' - <b>Runtime:</b> ' + last.runtimeStatus + ' - <b>Functional:</b> ' + last.functionalStatus + '</div>';
-    html +=     '<div><b>Highest level reached:</b> ' + esc(last.highestLevel) + '</div>';
-    html +=     '<div><b>Mocks remaining:</b> ' + last.mocksRemaining + ' - <b>Broken connections:</b> ' + last.brokenConnections + '</div>';
-    html +=     '<div><b>Regressions:</b> ' + last.regressions + '</div>';
-    html +=   '</div>';
-    html += '</div>';
-    // Benchmark panel
-    html += '<div style="padding:14px;border:1px solid var(--line);border-radius:8px">';
-    html +=   '<div style="font:600 12px Inter;color:var(--mut);text-transform:uppercase;letter-spacing:.4px;margin-bottom:10px">Benchmark Metrics</div>';
-    var metrics = [
-      { label: 'Projects tested',     value: report.projects || 0,                  suffix: '' },
-      { label: 'Fault detection',     value: (report.faultDetectionRate || 0) + '%', suffix: '' },
-      { label: 'Root-cause accuracy', value: (report.rootCauseAccuracy || 0) + '%',   suffix: '' },
-      { label: 'Successful repair',   value: (report.successfulRepairRate || 0) + '%',suffix: '' },
-      { label: 'Build recovery',      value: (report.buildRecoveryRate || 0) + '%',   suffix: '' },
-      { label: 'Runtime recovery',    value: (report.runtimeRecoveryRate || 0) + '%', suffix: '' },
-      { label: 'Functional recovery', value: (report.functionalRecoveryRate || 0) + '%',suffix: '' },
-      { label: 'Regression-free',     value: (report.regressionFreeRate || 0) + '%',  suffix: '' },
-      { label: 'Avg cycles',          value: report.averageRepairCycles || 0,        suffix: '' },
-      { label: 'Unresolved',          value: (report.unresolvedPercent || 0) + '%',  suffix: '' }
-    ];
-    html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">';
-    metrics.forEach(function(m){
-      html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 8px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px">';
-      html +=   '<span style="font-size:11.5px;color:var(--mut)">' + m.label + '</span>';
-      html +=   '<span style="font:700 13px Inter">' + m.value + m.suffix + '</span>';
-      html += '</div>';
-    });
-    html += '</div>';
-    html += '<div style="margin-top:10px;font-size:11px;color:var(--mut)">Total runs recorded: ' + (report.totalRuns || 0) + '</div>';
-    html += '</div>';
-    html += '</div>';
-    return html;
-  } catch (e) {
-    return '<div style="color:var(--err);font-size:13px">V3 certificate error: ' + esc(String(e && e.message || e)) + '</div>';
-  }
-}
-
-function repairWorkspace(){
-  try {
-    if (!window.Engine || !window.Engine.Recovery) { toast('Recovery engine not loaded', '#ef4444'); return; }
-    toast('Running Recovery Engine v2 - analyze, plan, patch, verify', '#22d3ee');
-    var t0 = Date.now();
-    var run = window.Engine.Recovery.run();
-    var dt = Date.now() - t0;
-    if (run.rolledBack) {
-      toast('Patches were rolled back (verification failed). Workspace preserved.', '#f59e0b');
-    } else {
-      toast('Repair complete: ' + run.status + ' - ' + run.repairedCount + ' patches - ' + dt + 'ms', '#34d399');
-    }
-    S.lastScan = null;
-    runValidatorScan();
-    renderAll();
-    if (!run.rolledBack) desktopVerifyRepair(run);
-  } catch (e) {
-    console.error(e);
-    toast('Repair failed: ' + (e && e.message || e), '#ef4444');
-  }
-}
-
-// After an FS-level repair, prove it with the project's REAL test + build
-// (desktop only). The Sovereign specs: never declare success from generation
-// alone. On failure, offer to roll the working tree back via git.
-function desktopVerifyRepair(run){
-  if (!(window.CSExec && CSExec.available())) return;
-  // Do not run project commands automatically in a folder the user hasn't trusted.
-  CSExec.trusted().then(function(ok){
-    if (!ok) { toast('Repair applied. Trust this folder (Sovereign card) to auto-verify with real test + build.', '#f59e0b'); return; }
-    _desktopVerifyRepairRun(run);
-  });
-}
-function _desktopVerifyRepairRun(run){
-  toast('Verifying repair with real test + build…', '#a78bfa');
-  Promise.resolve()
-    .then(() => CSExec.test())
-    .then(t => CSExec.build().then(b => ({ t: t, b: b })))
-    .then(res => {
-      var tOk = res.t.code === 0 || res.t.skipped;
-      var bOk = res.b.code === 0 || res.b.skipped;
-      try { Engine.Sovereign && Engine.Sovereign.runEvidence({ steps: ['test','build'] }); } catch (_) {}
-      if (tOk && bOk) {
-        toast('Repair VERIFIED — real tests + build pass', '#34d399');
-      } else {
-        toast('Repair verification FAILED (test:' + res.t.code + ' build:' + res.b.code + '). Use a Snapshot to roll back.', '#ef4444');
-      }
-      if (window.desktop && Engine.FS.__flush) Engine.FS.__flush();
-      renderAll();
-    })
-    .catch(e => { console.error(e); toast('Verification error: ' + e.message, '#f59e0b'); });
-}
-window.desktopVerifyRepair = desktopVerifyRepair;
-
-function repairWorkspaceV3(){
-  try {
-    if (!window.Engine || !window.Engine.Recovery || !window.Engine.Recovery.runV3) {
-      toast('Recovery V3 not loaded', '#ef4444'); return;
-    }
-    toast('Running Recovery Engine V3 - atomic transaction + convergence + strategy + certificate', '#7c5cff');
-    var t0 = Date.now();
-    // Run Golden Paths first so we can include them in the regression check
-    var proj = (window.Engine.Proj && window.Engine.Proj.current) ? (window.Engine.Proj.current() || {}) : {};
-    var appType = (proj && proj.template) || 'saas-dashboard';
-    var gp = window.Engine.GoldenPaths.run(appType);
-    var v3 = window.Engine.Recovery.runV3({ maxCycles: 5, goldenPaths: gp });
-    var dt = Date.now() - t0;
-    if (v3.certificate && v3.certificate.verified100) {
-      toast('VERIFIED RECOVERY: 100% - ' + v3.certificate.repairedIssues + ' repairs in ' + dt + 'ms', '#34d399');
-    } else if (v3.loop && v3.loop.rolledBack) {
-      toast('V3 rolled back (regression caught). Workspace preserved.', '#f59e0b');
-    } else {
-      toast('V3 done: ' + (v3.loop && v3.loop.status) + ' - ' + (v3.loop && v3.loop.repairedCount) + ' repairs - ' + dt + 'ms', '#22d3ee');
-    }
-    S.lastScan = null;
-    runValidatorScan();
-    renderAll();
-  } catch (e) {
-    console.error(e);
-    toast('V3 repair failed: ' + (e && e.message || e), '#ef4444');
-  }
-}
-
-function runFaultInjectionBenchmark(){
-  try {
-    if (!window.Engine || !window.Engine.FaultInjector) { toast('FaultInjector not loaded', '#ef4444'); return; }
-    var FI = window.Engine.FaultInjector;
-    toast('V3 Benchmark: injecting ' + Object.keys(FI.FAULTS || {}).length + ' faults', '#7c5cff');
-    var summary = FI.runBenchmark ? FI.runBenchmark({ llm: false }) : null;
-    if (!summary) {
-      var faults = Object.keys(FI.FAULTS || {});
-      summary = { injected: 0, detected: 0, repaired: 0, results: [] };
-      faults.forEach(function(name){
-        var baselineCount = window.Engine.Validator.runAll().length;
-        FI.captureBaseline();
-        var inj = FI.inject(name, FI.pickTarget ? FI.pickTarget(name) : null);
-        if (!inj || !inj.ok) {
-          FI.restoreBaseline();
-          summary.results.push({ fault: name, detected: false, repaired: false, skipped: true, reason: inj && inj.error });
-          return;
-        }
-        summary.injected++;
-        var afterInject = window.Engine.Validator.runAll().length;
-        var run = window.Engine.Recovery.run();
-        var afterRepair = window.Engine.Validator.runAll().length;
-        FI.restoreBaseline();
-        var detected = afterInject > baselineCount;
-        var repaired = afterRepair < afterInject || (run && (run.repairedCount || 0) > 0);
-        if (detected) summary.detected++;
-        if (repaired) summary.repaired++;
-        summary.results.push({ fault: name, detected: detected, repaired: repaired, file: inj.file });
-      });
-      if (FI.recordBenchmark) FI.recordBenchmark(summary);
-    }
-    try { if (window.Engine.Preview && window.Engine.Preview.capture) window.Engine.Preview.capture(); } catch (_) {}
-    var detRate = summary.injected ? Math.round((summary.detected / summary.injected) * 100) : 0;
-    var repRate = summary.injected ? Math.round((summary.repaired / summary.injected) * 100) : 0;
-    toast('V3 Benchmark done: ' + summary.injected + ' injected, ' + detRate + '% detected, ' + repRate + '% repaired', detRate === 100 && repRate === 100 ? '#34d399' : '#f59e0b');
-    S.lastScan = null;
-    runValidatorScan();
-    renderAll();
-  } catch (e) {
-    console.error(e);
-    toast('Benchmark failed: ' + (e && e.message || e), '#ef4444');
-  }
-}
-
-function captureSnapshot(){
-  try {
-    if (!window.Engine || !window.Engine.Snapshots) { toast('Snapshots not loaded', '#ef4444'); return; }
-    var s = window.Engine.Snapshots.capture('manual', null);
-    toast('Snapshot ' + s.snapshotId + ' captured (' + s.fileCount + ' files)', '#34d399');
-    renderAll();
-  } catch (e) {
-    toast('Snapshot failed: ' + (e && e.message || e), '#ef4444');
-  }
-}
-
-function restoreSnapshot(snapshotId){
-  try {
-    if (!window.Engine || !window.Engine.Snapshots) { toast('Snapshots not loaded', '#ef4444'); return; }
-    var r = window.Engine.Snapshots.restore(snapshotId);
-    if (!r.ok) { toast('Restore failed: ' + r.error, '#ef4444'); return; }
-    toast('Restored ' + r.filesRestored + ' files from ' + snapshotId, '#34d399');
-    S.lastScan = null;
-    runValidatorScan();
-    renderAll();
-  } catch (e) {
-    toast('Restore failed: ' + (e && e.message || e), '#ef4444');
-  }
-}
-
-function generateApp(){
-  try {
-    if (!window.Engine || !window.Engine.Generator) { toast('Generator not loaded', '#ef4444'); return; }
-    var el = document.getElementById('genPrompt');
-    var prompt = el ? (el.value || '') : '';
-    if (!prompt.trim()) { toast('Describe your app first', '#f59e0b'); return; }
-    toast('Generating app: ' + prompt.slice(0, 60) + (prompt.length > 60 ? '...' : ''), '#22d3ee');
-    var res = window.Engine.Generator.generate(prompt);
-    if (res && res.error) { toast('Generation failed: ' + res.error, '#ef4444'); return; }
-    var run = res.run || {};
-    toast('Generated ' + (res.fileCount || 0) + ' files - ' + (run.status || '?') + ' - ' + (run.repairedCount || 0) + ' repairs', run.rolledBack ? '#f59e0b' : '#34d399');
-    S.lastScan = null;
-    runValidatorScan();
-    renderAll();
-  } catch (e) {
-    toast('Generate failed: ' + (e && e.message || e), '#ef4444');
-  }
-}
-
 /* =====================================================================
  * TabBus instrumentation (appended by _patch_instrument.js)
  *
@@ -5558,30 +2986,3 @@ function generateApp(){
   });
 })();
 
-// ---- Phase 8: Marketplace + GitHub + Workspaces + Ratings + Actions + OAuth tab delegation ----
-(function(){
-  const _origRenderAll = window.renderAll;
-  // MarketplaceUI / GitHubUI paint #main from their own renderAll wrappers.
-  // WorkspacesUI / RatingsUI / ActionsUI / OAuthUI return an HTML string and
-  // rely on us to inject it and call mount().
-  const _stringUIs = {
-    workspaces: () => window.WorkspacesUI,
-    ratings:    () => window.RatingsUI,
-    actions:    () => window.ActionsUI,
-    oauth:      () => window.OAuthUI
-  };
-  window._csRender = function() {
-    if (_origRenderAll) _origRenderAll();
-    const getUI = S && _stringUIs[S.screen];
-    const ui = getUI && getUI();
-    if (ui && typeof ui.render === 'function') {
-      const host = document.getElementById('main');
-      try {
-        const out = ui.render();
-        if (host && typeof out === 'string') host.innerHTML = out;
-      } catch (e) { console.error('csRender', S.screen, e); }
-      if (typeof ui.mount === 'function') { try { ui.mount(); } catch (_) {} }
-    }
-  };
-  try { window.renderAll = window._csRender; } catch(_) {}
-})();

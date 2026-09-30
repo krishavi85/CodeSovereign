@@ -319,7 +319,7 @@ function driverSource() {
 
 async function run() {
   let exitCode = 1;
-  let tmp = null;
+  let tmp = null, recentsSnap = null;
   // Watchdog: never let a hung dev server / crawl wedge the CI job.
   const watchdog = setTimeout(() => {
     console.error('[acceptance] FAIL — watchdog: run exceeded 20 minutes');
@@ -342,6 +342,7 @@ async function run() {
     // trust + recents so the renderer can open it and run project commands with
     // no interactive dialog (the acceptance run is non-interactive by design).
     const canonical = workspace.setRoot(wsDir);
+    recentsSnap = store.snapshotRecents(); // the temp folder is deleted below — don't leave it in the user's recents
     store.addRecent({ path: canonical, name: path.basename(canonical), at: Date.now() });
     trust.grant(canonical);
     trust.audit({ kind: 'acceptance', cwd: canonical });
@@ -507,6 +508,7 @@ async function run() {
     // next run never crawls a stale server (acceptance-stale-server-hazard).
     try { const fp = await freePort(4319); if (fp.killed && fp.killed.length) console.log('[acceptance] reaped :4319 orphan ' + JSON.stringify(fp.killed)); } catch (_) {}
     if (tmp) { try { await fsp.rm(tmp, { recursive: true, force: true }); } catch (_) {} }
+    try { store.restoreRecents(recentsSnap); } catch (_) {}
     app.exit(exitCode);
   }
 }

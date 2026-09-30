@@ -132,7 +132,8 @@ contextBridge.exposeInMainWorld('desktop', {
     stopGateway: () => invoke('openclaw:gatewayStop'),
     restartGateway: () => invoke('openclaw:gatewayRestart'),
     openOnboarding: () => invoke('openclaw:openOnboarding'),
-    openDashboard: (url) => invoke('openclaw:openDashboard', url)
+    openDashboard: (url) => invoke('openclaw:openDashboard', url),
+    runAgentTurn: (opts) => invoke('openclaw:runAgentTurn', opts)
   },
 
   terminal: {

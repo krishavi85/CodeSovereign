@@ -1028,6 +1028,14 @@
   function computeHealth(){
     return weightedHealth().score;
   }
+  // The authoritative repair+verify primitives for the whole agent
+  // pipeline, not just this module's own UI: run()/runV3() (analyze -> plan
+  // -> repair -> retest) are what Engine.Goal.healOnce() (engine.runtime.js)
+  // delegates its "Fix" step to, and verifyBuild() is what the done-tool
+  // handler in engine.llm.js and engine.work.js's patchLoop() both call to
+  // decide whether a build is actually finished — composing this module's
+  // own build-quality score with the Evidence artifact gate and any
+  // supplied test result, instead of each caller enforcing only one piece.
   const Recovery = {
     _runs: loadJSON(NS_RUN, []),
     _diffs: loadJSON(NS_DIFFS, []),
@@ -1396,6 +1404,27 @@
       return this.loop({ maxCycles: 1 });
     },
 
+    // Composes the three previously-independent "is this build actually
+    // done" checks into one decision: the file-plan quality/score gate
+    // (Engine.LLM.evaluateBuild), the done-tool evidence gate
+    // (Engine.Evidence.require), and a test-pass/fail result the caller
+    // may supply (opts.testResult). Sibling to verify() (below), which
+    // answers a related but distinct question — project health via the
+    // L1-L5 recovery levels, not "is this specific build/done call good".
+    verifyBuild(files, observation, opts){
+      const obs = observation || { issues: [] };
+      const buildScore = (Engine.LLM && Engine.LLM.evaluateBuild)
+        ? Engine.LLM.evaluateBuild(files || [], obs, Engine.LLM.scoreBuild ? Engine.LLM.scoreBuild(files || [], obs.issues || []) : null)
+        : { quality: { pass: true, score: 0 } };
+      const evidence = (Engine.Evidence && Engine.Evidence.require) ? Engine.Evidence.require() : { ok: true };
+      const testsOk = (opts && opts.testResult) ? !!opts.testResult.ok : null; // null = not run in this context
+      const reasons = [];
+      if (!buildScore.quality || !buildScore.quality.pass) reasons.push('build score/quality gate failed');
+      if (!evidence.ok) reasons.push('missing evidence: ' + (evidence.error || 'no screenshot/log/video/demo captured'));
+      if (testsOk === false) reasons.push('tests failing');
+      return { ok: reasons.length === 0, reasons: reasons, buildScore: buildScore, evidence: evidence, testsOk: testsOk };
+    },
+
     verify(input){
       const levels = (input && input.levels) ? input.levels : Levels.run();
       const failed = ['L1','L2','L3','L4','L5'].filter(k => !levels[k] || !levels[k].ok);
@@ -1455,19 +1484,24 @@
     },
     getDiffs(){ return this._diffs.slice(); },
 
+    // Unreachable — confirmed zero callers anywhere in the codebase. Its
+    // three roleId branches used to compare against Engine.AGENTS' fake
+    // Sovereign-* ids, which that catalog no longer has (Engine.AGENTS now
+    // names real execution backends — direct/openclaw/hermes — a different
+    // axis entirely from "which recovery phase to run"). Decoupled from
+    // that catalog with its own roleId vocabulary so a future caller isn't
+    // silently broken by that rename.
     orchestrate(plan, roleId){
-      const role = (Engine.AGENTS || []).find(a => a.id === roleId) || (Engine.AGENTS || [])[0];
-      if (!role) return { error: 'no_agents' };
-      if (role.id === 'Sovereign-Architect') {
+      if (roleId === 'architect') {
         const a = this.analyze();
-        return { role: role.id, phase: 'analyze', rootCause: a.rootCause, levels: a.levels, health: a.health };
+        return { role: roleId, phase: 'analyze', rootCause: a.rootCause, levels: a.levels, health: a.health };
       }
-      if (role.id === 'Sovereign-1.5') return this.repair(plan);
-      if (role.id === 'Sovereign-1.5-Fast') {
+      if (roleId === 'repair') return this.repair(plan);
+      if (roleId === 'fast-scan') {
         const a = this.analyze();
-        return { role: role.id, phase: 'scan', issueCount: a.issues.length, repairable: a.issues.filter(i => i.repairable).length };
+        return { role: roleId, phase: 'scan', issueCount: a.issues.length, repairable: a.issues.filter(i => i.repairable).length };
       }
-      return { role: role.id, phase: 'noop' };
+      return { role: roleId, phase: 'noop' };
     }
   };
 

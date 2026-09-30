@@ -43,7 +43,7 @@
 
   function tryLoad(url, attempts, delay) {
     return D.observer.load(url).then(function (r) {
-      if (r && r.ok) return { url: url, ok: true };
+      if (r && r.ok) return { url: url, ok: true, title: r.title || '' };
       if (attempts <= 0) return { url: url, ok: false, error: r && r.error };
       return new Promise(function (res) { setTimeout(res, delay); })
         .then(function () { return tryLoad(url, attempts - 1, delay); });
@@ -58,9 +58,22 @@
     //    The common-port scan is a last resort only when the project declares no
     //    dev/start script and no URL was given.
     var candidates = url ? [url] : (det ? [det.url] : COMMON_PORTS.map(function (p) { return 'http://localhost:' + p; }));
+    // Confirmed live: a generated app with an unparseable package.json (so no
+    // start script) fell through to this scan, which found CodeSovereign's own
+    // preview on :4173 and crawled THAT — 14 controls "observed", and the run
+    // recorded a runtime success for an app that was never started. A
+    // blind port-scan hit only counts if it serves this project's own page.
+    var scanning = !url && !det;
+    var expected = scanning ? projectTitle() : null;
 
     return chainFirst(candidates.map(function (u) {
-      return function () { return tryLoad(u, 0, 0).then(function (r) { return r.ok ? { url: u, started: false } : null; }); };
+      return function () {
+        return tryLoad(u, 0, 0).then(function (r) {
+          if (!r.ok) return null;
+          if (scanning && expected && String(r.title || '').trim() !== expected) return null;
+          return { url: u, started: false };
+        });
+      };
     })).then(function (hit) {
       if (hit) return hit;
       // 2. nothing running on our own port — start the dev script
@@ -74,6 +87,17 @@
         });
       });
     });
+  }
+
+  // The <title> of this project's own entry page, if it has one.
+  function projectTitle() {
+    var html = '';
+    try { html = FS.read('/index.html') || FS.read('/public/index.html') || ''; } catch (_) { html = ''; }
+    var m = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+    if (!m) return null;
+    // compare like document.title does: entities decoded, whitespace collapsed
+    return m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+      .replace(/\s+/g, ' ').trim() || null;
   }
 
   function detectPm() {

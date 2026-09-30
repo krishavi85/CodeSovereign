@@ -94,9 +94,11 @@ function toVirtual(abs) {
   return '/' + rel;
 }
 
+// A ".." path used to be swallowed here and reported as "protected directory";
+// let normalizeVirtual's precise error through instead (every caller refuses
+// the operation either way).
 function isProtected(virtualPath) {
-  let parts;
-  try { parts = normalizeVirtual(virtualPath); } catch { return true; }
+  const parts = normalizeVirtual(virtualPath);
   const top = parts[0];
   return top === '.git' || IGNORED_DIRS.has(top);
 }

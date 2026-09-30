@@ -1696,6 +1696,17 @@
       }
       if (name === 'run_tests' && result && result.ok === false) AgentBus.emit('onTestFailure', result);
       if (name === 'done') {
+        // NOTE: Loop.exec is a shared low-level primitive — the orchestrator
+        // and sub-agents call 'done' through here too, not just the
+        // interactive LLM agent loop. Composing in Recovery.verifyBuild()
+        // here would run observeRuntime() (Validator/MockDetect/a real
+        // Preview.capture screenshot) on every 'done' call regardless of
+        // caller, which is real synchronous work with side effects this
+        // call site was never designed around — it destabilized the
+        // acceptance harness's orchestrator-driven repair loop. The
+        // interactive agent's own done handling (engine.llm.js's round
+        // loop) calls verifyBuild() directly instead, where the caller and
+        // its expectations are well understood. Evidence stays the gate here.
         const gate = Evidence.require();
         result = Object.assign({}, result, { evidence: gate });
         if (!gate.ok) result.ok = false;

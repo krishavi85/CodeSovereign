@@ -6,6 +6,13 @@
  *
  * URL policy: only http(s)://localhost|127.0.0.1|[::1] and file:// under the
  * open workspace. The renderer cannot point this at an arbitrary site.
+ *
+ * This is the Runtime Observer: real, agent-facing self-verification (a
+ * dev server the renderer requests via dist/desktop/desktop-observe.js,
+ * fronted by Engine.Sovereign.observe() / runSovereignObserve() in
+ * dist/app.js). It is distinct from the user-facing "Live Preview" iframe
+ * (Engine.Preview.build(), dist/engine.js), which has no server at all —
+ * it bundles /index.html client-side and injects it as iframe.srcdoc.
  */
 const { BrowserWindow, session } = require('electron');
 const path = require('path');
@@ -92,14 +99,40 @@ function ensureWin() {
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function load(target) {
+const LOAD_TIMEOUT_MS = 15000;
+
+// BUG FOUND LIVE: a stale process left listening on one of desktop-observe's
+// common candidate ports (accepting the TCP connection but never completing
+// an HTTP response) made w.loadURL() hang forever — no timeout anywhere in
+// this chain, so ensureServer()'s port probe never moved past it and a whole
+// task-graph run stalled indefinitely with zero progress. Also: on a genuine
+// failure this used to REJECT (from the bare `await w.loadURL`), but every
+// caller (desktop-observe.js's tryLoad/chainFirst) expects a resolved
+// {ok:false, error} it can check and fall through on — an uncaught rejection
+// instead aborted chainFirst() after the FIRST candidate, silently skipping
+// the rest. Catching here and always resolving fixes both at once.
+async function load(target, timeoutMs) {
   assertAllowedUrl(target);
   actionLog.length = 0;
   actionLog.push({ t: Date.now(), kind: 'load', url: target });
   const w = ensureWin();
-  await w.loadURL(target);
+  const ms = timeoutMs || LOAD_TIMEOUT_MS;
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    try { w.webContents.stop(); } catch (_) { /* window may already be gone */ }
+  }, ms);
+  try {
+    await w.loadURL(target);
+  } catch (e) {
+    clearTimeout(timer);
+    return { ok: false, url: target, error: timedOut ? ('load timed out after ' + ms + 'ms') : String((e && e.message) || e) };
+  }
+  clearTimeout(timer);
   await wait(600); // let the app boot
-  return { ok: true, url: w.webContents.getURL(), blockedDuringLoad: actionLog.filter((a) => /^blocked-/.test(a.kind)).length };
+  // title lets the renderer confirm a port-scan hit is actually THIS
+  // project's app, not an unrelated server that happens to be listening.
+  return { ok: true, url: w.webContents.getURL(), title: w.webContents.getTitle(), blockedDuringLoad: actionLog.filter((a) => /^blocked-/.test(a.kind)).length };
 }
 
 async function read() {

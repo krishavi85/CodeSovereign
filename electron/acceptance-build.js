@@ -107,7 +107,7 @@ function driver() {
 }
 
 async function run() {
-  let exitCode = 1, tmp = null;
+  let exitCode = 1, tmp = null, recentsSnap = null;
   const watchdog = setTimeout(() => { console.error('[acceptance-build] FAIL — watchdog 20m'); try { observer.stop(); proc.killAll(); } catch (_) {} app.exit(1); }, 20 * 60 * 1000);
   watchdog.unref && watchdog.unref();
   try {
@@ -122,6 +122,7 @@ async function run() {
     await fsp.writeFile(path.join(wsDir, '.gitkeep'), '');   // empty workspace
 
     const canonical = workspace.setRoot(wsDir);
+    recentsSnap = store.snapshotRecents(); // the temp folder is deleted below — don't leave it in the user's recents
     store.addRecent({ path: canonical, name: path.basename(canonical), at: Date.now() });
     trust.grant(canonical);
     session.defaultSession.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
@@ -181,6 +182,7 @@ async function run() {
     try { proc.killAll(); } catch (_) {}
     try { const fp = await freePort(4319); if (fp.killed && fp.killed.length) console.log('[acceptance-build] reaped :4319 orphan ' + JSON.stringify(fp.killed)); } catch (_) {}
     if (tmp) { try { await fsp.rm(tmp, { recursive: true, force: true }); } catch (_) {} }
+    try { store.restoreRecents(recentsSnap); } catch (_) {}
     app.exit(exitCode);
   }
 }

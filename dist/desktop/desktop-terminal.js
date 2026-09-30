@@ -243,6 +243,13 @@
     bodyEl.__cstMounted = true;
     mountedEl = bodyEl;
 
+    // renderAll() replaces the panel's DOM on every re-render, so this runs
+    // again with a brand-new bodyEl. The open terminals' xterm elements were
+    // still attached to the old (detached) node, so an open PowerShell tab
+    // vanished after the first re-render — move them into the new body.
+    var ptyBody = bodyEl.querySelector('.cstx-body');
+    if (ptyBody) Object.keys(xterms).forEach(function (k) { ptyBody.appendChild(xterms[k].el); });
+
     wireTerminalEvents();
     loadShells().then(function () { renderTabStrip(); });
     paintOutput();

@@ -37,7 +37,8 @@
         '<div style="padding:16px;font-size:12.5px;color:#8b93a7">This folder is not a Git repository.' +
         '<div style="margin-top:10px"><button class="btn primary" id="gInit" style="padding:5px 11px;font-size:12px">git init</button></div></div>';
       mounted.querySelector('#gInit').onclick = function () {
-        D.git.exec(['init']).then(function () { D.git.exec(['add', '-A']); refresh(); });
+        // refresh only once add has finished (it used to race it)
+        D.git.exec(['init']).then(function () { return D.git.exec(['add', '-A']); }).then(refresh, refresh);
       };
       return;
     }

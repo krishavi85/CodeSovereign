@@ -133,6 +133,7 @@
     "@ethereumjs/vm": "^8.1.1",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
+    "cross-spawn": "^7.0.6",
     "node-pty": "^1.1.0",
     "solc": "^0.8.28"
   }

@@ -277,8 +277,20 @@
       case 'save-all': saveAll(); break;
       case 'export-zip':
         D.workspace.exportZip().then(function (r) {
-          if (r && r.ok) toast('Exported ' + r.fileCount + ' files → ' + r.path, '#34d399');
-        });
+          if (!r) return; // save dialog cancelled
+          if (!r.ok) { toast('Export failed: ' + (r.error || 'unknown error'), '#ef4444'); return; }
+          if (r.truncated) toast('Exported only the first ' + r.fileCount + ' files → ' + r.path + ' (project is too large to export in full)', '#f59e0b');
+          else toast('Exported ' + r.fileCount + ' files → ' + r.path, '#34d399');
+        }, function (e) { toast('Export failed: ' + (e && e.message || e), '#ef4444'); });
+        break;
+      case 'export-delivery':
+        // The /delivery bundle (or the .sovereign evidence) as one archive —
+        // the IPC existed but nothing in the UI could reach it.
+        D.workspace.exportDelivery().then(function (r) {
+          if (!r) return; // save dialog cancelled
+          if (!r.ok) { toast('Delivery export failed: ' + (r.error || 'unknown error'), '#ef4444'); return; }
+          toast('Delivery archive: ' + r.fileCount + ' files' + (r.bundled === '/.sovereign/' ? ' (evidence only — no /delivery folder yet)' : '') + ' → ' + r.path + (r.truncated ? ' — incomplete, project too large' : ''), r.truncated ? '#f59e0b' : '#34d399');
+        }, function (e) { toast('Delivery export failed: ' + (e && e.message || e), '#ef4444'); });
         break;
       case 'reveal': D.workspace.reveal(window.S && window.S.ideFile); break;
       case 'open-terminal':
@@ -286,8 +298,16 @@
         break;
       case 'run-command': runCommandPrompt(); break;
       case 'validate':
-        window.S.screen = 'recovery'; rerender();
-        try { window.runValidatorScan && window.runValidatorScan(); } catch (_) {}
+        // There is no 'recovery' screen any more (renderAll fell back to
+        // Welcome) and window.runValidatorScan never existed, so this menu
+        // item did nothing. The IDE's Problems panel runs the real validators.
+        window.S.screen = 'ide'; window.S.idePanel = 'problems'; rerender();
+        try {
+          var issues = (window.Engine && window.Engine.Validator && window.Engine.Validator.runAll()) || [];
+          var errs = issues.filter(function (i) { return i && i.severity === 'error'; }).length;
+          toast(issues.length ? (issues.length + ' issue' + (issues.length === 1 ? '' : 's') + (errs ? ' (' + errs + ' error' + (errs === 1 ? '' : 's') + ')' : '') + ' — see Problems') : 'Validation passed — no problems found',
+            errs ? '#ef4444' : (issues.length ? '#f59e0b' : '#34d399'));
+        } catch (e) { toast('Validation failed: ' + (e && e.message || e), '#ef4444'); }
         break;
       case 'snapshot-now':
         D.snapshots.create('manual').then(function (r) {

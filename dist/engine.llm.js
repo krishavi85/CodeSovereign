@@ -75,6 +75,18 @@
       notes: "OpenAI chat completions."
     },
     {
+      id: "hermes",
+      label: "Hermes (Nous Research, via OpenRouter)",
+      baseUrl: "https://openrouter.ai/api",
+      chatPath: "/v1/chat/completions",
+      defaultModel: "nousresearch/hermes-4-405b",
+      modelOptions: ["nousresearch/hermes-4-405b", "nousresearch/hermes-4-70b", "nousresearch/hermes-3-llama-3.1-405b", "nousresearch/hermes-3-llama-3.1-70b"],
+      supportsJson: true,
+      keyHeader: "Authorization",
+      keyPrefix: "Bearer ",
+      notes: "Open-weight Hermes models from Nous Research, hosted on OpenRouter. Needs an OpenRouter API key (openrouter.ai/keys)."
+    },
+    {
       id: "openai_compat",
       label: "OpenAI-compatible (custom base URL)",
       baseUrl: "",
@@ -173,12 +185,11 @@
     return p;
   }
   // A provider is usable if it has a key, OR it is keyless (OmniRoute / a local
-  // runtime), OR it points at a loopback endpoint.
+  // runtime), OR it points at a loopback endpoint. Delegates to computeUseLLM
+  // (below) so "is the LLM usable" has one definition instead of three.
   function isConfigured(cfg) {
     if (!cfg || !cfg.enabled) return false;
-    if (cfg.apiKey) return true;
-    const p = resolveProvider(cfg);
-    return !!p.keyless || /^https?:\/\/(localhost|127\.0\.0\.1)/.test(cfg.baseUrl || p.baseUrl || "");
+    return computeUseLLM(cfg);
   }
 
   function isLocalEndpoint(provider, cfg) {
@@ -205,6 +216,19 @@
     return String((cfg && cfg.apiKey) || "");
   }
 
+  // The single definition of "is the LLM usable right now" — enabled, has a
+  // reachable baseUrl, and either doesn't need a key or has one. status() and
+  // patchAgent()'s run-time gate both call this instead of re-deriving it.
+  function computeUseLLM(cfg, provider) {
+    if (!cfg || !cfg.enabled) return false;
+    // OpenClaw doesn't go through PROVIDERS/resolveProvider at all — its
+    // readiness is "the desktop bridge exists", not baseUrl/apiKey.
+    if (cfg.executionBackend === "openclaw") return true;
+    const p = provider || resolveProvider(cfg);
+    if (!p.baseUrl) return false;
+    return !needsApiKey(p, cfg) || !!cfg.apiKey;
+  }
+
   function applyAuthHeaders(headers, provider, cfg) {
     const token = authToken(provider, cfg);
     if (!token) return headers;
@@ -216,6 +240,8 @@
     return headers;
   }
 
+  // Informational only — exported on Engine.LLM but never read by the round
+  // loop below. The real guards are STUCK_ABORT_AT and TIME_BUDGET_MS.
   const MAX_ROUNDS = 4;
   const SAFETY_CAP = 48;
   const MODELS_KEY = "cs.llm.models.v1";
@@ -296,7 +322,9 @@
       "ask_user records a question and you MUST continue working — do not wait.",
       "Prefer a single JSON object (no prose, no markdown fences). Either a file plan:",
       '{ "summary": "<one-line summary of what you built>",',
-      '  "files": [ { "path": "/index.html", "content": "<full file contents>" }, ... ] }',
+      '  "files": [ { "path": "/index.html", "content": "<full file contents>" }, ... ],',
+      '  "suggestions": ["<a real, specific follow-up feature for THIS app>", "...", "..."] }',
+      "suggestions is optional but preferred on the FINAL accepted plan (2-3 items, specific to what you just built — not generic advice).",
       "or a tool call:",
         '{ "think": "<brief>", "tool": "grep|list_dir|read_file|write_file|delete_file|run_tests|install_deps|run_command|observe|web_search|browser|mcp|generate_image|understand_image|ask_user|delegate|computer|goal|done", "args": {} }',
       "If you cannot emit valid JSON, emit files as blocks:",
@@ -353,10 +381,12 @@
     const local = isLocalEndpoint(provider, cfg);
     const model = String((opts.model != null ? opts.model : cfg.model) || provider.defaultModel || "").trim();
     const body = {
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt }
-      ],
+      // opts.messages carries a multi-turn history (user / assistant with
+      // tool_calls / tool results) for a tool-calling loop; otherwise the
+      // classic single system + user pair.
+      messages: [{ role: "system", content: systemPrompt }].concat(
+        Array.isArray(opts.messages) && opts.messages.length ? opts.messages : [{ role: "user", content: userPrompt }]
+      ),
       temperature: opts.temperature != null ? opts.temperature : (local ? 0.35 : 0.2),
       max_tokens: opts.maxTokens || (local ? 8192 : 4096)
     };
@@ -364,6 +394,15 @@
     // LM Studio / llama.cpp set supportsJson: false; LocalAI still requests JSON mode.
     if (provider.supportsJson && opts.json !== false) {
       body.response_format = { type: "json_object" };
+    }
+    // Standard OpenAI-compatible function-calling — opts.tools is an array
+    // of {name, description, parameters} defs; the provider constrains the
+    // model's output into structured tool_calls instead of free text.
+    if (Array.isArray(opts.tools) && opts.tools.length) {
+      body.tools = opts.tools.map(function (t) {
+        return { type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } };
+      });
+      if (opts.toolChoice) body.tool_choice = opts.toolChoice;
     }
     return { url, headers, body };
   }
@@ -436,11 +475,70 @@
   // local runtime or OmniRoute and would wrongly demand an API key for them)
   // gates the call; opts.force bypasses the gate for a caller that already
   // knows what it's doing (e.g. a just-picked provider not yet persisted).
+  // The single choke point every model call in the round loop passes through
+  // (llmDecide/llmPlan/sequentialGenerate all call this). executionBackend
+  // branches here instead of anywhere upstream, so OpenClaw/Hermes routing
+  // is invisible to everything that calls complete() — same {raw, content,
+  // model} shape out, regardless of backend.
   async function complete(prompt, ctx, opts) {
     opts = opts || {};
     const cfg = liveConfig();
-    const provider = resolveProvider(cfg);
-    if (!isConfigured(cfg) && !opts.force) {
+    // opts.runState is a mutable object shared across every complete() call
+    // within ONE Agent.run() invocation (see patchAgent()'s round loop). It
+    // is never persisted — this is what makes an OpenClaw fallback last for
+    // "the rest of this generation" without permanently changing the user's
+    // configured backend, which requires them to deliberately re-select it.
+    const runState = opts.runState || null;
+    const effectiveBackend = (runState && runState.forceBackend) || cfg.executionBackend;
+    if (effectiveBackend === "openclaw") {
+      try {
+        return await completeViaOpenClaw(prompt, ctx, opts, cfg);
+      } catch (err) {
+        // OpenClaw failed — most commonly it's too slow to finish before its
+        // own timeout on modest local-model hardware. Confirmed live: an 8B
+        // Ollama model with OpenClaw's own ~12K-token agent-runtime system
+        // prompt (tool schemas, skills, workspace files) ran 10-20+ minutes
+        // without completing, while the SAME class of local model called
+        // directly (no agent-runtime overhead) answered correctly in well
+        // under a minute. If Direct is actually configured and usable, fall
+        // back to it for THIS run only (via runState, not persisted config)
+        // — the next, separate Agent.run() call still tries OpenClaw again;
+        // the user's configured backend is never silently changed.
+        // cfg.providerId must be an explicit, user-made choice — an empty
+        // providerId resolves to PROVIDERS[0] (omniroute, keyless) by
+        // default, which would make this silently fall back to a provider
+        // the user never actually set up, not "their configured Direct".
+        const directCfg = Object.assign({}, cfg, { executionBackend: "direct" });
+        if (!cfg.providerId || !isConfigured(directCfg)) throw err;
+        if (runState) runState.forceBackend = "direct";
+        try {
+          if (typeof window.toast === "function") {
+            window.toast("OpenClaw was too slow — using Direct (" + (resolveProvider(directCfg).label || directCfg.providerId) + ") for this generation", "#e08a3f");
+          }
+        } catch (_) {}
+        const result = await completeDirect(prompt, ctx, opts, directCfg);
+        return Object.assign({}, result, { fallback: { from: "openclaw", reason: String((err && err.message) || err) } });
+      }
+    }
+    // Hermes (OpenRouter) needs its own key, separate from whatever key is
+    // stored for the user's actual configured Direct provider — reusing
+    // cfg.apiKey here would silently send e.g. an OpenAI key to OpenRouter.
+    const effectiveCfg = effectiveBackend === "hermes"
+      ? Object.assign({}, cfg, { providerId: "hermes", model: cfg.hermesModel || null, apiKey: cfg.hermesApiKey || "" })
+      : effectiveBackend === "direct" && cfg.executionBackend !== "direct"
+        // An in-run forced fallback (runState) — cfg itself still says
+        // 'openclaw' on disk, so build the same directCfg the catch block
+        // above would have, without touching persisted config.
+        ? Object.assign({}, cfg, { executionBackend: "direct" })
+        : cfg;
+    return completeDirect(prompt, ctx, opts, effectiveCfg);
+  }
+
+  // The plain HTTP chat-completions path — used directly by complete() for
+  // 'direct'/'hermes', and as the fallback target when OpenClaw fails.
+  async function completeDirect(prompt, ctx, opts, effectiveCfg) {
+    const provider = resolveProvider(effectiveCfg);
+    if (!isConfigured(effectiveCfg) && !opts.force) {
       throw new Error("LLM not configured. Pick a provider (and key, unless keyless) in Settings.");
     }
     if (!provider.baseUrl) {
@@ -448,26 +546,118 @@
     }
     const systemPrompt = opts.system || buildSystemPrompt(ctx || null);
     const userPrompt = String(prompt || "").trim();
-    const req = buildRequest(provider, cfg, systemPrompt, userPrompt, opts);
+    const req = buildRequest(provider, effectiveCfg, systemPrompt, userPrompt, opts);
     // Route through the desktop proxy (httpText) rather than a bare fetch — the
     // renderer CSP blocks localhost + most API hosts directly; the main-process
     // proxy is the vetted bypass. In a plain browser httpText falls back to fetch.
     // See the same note on chat()'s httpText call above — the desktop
     // proxy's 45s default was killing real, in-progress local generations.
-    const res = await httpText(req.url, {
-      method: "POST",
-      headers: req.headers,
-      body: JSON.stringify(req.body),
-      timeoutMs: opts.timeoutMs || 300000
-    });
-    const text = await res.text();
+    const send = function () {
+      return httpText(req.url, {
+        method: "POST",
+        headers: req.headers,
+        body: JSON.stringify(req.body),
+        timeoutMs: opts.timeoutMs || 300000
+      });
+    };
+    let res = await send();
+    let text = await res.text();
+    // Ollama answers HTTP 400 "<model> does not support tools" for a model
+    // without tool support, and some OpenAI-compatible servers reject an
+    // unknown `tools` param outright — either would fail every call that
+    // offers tools. Retry once without them and remember it for the rest of
+    // the run (runState) so later calls don't repeat the doomed request.
+    if (!res.ok && req.body.tools && res.status >= 400 && res.status < 500 && /tool/i.test(text || "")) {
+      delete req.body.tools;
+      delete req.body.tool_choice;
+      if (opts.runState) opts.runState.toolsUnsupported = true;
+      res = await send();
+      text = await res.text();
+    }
     if (!res.ok) {
       throw new Error("HTTP " + res.status + " " + (text || "").slice(0, 240));
     }
     let data = null;
     try { data = JSON.parse(text); } catch (_) { data = null; }
-    const content = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || text;
-    return { raw: data, content: String(content || ""), model: req.body.model || cfg.model || "" };
+    const message = data && data.choices && data.choices[0] && data.choices[0].message;
+    const content = (message && message.content) || text;
+    // Standard OpenAI tool-calls shape: message.tool_calls = [{id, function:
+    // {name, arguments}}], arguments a JSON-encoded string. Surfaced raw —
+    // callers that asked for opts.tools decide how to interpret them; a
+    // provider that ignores tools simply omits the field, and content-based
+    // parsing still works unchanged.
+    const toolCalls = (message && Array.isArray(message.tool_calls) ? message.tool_calls : [])
+      .filter(function (c) { return c && c.function && typeof c.function.name === "string"; })
+      .map(function (c) { return { id: c.id, name: c.function.name, arguments: c.function.arguments }; });
+    return { raw: data, content: String(content || ""), model: req.body.model || effectiveCfg.model || "", toolCalls: toolCalls };
+  }
+
+  // executionBackend === 'openclaw': route through the OpenClaw agent
+  // runtime (electron/lib/openclaw-manager.js -> Engine.AIRouter.OpenClaw)
+  // instead of a direct HTTP chat-completions call. Adapts its reply into
+  // the same {raw, content, model} shape complete() always returns, so
+  // llmDecide/llmPlan/sequentialGenerate need no changes at all.
+  // With no OpenClaw model chosen, OpenClaw falls back to ITS default model —
+  // on a real install a cloud model (minimax/MiniMax-M3) it had no
+  // credentials for, so every turn failed. If the Direct backend is pointed
+  // at a local Ollama, ask OpenClaw for that same model instead. Other
+  // runtimes keep OpenClaw's default: their OpenClaw provider ids aren't known.
+  function openclawModelFor(cfg) {
+    if (cfg.openclawModel) return cfg.openclawModel;
+    if (cfg.model && /^https?:\/\/(127\.0\.0\.1|localhost):11434(\/|$)/i.test(String(cfg.baseUrl || ""))) return "ollama/" + cfg.model;
+    return null;
+  }
+
+  async function completeViaOpenClaw(prompt, ctx, opts, cfg) {
+    const AR = window.Engine && window.Engine.AIRouter;
+    if (!AR || !AR.OpenClaw || !AR.OpenClaw.runAgentTurn) {
+      throw new Error("OpenClaw control needs the desktop app.");
+    }
+    const systemPrompt = opts.system || buildSystemPrompt(ctx || null);
+    const userPrompt = String(prompt || "").trim();
+    const message = systemPrompt ? (systemPrompt + "\n\n" + userPrompt) : userPrompt;
+    const sessionKey = opts.openclawSessionKey || cfg.openclawSessionKey || null;
+    const r = await AR.OpenClaw.runAgentTurn({
+      agentId: cfg.openclawAgentId || "main",
+      sessionKey: sessionKey,
+      model: openclawModelFor(cfg),
+      message: message,
+      // opts.openClawTimeoutMs lets a caller give the OpenClaw attempt a
+      // SHORTER leash than opts.timeoutMs (which governs the Direct
+      // fallback below) — see the task-graph's llmTaskComplete() for why:
+      // OpenClaw's own agent-runtime overhead means "give it more time"
+      // just delays reaching the fast path that actually works.
+      timeoutSec: Math.round((opts.openClawTimeoutMs || opts.timeoutMs || 300000) / 1000)
+    });
+    if (!r || r.ok === false) {
+      const err = (r && r.error) || "OpenClaw agent turn failed.";
+      throw new Error("OpenClaw: " + err);
+    }
+    const json = r.json || {};
+    // Confirmed live (openclaw 2026.7.1-2, `openclaw agent --json`): the
+    // real success shape is { status, result: { payloads: [{ text }], meta:
+    // { agentMeta: { provider, model }, finalAssistantVisibleText, aborted,
+    // stopReason } } } — not a flat {reply|text|message|content}.
+    //
+    // Also confirmed live (openclaw 2026.9.5): a CLI-level failure (e.g. a
+    // provider quota error) is now ALSO valid JSON on stdout — a distinct
+    // shape, { ok: false, runId, origin, error: { type, message } } — not
+    // the {status:'ok', result:{...}} shape above at all. This `ok` is the
+    // CLI's own top-level flag, unrelated to runJSON()'s `r.ok` (which only
+    // means "execFile + JSON.parse succeeded"). Checked first so the real
+    // provider error message surfaces instead of a generic "(unknown)".
+    if (json.ok === false) {
+      throw new Error("OpenClaw: " + ((json.error && json.error.message) || json.error || "agent turn failed"));
+    }
+    const result = json.result || {};
+    const meta = result.meta || {};
+    if (json.status !== "ok" || meta.aborted) {
+      throw new Error("OpenClaw: run did not complete (" + (json.status || "unknown") + (meta.stopReason ? ", " + meta.stopReason : "") + ")");
+    }
+    const payloadText = (result.payloads && result.payloads[0] && result.payloads[0].text) || "";
+    const content = payloadText || meta.finalAssistantVisibleText || meta.finalAssistantRawText || "";
+    const model = (meta.agentMeta && meta.agentMeta.model) || openclawModelFor(cfg) || "openclaw";
+    return { raw: json, content: String(content || ""), model: model };
   }
 
   // ----- Robust JSON parser: handles ```json fences and prose wrapping -----
@@ -603,8 +793,12 @@
     const parsed = extractJson(text);
     const files = [];
     let summary = "";
+    let suggestions = [];
     if (parsed) {
       summary = String(parsed.summary || parsed.message || "");
+      if (Array.isArray(parsed.suggestions)) {
+        suggestions = parsed.suggestions.filter(function (s) { return typeof s === "string" && s.trim(); }).slice(0, 5);
+      }
       const rows = parsed.files || parsed.targets || parsed.artifacts;
       if (Array.isArray(rows)) {
         rows.forEach(function (f) {
@@ -624,7 +818,7 @@
       while ((m = reHead.exec(src))) pushFile(files, m[1], m[2].replace(/\n$/, ""));
     }
     if (!files.length) return null;
-    return { summary: summary, files: files };
+    return { summary: summary, files: files, suggestions: suggestions };
   }
 
   function planFromParsed(parsed, model, source) {
@@ -638,16 +832,17 @@
       summary: parsed.summary || ("Generated " + targets.length + " file(s) via " + (model || "LLM")),
       targets: targets,
       source: source || "llm",
-      model: model || ""
+      model: model || "",
+      suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : []
     };
   }
 
   // ----- Build the LLM plan in the shape _plan() returns -----
-  function llmPlan(prompt, proj, specCtx, extraUser) {
+  function llmPlan(prompt, proj, specCtx, extraUser, runState) {
     const userPrompt = extraUser
       ? String(prompt || "").trim() + "\n\n" + String(extraUser)
       : String(prompt || "").trim();
-    return complete(userPrompt, specCtx).then(function (res) {
+    return complete(userPrompt, specCtx, { runState: runState }).then(function (res) {
       const parsed = extractFilesFromText(res.content);
       if (!parsed || !parsed.files.length) {
         throw new Error("LLM response did not contain a valid file plan.");
@@ -656,11 +851,11 @@
     });
   }
 
-  function llmDecide(prompt, proj, specCtx, extraUser) {
+  function llmDecide(prompt, proj, specCtx, extraUser, runState) {
     const userPrompt = extraUser
       ? String(prompt || "").trim() + "\n\n" + String(extraUser)
       : String(prompt || "").trim();
-    return complete(userPrompt, specCtx).then(function (res) {
+    return complete(userPrompt, specCtx, { runState: runState }).then(function (res) {
       const files = extractFilesFromText(res.content);
       const parsed = extractJson(res.content);
       if (files && files.files && files.files.length) {
@@ -825,7 +1020,11 @@
       previewBlk ? ("Live preview snapshot of the built app (look at the UI, not just source):\n" + previewBlk) : "",
       "Current files:\n" + fileBlk,
       "Replace every file with a polished, distinctive UI: app shell, sidebar or top nav, dark theme, real interactions, empty states, keyboard shortcuts, local persistence.",
-      "No 'Simple Notepad'. No starter template. No leftover music-app copy. Return the full file plan again."
+      "No 'Simple Notepad'. No starter template. No leftover music-app copy. Return the full file plan again.",
+      // Kept through every refine round, not just the opening prompt — a
+      // low-quality retry must still target the same structured
+      // requirements, not just "make it prettier".
+      opts.contractBlk || ""
     ].filter(Boolean).join("\n\n");
   }
 
@@ -1459,6 +1658,684 @@
     return lines.join("\n\n");
   }
 
+  // Renders the shared Contract/AppSpec (see patchAgent()'s round loop) into
+  // the same kind of context block formatRag() builds, so the model plans
+  // against structured, machine-checkable requirements instead of only the
+  // free-text prompt. Mirrors what Engine.Scaffold.specFromContract() reads
+  // on the offline path (entities, requirement statements, acceptance
+  // criteria) without duplicating that path's full-repo scaffolding.
+  function formatContract(contract) {
+    if (!contract) return "";
+    const ents = (contract.entities || []).map(function (e) {
+      const fields = (e.fields || []).map(function (f) { return typeof f === "string" ? f : (f && f.name) || ""; }).filter(Boolean);
+      return e.name + (fields.length ? " (" + fields.join(", ") + ")" : "");
+    });
+    const reqs = (contract.requirements || []).slice(0, 20).map(function (r) {
+      const crit = (r.acceptanceCriteria || []).map(function (c) { return typeof c === "string" ? c : (c && c.check) || ""; }).filter(Boolean);
+      return "- " + (r.id ? r.id + ": " : "") + (r.statement || "") + (crit.length ? " [" + crit.slice(0, 2).join("; ") + "]" : "");
+    });
+    if (!ents.length && !reqs.length) return "";
+    const lines = ["PRODUCT CONTRACT (derived from the prompt — build to satisfy these requirements, not just the literal wording):"];
+    if (ents.length) lines.push("Entities: " + ents.join(", "));
+    if (reqs.length) lines.push("Requirements:\n" + reqs.join("\n"));
+    return lines.join("\n");
+  }
+
+  // ---- Task-graph decomposition for the connected-LLM path ----
+  // Applies Engine.Orchestrator's real Build Graph -> Executor -> Observer
+  // -> Validator -> Repair system to a substantial, fresh, connected-LLM
+  // build — Backend generates first, then Frontend generates SECOND with
+  // the backend's actual already-written code as ground truth (via
+  // dependsOn), so the two integrate against real endpoints instead of two
+  // independent guesses that have to be reconciled after the fact. Applied
+  // unconditionally once the gates below are met (not scaled back for a
+  // slow model) — a deliberate product decision, not an oversight.
+  function llmTaskFilesBlock(paths, maxChars) {
+    const FS = window.Engine && window.Engine.FS;
+    if (!FS) return "";
+    const list = (paths && paths.length) ? paths : Object.keys(FS._data || {}).filter(function (p) { return FS.isFile(p); });
+    return list.map(function (p) {
+      const c = FS.read(p) || "";
+      return "FILE: " + p + "\n```\n" + c.slice(0, maxChars || 4000) + "\n```";
+    }).join("\n\n");
+  }
+
+  // The end-to-end gate, shared by T-integration and the repair loop: reads
+  // Engine.DoD's own per-criterion booleans (never a 4th "is it done" score).
+  function integrationVerified() {
+    const dod = window.Engine.DoD && window.Engine.DoD.load();
+    if (!dod || !dod.criteria) return false;
+    return !!dod.criteria.dependenciesConnected && !!dod.criteria.runtimeActionSucceeds;
+  }
+
+  // Confirmed from Ollama's own timings on a CPU-only machine (~3-11 prompt
+  // tokens/s): a repair prompt carrying the WHOLE app was 2,679 tokens and was
+  // killed at the 10-minute limit before the model had even finished READING
+  // it (2,034 tokens in). Send the files the evidence implicates — plus
+  // package.json and the server entry — and only NAME the rest.
+  function repairFilesBlock(appPaths, evidence) {
+    const FS = window.Engine && window.Engine.FS;
+    const ev = String(evidence || "");
+    const has = function (p) { return appPaths.indexOf(p) >= 0; };
+    const want = [];
+    const add = function (p) { if (p && has(p) && want.indexOf(p) < 0) want.push(p); };
+    add("/package.json");
+    let entry = "/server.js";
+    try {
+      const pkg = JSON.parse((FS && FS.read("/package.json")) || "{}");
+      const m = /\bnode\s+(\S+\.js)\b/.exec((pkg.scripts && pkg.scripts.start) || "");
+      if (m) entry = normalizePath(m[1].replace(/^\.\//, ""));
+    } catch (_) { /* invalid package.json is itself in the evidence */ }
+    add(entry);
+    appPaths.forEach(function (p) {
+      const base = p.split("/").pop();
+      if (base && ev.indexOf(base) >= 0) add(p);
+    });
+    if (/interactive controls|console error|HTTP 4\d\d|could not be loaded/i.test(ev)) { add("/index.html"); add("/public/index.html"); }
+    if (/`npm test` failed/.test(ev)) appPaths.filter(function (p) { return /^\/tests?\//.test(p); }).forEach(add);
+    const BUDGET = 9000;
+    const shown = [];
+    let used = 0;
+    want.forEach(function (p) {
+      const len = ((FS && FS.read(p)) || "").length;
+      if (shown.length && used + len > BUDGET) return;
+      shown.push(p);
+      used += len;
+    });
+    const others = appPaths.filter(function (p) { return shown.indexOf(p) < 0; });
+    return "\n\nTHE FILES THE EVIDENCE IMPLICATES:\n\n" + llmTaskFilesBlock(shown, 6000) +
+      (others.length ? "\n\nOther files in the app (not shown — leave them alone unless the evidence requires a change): " + others.join(", ") : "");
+  }
+
+  // Confirmed live: `npm test` crashed on `SyntaxError: Unexpected token
+  // 'delete'` (a function named `delete`) — a one-line fix — but a blind
+  // 800-char tail kept only stack frames and cut off the error itself, so
+  // the repair model "fixed" package.json instead. Errors come FIRST in
+  // Node's output; stack frames and ANSI colour codes are pure noise.
+  function summarizeCommandOutput(raw) {
+    const lines = String(raw || "")
+      .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "")
+      .split(/\r?\n/)
+      .filter(function (l) { return !/^\s+at\s/.test(l) && !/^Node\.js v\d/.test(l); });
+    const seen = {};
+    const kept = lines.filter(function (l) {
+      const k = l.trim();
+      if (!k) return false;
+      if (seen[k]) return false;
+      seen[k] = true;
+      return true;
+    });
+    const text = kept.join("\n");
+    if (text.length <= 1600) return text;
+    return text.slice(0, 1200) + "\n…\n" + text.slice(-400);
+  }
+
+  function sovRead(p) {
+    const Sov = window.Engine && window.Engine.Sovereign;
+    try { const v = Sov && Sov.read(p); return typeof v === "string" ? JSON.parse(v) : v; } catch (_) { return null; }
+  }
+  // How far along the app is, by the run's own evidence: failing DoD checks,
+  // and tests passing (parsed from the real `npm test` output). Confirmed
+  // live: repair round 1 took the generated app's tests from 0/6 to 5/6,
+  // then round 2 — fixing the last assertion — rewrote the whole test file
+  // and fell back to 0/6, and that worse version is what the build kept.
+  function repairProgress(since) {
+    const dod = window.Engine.DoD && window.Engine.DoD.load();
+    const crit = (dod && dod.criteria) || {};
+    const failing = Object.keys(crit).filter(function (k) { return crit[k] === false; }).length;
+    let testsPassed = null, testsRun = null;
+    const ev = sovRead("execution-evidence.json");
+    const s = ev && ev.steps && ev.steps.test;
+    if (s && !s.skipped && (!since || !ev.generatedAt || ev.generatedAt >= since)) {
+      const tail = String(s.tail || "").replace(/\u001b\[[0-9;]*[A-Za-z]/g, "");
+      const m = /ℹ pass (\d+)/.exec(tail) || /(\d+) passing/.exec(tail) || /Tests:.*?(\d+) passed/.exec(tail);
+      if (m) testsPassed = Number(m[1]);
+      const n = /ℹ tests (\d+)/.exec(tail);
+      if (n) testsRun = Number(n[1]);
+    }
+    return { failing: failing, testsPassed: testsPassed, testsRun: testsRun };
+  }
+  function repairWorse(after, before) {
+    if (after.failing !== before.failing) return after.failing > before.failing;
+    if (after.testsPassed != null && before.testsPassed != null && after.testsPassed !== before.testsPassed) return after.testsPassed < before.testsPassed;
+    // Tie-break on how many tests even ran. Live run 2026-09-29: a repair
+    // swapped JSON-file storage for sequelize+sqlite (driver missing), so the
+    // test file crashed on require — 4 tests running became 1 failed file,
+    // yet failing checks (5) and passing tests (0) were unchanged, so the
+    // regression was kept instead of rolled back.
+    return after.testsRun != null && before.testsRun != null && after.testsRun < before.testsRun;
+  }
+  function describeProgress(p) {
+    return p.failing + " check" + (p.failing === 1 ? "" : "s") + " failing" + (p.testsPassed != null ? ", " + p.testsPassed + " test" + (p.testsPassed === 1 ? "" : "s") + " passing" : "");
+  }
+
+  // What the automated run actually saw, phrased for the model: failing
+  // checks, real command output, and what the runtime observer found.
+  // `since` drops artifacts left over from an EARLIER round — observe()
+  // only writes runtime-trace.json on success, so a failed round would
+  // otherwise leave the previous round's trace looking current.
+  function integrationEvidence(since) {
+    const Sov = window.Engine && window.Engine.Sovereign;
+    const read = function (p) {
+      try { const v = Sov && Sov.read(p); return typeof v === "string" ? JSON.parse(v) : v; } catch (_) { return null; }
+    };
+    const fresh = function (at) { return !since || !at || at >= since; };
+    const lines = [];
+    const dod = window.Engine.DoD && window.Engine.DoD.load();
+    const crit = (dod && dod.criteria) || {};
+    const failing = Object.keys(crit).filter(function (k) { return crit[k] === false; });
+    if (failing.length) lines.push("Failing checks: " + failing.join(", ") + ".");
+    const ev = read("execution-evidence.json");
+    if (ev && ev.steps && fresh(ev.generatedAt)) {
+      Object.keys(ev.steps).forEach(function (k) {
+        const s = ev.steps[k];
+        if (!s || s.pass || s.skipped) return;
+        // A timed-out run used to read as just "exit -2". Live run 2026-09-29:
+        // one failing test skipped its server.close(), the test process never
+        // exited, and the model couldn't tell why the run "failed".
+        const hung = s.timedOut || s.code === -2;
+        lines.push("`npm " + k + "` " + (hung
+          ? "did not finish — it was stopped after the time limit. Usually a test (or the code it imports) leaves a server, socket or timer open, so the process never exits: close every server a test starts in a finally block or an after() hook, even when an assertion fails, and never call listen() on import"
+          : "failed (exit " + s.code + ")") + ". Output (stack frames removed):\n" + summarizeCommandOutput(s.tail));
+      });
+    }
+    // A package.json that doesn't parse silently turns the app into a
+    // "static site" for every later check — say so first, it's the root cause.
+    try {
+      const FS = window.Engine && window.Engine.FS;
+      const pkgRaw = FS && FS.exists && FS.exists("/package.json") ? FS.read("/package.json") : null;
+      if (pkgRaw != null) JSON.parse(pkgRaw);
+    } catch (e) {
+      lines.push("/package.json is NOT valid JSON (" + String((e && e.message) || e) + ") — so no dependencies were installed, `npm test` and `npm start` could not run, and the app was treated as a static site. Rewrite /package.json as raw JSON only.");
+    }
+    const rt = read("runtime-trace.json");
+    if (rt && fresh(rt.at)) {
+      const how = rt.serverStartedByUs === false
+        ? "did NOT start the app itself — it found an already-running server at "
+        : "started the app with `npm start` and loaded ";
+      lines.push("Runtime check: the verifier " + how + (rt.url || rt.serverUrl || "http://localhost:3000/") + (rt.title ? " (page title: \"" + rt.title + "\")" : "") + ", found " + (rt.controlsFound || 0) + " interactive controls and exercised " + (rt.controlsExercised || 0) + ".");
+      if (!rt.controlsFound) {
+        lines.push("The page served at that URL has NO interactive controls — usually the server isn't serving index.html at / at all (it returns a 404 page). Make the server serve the static frontend files from the project root (e.g. app.use(express.static(__dirname))) and make sure index.html itself contains the forms and buttons.");
+      }
+      // Confirmed live: the observer clicked all 6 buttons and every one was
+      // MOCK (no request, no page change) — but the evidence only said
+      // "found 6, exercised 6", so the repair model never learned the UI
+      // wasn't wired up. Name them.
+      const dead = (rt.trace || []).filter(function (x) { return x && (x.status === "MOCK" || x.status === "BROKEN"); });
+      if (dead.length) {
+        lines.push("Controls that did NOT work when clicked (MOCK = no network request and no page change; BROKEN = threw an error): " +
+          dead.slice(0, 12).map(function (x) {
+            const name = (x.control && (x.control.name || x.control.tag)) || "?";
+            return "\"" + name + "\" " + x.status + (x.status === "BROKEN" && x.threw ? " (" + String(x.threw).slice(0, 120) + ")" : "");
+          }).join(", ") +
+          ". Wire each one in the client JS: a click/submit handler that calls the matching backend endpoint with fetch and updates the page with the result.");
+      }
+      (rt.consoleErrors || []).slice(0, 5).forEach(function (e) { lines.push("Browser console error: " + summarizeCommandOutput((e && (e.text || e.message)) || e).slice(0, 300)); });
+      (rt.network || []).filter(function (n) { return n && n.status >= 400; }).slice(0, 5).forEach(function (n) { lines.push("HTTP " + n.status + " for " + (n.method || "GET") + " " + n.url); });
+    } else {
+      lines.push("Runtime check: the app could not be loaded at http://localhost:3000/ at all — `npm start` may crash on startup (e.g. a require() of a package missing from package.json, or a syntax error), or the server isn't listening on process.env.PORT || 3000.");
+    }
+    return lines.join("\n");
+  }
+
+  // Standard OpenAI-compatible function tool: given to the model so a
+  // tool-calling-capable provider (Ollama's OpenAI-compat endpoint supports
+  // this for tool-trained models, including llama3.1) returns structured,
+  // schema-constrained JSON arguments instead of free text the model has to
+  // format correctly on its own. Confirmed live: even a small, correctly-
+  // sized prompt sometimes gets llama3.1:8b to ignore the FILE:/fence text
+  // convention and answer in its own prose+**filename** style instead —
+  // genuine model non-determinism in following a TEXT instruction, which
+  // tool-calling sidesteps because the provider's own decoding constrains
+  // the shape, not just the prompt asking nicely for it.
+  const WRITE_FILE_TOOL = {
+    name: "write_file",
+    description: "Write one complete source file to the project. Call this once per file — call it multiple times to write multiple files.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "File path, e.g. /server.js" },
+        content: { type: "string", description: "The COMPLETE, EXACT file content — nothing paraphrased or omitted." }
+      },
+      required: ["path", "content"]
+    }
+  };
+
+  // Tool calling is a conversation, not one shot: confirmed live, llama3.1:8b
+  // emits ONE write_file call and stops (finish_reason: tool_calls) waiting
+  // for the result — the standard contract. Same shape as opencode's session
+  // runner: execute each call, feed a role:"tool" result back, call again,
+  // until the model answers without tool calls. Bounded by turn count and by
+  // "no progress" turns so it can never spin forever.
+  const MAX_TOOL_TURNS = 8;
+
+  // Confirmed live: when llama3.1 emits more than one tool call, Ollama
+  // sometimes parses only the FIRST into tool_calls and leaves the rest as
+  // raw text in `content`, in llama3.1's native shape
+  //   {"name": "write_file", "parameters": {"path": ..., "content": ...}}
+  // — a correct /package.json was lost exactly this way. Recover them by
+  // scanning the text for balanced top-level JSON objects of that shape.
+  function textualToolCalls(text) {
+    const src = String(text || "");
+    const found = [];
+    let depth = 0, start = -1, inStr = false, esc = false;
+    for (let i = 0; i < src.length; i++) {
+      const ch = src[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (ch === "\\") esc = true;
+        else if (ch === "\"") inStr = false;
+        continue;
+      }
+      if (ch === "\"") { if (depth > 0) inStr = true; continue; }
+      if (ch === "{") { if (depth === 0) start = i; depth++; }
+      else if (ch === "}") {
+        if (depth === 0) continue; // stray closer from a truncated prefix
+        depth--;
+        if (depth === 0 && start >= 0) {
+          let obj = null;
+          try { obj = JSON.parse(src.slice(start, i + 1)); } catch (_) { obj = null; }
+          const args = obj && (obj.parameters || obj.arguments);
+          if (obj && typeof obj.name === "string" && args && typeof args === "object") {
+            found.push({ name: obj.name, arguments: JSON.stringify(args) });
+          }
+          start = -1;
+        }
+      }
+    }
+    return found;
+  }
+
+  var SAVED_STUB_RE = /^\s*\[saved: \d+ chars\]\s*$/;
+  function stubArguments(argsJson) {
+    let a = null;
+    try { a = JSON.parse(argsJson); } catch (_) { return argsJson; }
+    if (!a || typeof a.content !== "string") return argsJson;
+    return JSON.stringify(Object.assign({}, a, { content: "[saved: " + a.content.length + " chars]" }));
+  }
+
+  function assistantText(res) {
+    const m = res && res.raw && res.raw.choices && res.raw.choices[0] && res.raw.choices[0].message;
+    if (m) return typeof m.content === "string" ? m.content : "";
+    return String((res && res.content) || "");
+  }
+
+  // "message (line:col)" when `content` of a .js/.cjs/.mjs file fails to parse
+  // as either a script or a module; null otherwise (including when acorn isn't
+  // loaded, or the file uses JSX — acorn can't parse that and it's not an error).
+  function jsSyntaxError(p, content) {
+    if (!/\.(c|m)?js$/i.test(String(p || ""))) return null;
+    const acorn = window.acorn || (window.Engine && window.Engine.acorn);
+    if (!acorn || typeof acorn.parse !== "function") return null;
+    const src = String(content || "");
+    if (/(return|=>|=)\s*\(?\s*<[A-Za-z][\w.:-]*[\s/>]/.test(src)) return null; // JSX
+    const opts = { ecmaVersion: "latest", allowHashBang: true, allowReturnOutsideFunction: true, allowAwaitOutsideFunction: true };
+    try { acorn.parse(src, Object.assign({ sourceType: "script" }, opts)); return null; } catch (scriptErr) {
+      try { acorn.parse(src, Object.assign({ sourceType: "module" }, opts)); return null; } catch (moduleErr) {
+        const e = /\b(import|export)\b/.test(src) ? moduleErr : scriptErr;
+        return String((e && e.message) || e);
+      }
+    }
+  }
+
+  function llmTaskComplete(userPrompt, systemPrompt, runState, protectedPaths) {
+    // Files earlier stages already wrote. Confirmed live: asked for TESTS
+    // ONLY, llama3.1:8b's first tool call rewrote the /server.js it was
+    // shown as context. Rejecting that write WITH a reason in the tool
+    // result lets the model correct itself on the next turn, instead of
+    // silently clobbering the real backend with a restated copy.
+    const protectedSet = {};
+    (protectedPaths || []).forEach(function (p) { protectedSet[normalizePath(p)] = true; });
+    const isProtected = function (p) { return !!protectedSet[normalizePath(p)]; };
+    // json:false — the prompt asks for FILE: + fenced-code-block output
+    // (the format small/local models produce reliably, no JSON-string
+    // escaping of full file contents required). Without this, a provider
+    // with supportsJson:true (e.g. "OpenAI-compatible", which is what
+    // Ollama's own OpenAI-compat endpoint reports as) forces
+    // response_format:json_object at the API level, which fights the
+    // prompt directly — the model gets grammar-constrained into pure JSON
+    // regardless of what was asked for, which is exactly the harder,
+    // more failure-prone format for embedding full source files.
+    //
+    // openClawTimeoutMs / timeoutMs are deliberately different budgets.
+    // Confirmed live: routing a task-graph stage through OpenClaw (its own
+    // ~12K-token agent-runtime system prompt on top of an already-slow
+    // local model, and these stages' prompts are themselves large —
+    // Frontend/Tests also carry the prior stage's real files as context)
+    // can blow past a single shared 5-minute budget with nothing left over
+    // for the Direct fallback that would have succeeded quickly. Giving
+    // OpenClaw a short, bounded leash (3 min) means a doomed attempt fails
+    // fast and hands off to Direct's much longer budget (10 min) — and
+    // since complete() remembers the fallback for the rest of this run
+    // (runState.forceBackend), only the FIRST stage to hit this ever pays
+    // the OpenClaw tax; every later stage goes straight to Direct.
+    function attempt() {
+      const history = [{ role: "user", content: String(userPrompt || "").trim() }];
+      const written = {};
+      const order = [];
+      const jsRejected = {}; // path -> refused once for a syntax error
+      let lastRes = null;
+      let stalls = 0;
+
+      function handleCall(c) {
+        if (c.name !== "write_file") return { message: "Unknown tool " + c.name + " — only write_file is available." };
+        let args = null;
+        try { args = JSON.parse(c.arguments); } catch (_) { args = null; }
+        if (!args || typeof args.path !== "string" || typeof args.content !== "string" || !args.path.trim()) {
+          return { message: "Rejected: arguments must be a JSON object with string \"path\" and \"content\". Call write_file again with both." };
+        }
+        const p = normalizePath(args.path.trim().replace(/^\.\//, ""));
+        if (isProtected(p)) {
+          return { message: "Rejected: " + p + " was already written by an earlier stage and must not be rewritten here. Write only this stage's own NEW files." };
+        }
+        // Confirmed live: llama3.1:8b put the text-fallback heading INSIDE
+        // the tool's content — package.json began with "FILE: /package.json"
+        // — which made it unparseable, so the whole app was treated as a
+        // static site: no npm install, `npm test` skipped-as-passing, and the
+        // observer crawled an unrelated server. Strip an echoed heading for
+        // this same path and a wrapping code fence, then refuse JSON that
+        // still doesn't parse, telling the model exactly why.
+        let content = args.content;
+        if (SAVED_STUB_RE.test(content)) {
+          return { message: "Rejected: \"" + content.slice(0, 40) + "\" is a placeholder for a file that was already saved, not file content. Call write_file with the file's COMPLETE real content." };
+        }
+        const head = /^\s*(?:FILE|Path)\s*[:\-]\s*`?([^\s`]+)`?[ \t]*\r?\n/i.exec(content);
+        if (head && normalizePath(head[1]) === p) content = content.slice(head[0].length);
+        if (/^\s*```/.test(content)) content = stripFence(content, p);
+        if (/\.json$/i.test(p)) {
+          try { JSON.parse(content); } catch (e) {
+            return { message: "Rejected: " + p + " is not valid JSON (" + String((e && e.message) || e) + "). Call write_file again with ONLY the raw JSON as content — no FILE: heading, no code fences, no comments." };
+          }
+        }
+        // Same for JavaScript that doesn't parse. Live run 2026-09-29: the
+        // backend stage wrote `const todo = { title, done, dueDate);` and was
+        // marked done; the SyntaxError only surfaced 12 minutes later in
+        // `npm test`, costing a whole repair round. Refuse ONCE per file with
+        // the exact error so the model fixes it in the same turn; a second
+        // broken attempt is written anyway (never lose the file) with the
+        // error noted. JSX isn't plain JS — leave those files alone.
+        let jsNote = "";
+        const syntaxErr = jsSyntaxError(p, content);
+        if (syntaxErr) {
+          if (!jsRejected[p]) {
+            jsRejected[p] = true;
+            return { message: "Rejected: " + p + " has a JavaScript syntax error — " + syntaxErr + ". Call write_file again with the COMPLETE corrected file." };
+          }
+          jsNote = " Note: it still has a syntax error (" + syntaxErr + ") — it will fail when run.";
+        }
+        if (written[p] === content) return { message: p + " is already written with this exact content — no change." };
+        const isNew = !Object.prototype.hasOwnProperty.call(written, p);
+        if (isNew) order.push(p);
+        written[p] = content;
+        return {
+          progressed: isNew,
+          message: "Wrote " + p + (jsNote ? "." + jsNote : " successfully.") + " Call write_file again for any remaining files this stage needs; once every file is written, reply with a one-line summary and no tool calls."
+        };
+      }
+
+      function finish() {
+        // The final answer can still carry FILE:/fence blocks — confirmed
+        // live: llama3.1:8b wrote 5 files via tool calls, then put
+        // /package.json in its closing TEXT reply. And a model/provider that
+        // never used tools at all (or OpenClaw, which never gets opts.tools)
+        // answers entirely in text. Either way, take NEW, unprotected paths
+        // only — a text restatement must never overwrite a file the tool
+        // already wrote.
+        const parsed = extractFilesFromText(assistantText(lastRes));
+        (parsed ? parsed.files : []).forEach(function (f) {
+          if (isProtected(f.path) || Object.prototype.hasOwnProperty.call(written, f.path)) return;
+          order.push(f.path);
+          written[f.path] = f.content;
+        });
+        if (!order.length) throw new Error("no usable file plan came back for this stage");
+        return order.map(function (p) { return { path: p, content: written[p] }; });
+      }
+
+      function turn(n) {
+        return complete(userPrompt, null, {
+          system: systemPrompt, runState: runState, json: false,
+          openClawTimeoutMs: 180000, timeoutMs: 600000,
+          tools: runState && runState.toolsUnsupported ? undefined : [WRITE_FILE_TOOL],
+          messages: history
+        }).then(onResponse, function (err) {
+          // Confirmed live: Tests' SECOND turn hit the 10-minute timeout
+          // after its first turn had already written a real test file — and
+          // the thrown error discarded that file along with the whole stage.
+          // A follow-up turn failing must not erase earlier progress; only a
+          // first-turn failure propagates (the OpenClaw->Direct fallback and
+          // honest error reporting depend on it).
+          if (n > 0 && order.length) return finish();
+          throw err;
+        });
+
+        function onResponse(res) {
+          lastRes = res;
+          // Only look for textual calls when tools were actually offered —
+          // otherwise a plain JSON answer is just a JSON answer.
+          const textual = (runState && runState.toolsUnsupported) ? [] : textualToolCalls(assistantText(res));
+          const calls = (res.toolCalls || []).concat(textual).map(function (c, i) {
+            return { id: c.id || ("call_" + n + "_" + i), name: c.name, arguments: c.arguments };
+          });
+          if (!calls.length) return finish();
+          // Confirmed from Ollama's own timings: re-sending every file the
+          // model already wrote (as tool-call arguments) cost a full re-read
+          // each turn — 1,755 prompt tokens re-evaluated at ~4.7 tok/s, 6+
+          // minutes, before a single new token. The file is saved; the model
+          // only needs to know THAT it was written, so history keeps a short
+          // placeholder (and handleCall rejects the placeholder if imitated).
+          history.push({
+            role: "assistant",
+            // recovered textual calls live in `content`; they're represented
+            // by tool_calls now, so don't carry their file bodies twice
+            content: textual.length ? "" : assistantText(res),
+            tool_calls: calls.map(function (c) { return { id: c.id, type: "function", function: { name: c.name, arguments: stubArguments(c.arguments) } }; })
+          });
+          let progressed = false;
+          calls.forEach(function (c) {
+            const r = handleCall(c);
+            if (r.progressed) progressed = true;
+            history.push({ role: "tool", tool_call_id: c.id, content: r.message });
+          });
+          // A rejected write gets ONE chance to self-correct; two turns in a
+          // row with nothing new written means the model is looping.
+          stalls = progressed ? 0 : stalls + 1;
+          if (n + 1 >= MAX_TOOL_TURNS || stalls >= 2) return finish();
+          return turn(n + 1);
+        }
+      }
+
+      return turn(0);
+    }
+    // Orchestrator's own retry-on-failure ("cycles") never applies here —
+    // it's skipped entirely for deferProof:true tasks (the task-graph's
+    // default), so without this a single bad response permanently fails
+    // the stage. Confirmed live: with a small, well-formed prompt (the
+    // context-scoping fix above already ruled out overflow), llama3.1:8b
+    // still sometimes ignores the FILE:/fence instruction and falls back to
+    // its own prose + **filename** convention — genuine model
+    // non-determinism, not a deterministic defect a prompt tweak fixes.
+    // Retrying ONLY on this specific parse failure (not on network/timeout
+    // errors, which the OpenClaw->Direct fallback above already handles)
+    // costs one extra call and doesn't weaken what counts as success — a
+    // retry still has to produce a genuinely parseable, non-empty plan.
+    return attempt().catch(function (err) {
+      if (!/no usable file plan/.test(String((err && err.message) || err))) throw err;
+      return attempt();
+    });
+  }
+
+  // Small/local models reliably struggle to hand-escape full multi-line
+  // file content as a single JSON string (every newline/quote/backslash
+  // has to come out perfectly, or the whole response is unparseable) —
+  // confirmed live: llama3.1:8b failed to produce usable JSON under an
+  // earlier, JSON-only version of this prompt. Hence the write_file tool
+  // first, the FILE: + fenced-code-block text format as the fallback, and
+  // strict JSON only as a last resort. A short worked example matters more
+  // than a format description for a small model — show, don't just tell.
+  // Shared by every stage AND the repair loop, so they can't drift apart.
+  function taskGraphBaseRules(contract) {
+    return [
+      "You are CodeSovereign's coding agent, building ONE stage of a larger app.",
+      "Write production-quality, fully working source files. No placeholders, no TODOs, no pseudo-code.",
+      "You have a write_file tool — call it once per file (call it multiple times for multiple files) with the COMPLETE, EXACT file content. Prefer the tool when it's available to you.",
+      "If you cannot use tools, output EACH file as a heading line 'FILE: /path/to/file' immediately followed by a fenced code block containing the COMPLETE, EXACT file content — nothing paraphrased, nothing omitted. Do not write any other prose before, between, or after the file blocks — no greeting, no explanation, no summary.",
+      "Example of the exact fallback text format (follow this shape precisely, using YOUR real files instead):",
+      "FILE: /server.js\n```javascript\nconst http = require('http');\nconst server = http.createServer((req, res) => { res.end('ok'); });\nif (require.main === module) server.listen(process.env.PORT || 3000);\nmodule.exports = server;\n```",
+      "FILE: /package.json\n```json\n{\n  \"name\": \"app\",\n  \"version\": \"1.0.0\",\n  \"scripts\": { \"start\": \"node server.js\", \"test\": \"node --test\" }\n}\n```",
+      "(If you strongly prefer JSON instead, a single object { \"summary\": \"...\", \"files\": [ { \"path\": \"/...\", \"content\": \"...\" } ] } is also accepted — but the write_file tool or the FILE:/code-block format above are preferred and more reliable.)",
+      formatContract(contract)
+    ].filter(Boolean).join("\n\n");
+  }
+
+  // Small local models reliably ignore "start the app inside the test": they
+  // require('../server') — which only listens under require.main — and then
+  // fetch http://localhost:3000, so every test dies with ECONNREFUSED (live
+  // run 2026-09-29: 0/4 passing, the backend itself was fine). When a test
+  // file does exactly that, prepend node:test before/after hooks that start
+  // the exported app on a FREE port, and wrap fetch so requests to the port
+  // the test hard-coded go there instead. Rewriting at request time (not in
+  // the source) also covers URLs captured in constants at load time; a free
+  // port avoids colliding with the app instance the runtime check already
+  // started on that same port (seen live: EADDRINUSE :3000).
+  function harnessServerTests(file) {
+    if (!file || typeof file.content !== "string" || !/^\/?test\/.+\.test\.[cm]?js$/.test(String(file.path || ""))) return file;
+    const src = file.content;
+    if (/__csServer|\.listen\s*\(/.test(src)) return file; // already starts a server itself
+    const ports = [];
+    src.replace(/https?:\/\/(?:localhost|127\.0\.0\.1):(\d+)/g, function (_, p) { if (ports.indexOf(p) < 0) ports.push(p); return _; });
+    if (ports.length !== 1) return file;
+    const m = /require\(\s*(['"])(\.\.?\/[^'"]*)\1\s*\)/.exec(src);
+    const serverReq = m ? m[2] : "../server";
+    const pre = [
+      "// Added by CodeSovereign: start the app for these HTTP tests (the test",
+      "// imported it but never started it) and stop it when they finish.",
+      "const { before: __csBefore, after: __csAfter } = require('node:test');",
+      "let __csServer = null;",
+      "const __csFetch = globalThis.fetch;",
+      "globalThis.fetch = (input, init) => {",
+      "  const port = __csServer && __csServer.address && __csServer.address() && __csServer.address().port;",
+      "  const url = typeof input === 'string' ? input : (input instanceof URL ? input.href : null);",
+      "  if (port && url) input = url.replace(/^(https?:[/][/])(localhost|127[.]0[.]0[.]1):" + ports[0] + "(?=[/?#]|$)/, '$1127.0.0.1:' + port);",
+      "  return __csFetch(input, init);",
+      "};",
+      "__csBefore(() => new Promise((resolve, reject) => {",
+      "  const mod = require(" + JSON.stringify(serverReq) + ");",
+      "  const target = [mod, mod && mod.app, mod && mod.server].find((x) => x && typeof x.listen === 'function');",
+      "  if (!target) return reject(new Error(" + JSON.stringify(serverReq) + " + ' exports nothing with .listen()'));",
+      "  __csServer = target.listen(0, resolve);",
+      "  if (__csServer && __csServer.once) __csServer.once('error', reject);",
+      "}));",
+      "__csAfter(() => new Promise((resolve) => (__csServer && __csServer.close ? __csServer.close(() => resolve()) : resolve())));",
+      ""
+    ].join("\n");
+    return Object.assign({}, file, { content: pre + src });
+  }
+
+  function buildLLMTaskGraph(prompt, contract, runState) {
+    const st = contract.supportedStack || {};
+    const entityNames = (contract.entities || []).map(function (e) { return e.name; }).join(", ") || "the app's data";
+    const baseRules = taskGraphBaseRules(contract);
+
+    // Each generation stage tracks its OWN real success signal — "did this
+    // stage's LLM call actually produce a usable file plan" — rather than
+    // reading the shared/global DoD state. Using the global DoD.PASS here
+    // would be wrong two ways at once: a task could be skipped as
+    // "already met" before it ever ran (if DoD happens to read permissive
+    // before this stage contributed anything), or reported FAILED for a
+    // reason that has nothing to do with this specific stage (e.g. an
+    // accessibility finding failing T-backend). Only T-integration, which
+    // genuinely checks the whole assembled app, reads the real DoD state.
+    const tasks = [];
+    let backendDone = false;
+    let frontendDone = false;
+    let testsDone = false;
+    // llmTaskFilesBlock() with NO paths falls back to "every file in the
+    // workspace" — fine for a fresh acceptance fixture, but a real desktop
+    // session's FS also holds hundreds of .sovereign/*, delivery/*, CI/CD,
+    // and docs files from Contract/Sovereign bookkeeping, none of which the
+    // model needs to see. Confirmed live: that fallback ballooned Frontend's
+    // context to 176 files / 200K+ chars, which Ollama's default context
+    // window then silently truncated — losing the actual FILE:/fence
+    // formatting instructions along with the (irrelevant) file dump, so the
+    // model fell back to its natural prose+markdown style instead. Tracking
+    // exactly what THIS stage actually wrote keeps later stages' context
+    // scoped to the real, relevant app files only.
+    let backendPaths = [];
+    let frontendPaths = [];
+    tasks.push({
+      id: "T-backend",
+      name: "Backend: " + entityNames + (st.auth ? " + auth" : "") + (st.jobs ? " + jobs" : ""),
+      dependsOn: [],
+      generate: function () {
+        // Every requirement below exists because the runtime verifier (not
+        // just a reviewer) must be able to run the result. Confirmed live:
+        // llama3.1:8b reached for mongoose (no MongoDB server exists here),
+        // and omitted a package.json "start" script — the observer can only
+        // launch an app via dev/start/serve and loads port 3000 by default.
+        const sys = baseRules + "\n\nYOUR JOB — BACKEND ONLY: build a real server exposing REST endpoints for every entity above, with REAL persistence that actually reads and writes — never mocked or hard-coded return values.\n" +
+          "HARD REQUIREMENTS (the app is started automatically with only `npm install && npm start`, so these are not optional):\n" +
+          "- Unless the user explicitly named a database, persist to a JSON file using Node's built-in fs. Do NOT use MongoDB, mongoose, Postgres, MySQL, Redis, or any database server — none is running.\n" +
+          "- Write /package.json listing EVERY package you require(), with \"scripts\": { \"start\": \"node server.js\", \"test\": \"node --test\" }. Never list Node built-ins (fs, path, http, crypto, url, os, events) as dependencies — they are not npm packages.\n" +
+          "- The server listens on process.env.PORT || 3000, ONLY when run directly: `if (require.main === module) app.listen(...)`, and `module.exports = app` so tests can import it without starting a second server.\n" +
+          "- The server also serves the static frontend files (index.html, .css, .js) from the project root, so one `npm start` runs the whole app.\n" +
+          "Do NOT output any frontend HTML/CSS/client JS.";
+        return llmTaskComplete("Build the backend for: " + prompt, sys, runState).then(function (files) {
+          backendDone = true;
+          backendPaths = (files || []).map(function (f) { return f.path; });
+          return files;
+        });
+      },
+      check: function () { return backendDone; }
+    });
+    tasks.push({
+      id: "T-frontend",
+      name: "Frontend: UI for " + entityNames,
+      dependsOn: ["T-backend"],
+      generate: function () {
+        // Confirmed live: the page shipped as empty <div>s filled by script,
+        // and with no data yet the runtime observer found 0 controls to
+        // exercise — nothing it could verify as actually working.
+        const sys = baseRules + "\n\nYOUR JOB — FRONTEND ONLY: build index.html, styles, and client-side JS. The backend below ALREADY EXISTS and is real — call its actual endpoints exactly as written; do not invent different routes. Ship a distinctive, polished, dark-themed UI with real interactivity, no 'Simple Notepad' placeholders.\n" +
+          "The page must be usable from an EMPTY start: put real <form>s, <input>s and <button>s for creating, listing and deleting every entity directly in index.html (not only rendered after data loads), and wire each one to the matching endpoint.\n\nCURRENT BACKEND FILES:\n\n" + llmTaskFilesBlock(backendPaths);
+        return llmTaskComplete("Build the frontend for: " + prompt, sys, runState, backendPaths).then(function (files) {
+          frontendDone = true;
+          frontendPaths = (files || []).map(function (f) { return f.path; });
+          return files;
+        });
+      },
+      check: function () { return frontendDone; }
+    });
+    tasks.push({
+      id: "T-tests",
+      name: "Tests for " + entityNames,
+      dependsOn: ["T-backend", "T-frontend"],
+      maxCycles: 1,
+      generate: function () {
+        // Confirmed live: the tests used chai + supertest + mocha (none
+        // installed), required './server' from inside test/ (wrong path),
+        // and there was no "test" script — which this stage can't add, since
+        // package.json belongs to the backend stage and is protected.
+        const sys = baseRules + "\n\nYOUR JOB — TESTS ONLY: write real automated tests against the ACTUAL files below — test real behavior, not placeholders. They run with `npm test` (= `node --test`), so:\n" +
+          "- Use ONLY Node built-ins: `const test = require('node:test'); const assert = require('node:assert');` and the global fetch. Do NOT use jest, mocha, chai, supertest, or any other package — none is installed for tests.\n" +
+          "- Put test files in /test/ named *.test.js, and import the app with `require('../server')` (one level up from /test/).\n" +
+          "- For HTTP tests, start the imported app on a free port inside the test (`const server = app.listen(0)`, read `server.address().port`), call it with fetch, and `server.close()` when done — otherwise the test process never exits.\n\nCURRENT APP FILES:\n\n" + llmTaskFilesBlock(backendPaths.concat(frontendPaths));
+        return llmTaskComplete("Write tests for: " + prompt, sys, runState, backendPaths.concat(frontendPaths)).then(function (files) { testsDone = true; return (files || []).map(harnessServerTests); });
+      },
+      check: function () { return testsDone; }
+    });
+    tasks.push({
+      id: "T-integration",
+      name: "Integration: frontend/backend wired end-to-end",
+      dependsOn: ["T-frontend", "T-tests"],
+      // A pure-verification task needs SOME generator or resolveGenerator()
+      // marks it BLOCKED before check() ever runs — and BLOCKED must not
+      // be mistaken for success by the caller below.
+      generate: function () { return []; },
+      check: integrationVerified
+    });
+    return tasks;
+  }
+
   function runSelectedEngines(intent, steps, onStep) {
     const out = { repo: null, deps: null };
     (intent.engines || []).forEach(function (eng) {
@@ -1574,11 +2451,11 @@
     return { steps: steps, patched: auto.patched || [], remaining: remaining, capture: observation.capture, llm: llm, quality: judged.quality };
   }
 
-  async function sequentialGenerate(prompt, specCtx, onChunk) {
+  async function sequentialGenerate(prompt, specCtx, onChunk, runState) {
     const listSystem = "You plan file lists for web apps. Reply with JSON only.";
     const listPrompt = "App to build:\n" + String(prompt || "") +
       "\n\nReply with JSON only: {\"summary\":\"...\",\"paths\":[\"/index.html\",\"/styles/app.css\",\"/scripts/app.js\"]}. Include every file the UI needs. No prose.";
-    const listing = await complete(listPrompt, specCtx, { system: listSystem, temperature: 0.2, maxTokens: 1024, json: true });
+    const listing = await complete(listPrompt, specCtx, { system: listSystem, temperature: 0.2, maxTokens: 1024, json: true, runState: runState });
     let paths = ["/index.html", "/styles/app.css", "/scripts/app.js"];
     let summary = "";
     const parsed = extractJson(listing.content);
@@ -1602,7 +2479,7 @@
       onChunk && onChunk({ kind: "plan", text: "Generating " + path + " (" + (i + 1) + "/" + paths.length + ")…" });
       const filePrompt = "Build this app:\n" + String(prompt || "") +
         "\n\nWrite the COMPLETE contents of " + path + " only. Polished UI, no 'Simple Notepad', no starter template. Optional markdown fence.";
-      const res = await complete(filePrompt, specCtx, { system: fileSystem, temperature: 0.35, maxTokens: 8192, json: false });
+      const res = await complete(filePrompt, specCtx, { system: fileSystem, temperature: 0.35, maxTokens: 8192, json: false, runState: runState });
       targets.push({ path: path, content: stripFence(res.content, path) });
     }
     return {
@@ -1681,7 +2558,7 @@
   function status() {
     const cfg = liveConfig();
     const provider = resolveProvider(cfg);
-    const ready = !!cfg.enabled && !!provider.baseUrl && (!needsApiKey(provider, cfg) || !!cfg.apiKey);
+    const ready = computeUseLLM(cfg, provider);
     return {
       configured: ready,
       providerId: cfg.providerId || "",
@@ -1800,9 +2677,18 @@
     Agent.run = function (prompt, onStep) {
       const cfg = liveConfig();
       const provider = resolveProvider(cfg);
-      const useLLM = !!cfg.enabled && !!provider.baseUrl && (!needsApiKey(provider, cfg) || !!cfg.apiKey);
+      const useLLM = computeUseLLM(cfg, provider);
       if (!useLLM) {
         return originalRun(prompt, onStep);
+      }
+      if (cfg.executionBackend === "openclaw") {
+        // One OpenClaw session per Agent.run() call, so its own server-side
+        // session memory persists across this run's multiple complete()
+        // calls. Stashed on the persisted config (not threaded through
+        // llmDecide/llmPlan's signatures) — completeViaOpenClaw reads it
+        // back via liveConfig() the same way every other complete() call
+        // already reads cfg fresh each time.
+        setConfig({ openclawSessionKey: "cs-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) });
       }
       const steps = [];
       const proj = window.Engine.Proj.current();
@@ -1822,6 +2708,274 @@
         let quality = { score: 0, pass: false, reasons: ["not generated"] };
         let lastErr = null;
         let wrote = false;
+        // Shared AppSpec: the offline path (engine.js's base Agent.run) has
+        // always derived a structured Contract (entities/requirements/
+        // acceptanceCriteria) from the prompt before building; the LLM round
+        // loop never did, so it planned from free prompt text alone with no
+        // visibility into the same structured requirements an offline build
+        // would have targeted. Deriving it here too — once, before the round
+        // loop starts — means both code paths plan against the same AppSpec;
+        // they remain two different intelligence providers (deterministic
+        // template vs. model) feeding the same underlying spec, not two
+        // separate application-building architectures.
+        let contract = null;
+        try {
+          const C = window.Engine && window.Engine.Contract;
+          if (C && C.deriveFromPrompt) contract = await C.deriveFromPrompt(prompt, { useLLM: false });
+        } catch (_) { contract = null; }
+        if (contract && ((contract.requirements && contract.requirements.length) || (contract.entities && contract.entities.length))) {
+          steps.push({
+            kind: "contract",
+            text: "Contract: " + ((contract.requirements || []).length) + " requirements · " +
+              (contract.entities || []).map(function (e) { return e.name; }).join(", "),
+            requirements: (contract.requirements || []).length
+          });
+          onStep && onStep(steps[steps.length - 1]);
+          // A genuine account of what's about to be attempted, built from the
+          // real derived Contract — not the model narrating itself (that only
+          // happens per-round below, and only for models that call tools).
+          // This fires once, up front, for every fresh build.
+          if (!followUp) {
+            const stT = contract.supportedStack || {};
+            // "quality"/"integrity"/"delivery" requirements are the same
+            // boilerplate on every contract (tests pass, build succeeds,
+            // lint clean, nothing mocked) — real per-app signal lives in
+            // domain/functional/interaction categories. Prefer those; only
+            // fall back to the generic ones if nothing else was derived.
+            const allReqs = contract.requirements || [];
+            const meaningful = allReqs.filter(function (r) { return ["domain", "functional", "interaction"].indexOf(r.category) >= 0; });
+            const reqPool = meaningful.length ? meaningful : allReqs;
+            const topReqs = reqPool.slice(0, 3).map(function (r) { return r.statement; }).filter(Boolean);
+            const thinkText = "Planning to build " + (contract.entities || []).map(function (e) { return e.name; }).join(", ") +
+              (stT.auth ? " with authentication" : "") + (stT.jobs ? " and background jobs" : "") +
+              (topReqs.length ? ", covering: " + topReqs.join("; ") + (reqPool.length > 3 ? "…" : "") : "") + ".";
+            steps.push({ kind: "thinking", text: thinkText });
+            onStep && onStep(steps[steps.length - 1]);
+          }
+        }
+        // Shared, in-memory, never-persisted across every complete() call in
+        // THIS run only — see complete()'s own comment. A separate Agent.run()
+        // call always starts fresh and tries the user's configured backend
+        // again; this never mutates cfg.executionBackend.
+        const runState = { forceBackend: null };
+
+        // Route a substantial, FRESH build through Engine.Orchestrator's real
+        // task graph — Backend -> Frontend -> Tests -> Integration check —
+        // instead of one monolithic call regenerating the whole app every
+        // refine round. Mirrors exactly how the offline path (engine.js)
+        // already routes substantial builds through Orchestrator; applied
+        // here unconditionally once these gates are met (not scaled back for
+        // a slow/local model — a deliberate product decision). Still gated on
+        // desktop: Orchestrator's reproof() needs a real npm test/build run
+        // and a real runtime to observe, which cannot exist in a plain
+        // browser tab or unit-test VM. Still skipped for follow-ups —
+        // decomposing "add dark mode" into a Backend/Frontend/Tests graph
+        // makes no sense; follow-ups keep editing the existing app directly
+        // via the round loop below.
+        const OR = window.Engine && window.Engine.Orchestrator;
+        const desktopReadyLLM = !!(window.desktop && window.desktop.isDesktop && window.Engine.FS && window.Engine.FS.__hasWorkspace && window.Engine.FS.__hasWorkspace());
+        const stSub = (contract && contract.supportedStack) || {};
+        const entsSub = (contract && contract.entities) || [];
+        const reqsSub = (contract && contract.requirements) || [];
+        // A prompt that explicitly asks for a server side is a full-stack build
+        // even with one entity. Live run 2026-09-29: "a todo list app … saved by
+        // a Node.js backend" derived 1 entity + 7 requirements, missed the
+        // thresholds below, went to the single-call round loop instead, and
+        // the local model produced one index.html (quality 12) before Ollama
+        // aborted on repeated tokens. supportedStack.backend is no signal here
+        // — it defaults to "node" even for a pomodoro timer.
+        const wantsServer = /\b(back-?end|server|node(\.js)?|express|rest(ful)?|api|database|db|sqlite|postgres(ql)?|mongo(db)?|mysql|crud)\b/i.test(String(prompt || ""));
+        const substantialLLM = entsSub.length >= 2 || !!stSub.auth || !!stSub.jobs || reqsSub.length >= 8 || (entsSub.length >= 1 && wantsServer);
+        if (!followUp && desktopReadyLLM && substantialLLM && contract && OR && OR.run) {
+          let taskGraphTasks = null;
+          try { taskGraphTasks = buildLLMTaskGraph(prompt, contract, runState); } catch (_) { taskGraphTasks = null; }
+          if (taskGraphTasks && taskGraphTasks.length) {
+            steps.push({
+              kind: "plan-result",
+              text: "Plan: build via task graph (" + taskGraphTasks.map(function (t) { return t.name; }).join(" → ") + ")",
+              taskGraph: taskGraphTasks.map(function (t) { return { id: t.id, name: t.name }; })
+            });
+            onStep && onStep(steps[steps.length - 1]);
+            steps.push({ kind: "validate", text: "Running the task graph — generate each stage, then build + test + observe…" });
+            onStep && onStep(steps[steps.length - 1]);
+            const writtenSoFarLLM = {};
+            const runOpts = {
+              tasks: taskGraphTasks,
+              // Each stage is a real LLM call — Orchestrator's own
+              // auto-detection would otherwise run a FULL reproof (real npm
+              // test/build + a dev-server restart and crawl) after every
+              // single stage, before the other stages even exist yet. Defer
+              // to one shared batch pass once all stages are generated,
+              // matching exactly how the offline path's Scaffold task
+              // already runs — Integration's own check is what actually
+              // verifies the finished app end-to-end.
+              deferProof: true,
+              onTaskStart: function (tr) {
+                steps.push({ kind: "task-start", text: tr.name + ": generating…", taskId: tr.id, taskName: tr.name });
+                onStep && onStep(steps[steps.length - 1]);
+              },
+              onTaskDone: function (tr) {
+                let wroteAny = false;
+                (tr.notes || []).forEach(function (n) {
+                  const m = /^wrote (.+)$/.exec(n || "");
+                  if (m) {
+                    wroteAny = true;
+                    if (!writtenSoFarLLM[m[1]]) {
+                      writtenSoFarLLM[m[1]] = true;
+                      steps.push({ kind: "write", path: m[1], text: "Writing " + m[1] });
+                      onStep && onStep(steps[steps.length - 1]);
+                    }
+                  }
+                });
+                // GENERATED with zero files written means this stage's own
+                // generate() actually failed (network/timeout/no usable
+                // response) and Orchestrator's robustness catch swallowed it
+                // into an empty file list rather than crashing the whole
+                // run — that's correct for the run, but "generated —
+                // verifying next" would misreport an attempt that never
+                // produced anything. Say so honestly; the final batch check
+                // will still correctly fail this task either way.
+                const genErr = (tr.notes || []).find(function (n) { return /^generate failed/.test(n || ""); });
+                const verb = tr.status === "COMPLETE" || tr.status === "ALREADY_MET" ? "verified"
+                  : tr.status === "GENERATED" && !wroteAny && genErr ? "stage failed (" + genErr.replace(/^generate failed: /, "") + ") — will not verify"
+                  : tr.status === "GENERATED" ? "generated — verifying next"
+                  : tr.status === "FAILED" ? "did not verify"
+                  : "blocked";
+                steps.push({ kind: "task-done", text: tr.name + ": " + verb, taskId: tr.id, taskName: tr.name, status: tr.status });
+                onStep && onStep(steps[steps.length - 1]);
+              }
+            };
+
+            // Verify -> repair -> re-verify. Confirmed live: after every
+            // pipeline fix, the build still failed end-to-end for a reason
+            // the run itself had PROVEN (the observer loaded :3000 and found
+            // 0 controls — the server never served index.html) — and then
+            // simply stopped and reported it. Same shape as opencode's
+            // session runner, which feeds real results back to the model
+            // until it settles: hand the model the actual evidence, with
+            // write access to the whole app, then run the real checks again.
+            // Bounded, and a Stop press is honored between rounds.
+            const MAX_REPAIR_ROUNDS = 2;
+            const repairLoop = function (record, round) {
+              const integ = (record.tasks || []).find(function (t2) { return t2.id === "T-integration"; });
+              if (!integ || integ.status === "COMPLETE" || integ.status === "ALREADY_MET") return record;
+              if (round > MAX_REPAIR_ROUNDS || (window.S && window.S.agentStopped)) return record;
+              const appPaths = [];
+              (record.tasks || []).forEach(function (t2) {
+                (t2.notes || []).forEach(function (n) {
+                  const m = /^wrote (.+)$/.exec(n || "");
+                  if (m && appPaths.indexOf(m[1]) < 0) appPaths.push(m[1]);
+                });
+              });
+              if (!appPaths.length) return record; // nothing was built — nothing to repair
+              const evidence = integrationEvidence(record.startedAt);
+              record.repairRounds = round;
+              steps.push({ kind: "repair", text: "End-to-end check failed — repair round " + round + "/" + MAX_REPAIR_ROUNDS + ": sending what the run actually observed back to the model…", evidence: evidence });
+              onStep && onStep(steps[steps.length - 1]);
+              const repairSys = taskGraphBaseRules(contract) + "\n\nYOUR JOB — REPAIR. The app below was built, then automatically installed (`npm install`), tested (`npm test`) and started (`npm start`) — and it FAILED the end-to-end check. This is exactly what the automated run observed:\n\n" + evidence +
+                "\n\nFix the real cause of every problem above. For each file you change, call write_file with its COMPLETE new content (the whole file, never a snippet or a diff). Leave files that are already correct alone. The fixed app must: start with only `npm install && npm start`; list every required package in /package.json; listen on process.env.PORT || 3000 only when run directly (`require.main === module`) and `module.exports = app`; serve the whole UI (index.html, CSS, JS) at http://localhost:3000/; and keep persistence as a JSON file written with Node's built-in fs unless the user explicitly named a database — do NOT switch to sequelize, sqlite, mongoose, prisma or any other database package to fix a bug (live run: a repair did, the driver was missing, and the app stopped loading at all)." +
+                repairFilesBlock(appPaths, evidence);
+              const FSx = window.Engine.FS;
+              const before = repairProgress(record.startedAt);
+              const snapshot = {};
+              appPaths.forEach(function (p) { snapshot[p] = FSx.exists(p) ? FSx.read(p) : null; });
+              const roundStart = Date.now();
+              return OR.run({
+                tasks: [{
+                  id: "T-repair-" + round,
+                  name: "Repair round " + round,
+                  dependsOn: [],
+                  generate: function () { return llmTaskComplete("Repair the app so it passes the end-to-end check: " + prompt, repairSys, runState).then(function (files) { return (files || []).map(harnessServerTests); }); },
+                  check: integrationVerified
+                }],
+                deferProof: true,
+                onTaskStart: runOpts.onTaskStart,
+                onTaskDone: runOpts.onTaskDone
+              }).then(function (rr) {
+                const t = (rr.tasks || [])[0] || {};
+                record.dodAfter = rr.dodAfter;
+                record.startedAt = roundStart;
+                if (t.status === "COMPLETE") {
+                  (t.notes || []).forEach(function (n) { if (/^wrote /.test(n)) integ.notes.push(n); });
+                  integ.status = "COMPLETE";
+                  integ.notes.push("verified after repair round " + round);
+                  return record;
+                }
+                const after = repairProgress(roundStart);
+                if (repairWorse(after, before)) {
+                  // Never keep a round that left the app worse than it found
+                  // it: remove what it created, restore what it overwrote, and
+                  // re-verify so the evidence matches the restored code.
+                  const wrote = (t.notes || []).map(function (n) { return (/^wrote (.+)$/.exec(n || "") || [])[1]; }).filter(Boolean);
+                  steps.push({ kind: "repair", text: "Repair round " + round + " made things worse (" + describeProgress(before) + " → " + describeProgress(after) + ") — rolling back its changes and re-verifying." });
+                  onStep && onStep(steps[steps.length - 1]);
+                  const rollbackStart = Date.now();
+                  return OR.run({
+                    tasks: [{
+                      id: "T-rollback-" + round,
+                      name: "Roll back repair round " + round,
+                      dependsOn: [],
+                      generate: function () {
+                        wrote.forEach(function (p) {
+                          const key = p.charAt(0) === "/" ? p : "/" + p;
+                          if (snapshot[key] == null) { try { FSx.remove(key); } catch (_) {} }
+                        });
+                        return Object.keys(snapshot).filter(function (p) { return snapshot[p] != null; })
+                          .map(function (p) { return { path: p, content: snapshot[p] }; });
+                      },
+                      check: integrationVerified
+                    }],
+                    deferProof: true,
+                    onTaskStart: runOpts.onTaskStart,
+                    onTaskDone: runOpts.onTaskDone
+                  }).then(function (rb) {
+                    record.dodAfter = rb.dodAfter;
+                    record.startedAt = rollbackStart;
+                    return repairLoop(record, round + 1);
+                  });
+                }
+                // Carry the repair's writes forward so a later round (and the
+                // final report) sees the files it changed — but NOT its
+                // "generate failed" notes: Integration's failure reason is the
+                // failing check, not the repair call.
+                (t.notes || []).forEach(function (n) { if (/^wrote /.test(n)) integ.notes.push(n); });
+                return repairLoop(record, round + 1);
+              });
+            };
+
+            return OR.run(runOpts).then(function (record) {
+              return repairLoop(record, 1);
+            }).then(function (record) {
+              if (record.repairRounds) {
+                const ok = (record.tasks || []).filter(function (t2) { return t2.status === "COMPLETE" || t2.status === "ALREADY_MET"; }).length;
+                record.summary = ok + "/" + record.tasks.length + " tasks satisfied · DoD " + (record.dodAfter && record.dodAfter.PASS ? "PASS" : "not yet") +
+                  " · " + record.repairRounds + " repair round" + (record.repairRounds > 1 ? "s" : "");
+              }
+              steps.push({ kind: "validate-result", issues: [], dod: record.dodAfter });
+              onStep && onStep(steps[steps.length - 1]);
+              // BLOCKED (no generator could be resolved for a task) is just
+              // as much "never actually verified" as FAILED — treating only
+              // FAILED as failure would let a run report done while some
+              // task silently never even ran.
+              const failed = (record.tasks || []).filter(function (t2) { return t2.status === "FAILED" || t2.status === "BLOCKED"; });
+              if (failed.length) {
+                const reasons = failed.map(function (t2) {
+                  const genErr = (t2.notes || []).find(function (n) { return /^generate failed/.test(n); });
+                  return t2.name + (genErr ? " (" + genErr.replace(/^generate failed: /, "") + ")" : "");
+                }).join(", ");
+                steps.push({ kind: "warn", text: "Built via task graph (" + record.summary + "), but " + reasons + " did not verify — see .sovereign/orchestrator-run.json." });
+              } else {
+                steps.push({ kind: "done", text: "Run complete (" + record.summary + ")." });
+              }
+              onStep && onStep(steps[steps.length - 1]);
+              return steps;
+            }).catch(function (e) {
+              steps.push({ kind: "error", text: "Task-graph build failed: " + String((e && e.message) || e) });
+              onStep && onStep(steps[steps.length - 1]);
+              return steps;
+            });
+          }
+        }
         // Guards a real failure mode found live: a small/local model can get
         // stuck repeatedly picking a tool call that keeps failing (e.g.
         // run_command outside the allowlist) without ever pivoting to
@@ -1849,10 +3003,17 @@
         });
         onStep && onStep(steps[steps.length - 1]);
         if (window.Engine.ModelRouter && window.Engine.ModelRouter.select) {
+          // The router only RECOMMENDS a model family; the request always goes
+          // to the configured model. This step used to print just the
+          // recommendation ("Model router: Qwen") while llama3.1:8b did the
+          // work — name the model actually used.
           const pick = window.Engine.ModelRouter.select(prompt);
+          const cfgNow = getConfig();
+          const usingModel = cfgNow.model || cfgNow.providerId || "configured model";
+          const sameFamily = String(usingModel).toLowerCase().indexOf(String(pick.family || "").toLowerCase()) >= 0;
           steps.push({
             kind: "model",
-            text: "Model router: " + pick.label + " (" + pick.reason + ")"
+            text: "Model: " + usingModel + (sameFamily ? " (" + pick.reason + ")" : " · router would pick " + pick.label + " for this task (" + pick.reason + ") — not applied")
           });
           onStep && onStep(steps[steps.length - 1]);
         }
@@ -1891,8 +3052,19 @@
           ? window.Engine.ProjectBrain.contextBlock()
           : "";
         if (brainBlk) extraUser = extraUser + "\n\n" + brainBlk;
+        // Only for a fresh build, not a follow-up edit — buildFollowUpPrompt
+        // already frames edits around the existing app; re-deriving a
+        // contract from a short edit instruction ("add dark mode") would add
+        // noise, not structure.
+        const contractBlk = !followUp ? formatContract(contract) : "";
+        if (contractBlk) extraUser = extraUser + "\n\n" + contractBlk;
+        // cap is a runaway guard, not a step budget — MAX_ROUNDS is unused here.
+        // Real early-exit guards inside the loop: STUCK_ABORT_AT (consecutive
+        // failed tool calls) and TIME_BUDGET_MS (wall-clock with no write_file).
         const cap = (window.Engine.Loop && window.Engine.Loop.SAFETY_CAP) || SAFETY_CAP;
+        let roundsRun = 0; // for the final message — `round` is loop-scoped
         for (let round = 1; round <= cap; round++) {
+          roundsRun = round;
           if (round > 1 && !wrote && (Date.now() - runStartedAt) > TIME_BUDGET_MS) {
             steps.push({
               kind: "error",
@@ -1917,7 +3089,7 @@
           onStep && onStep(steps[steps.length - 1]);
           let decision;
           try {
-            decision = await llmDecide(prompt, proj, ctx, extraUser);
+            decision = await llmDecide(prompt, proj, ctx, extraUser, runState);
             lastErr = null;
           } catch (err) {
             lastErr = err;
@@ -1930,7 +3102,7 @@
                 const seqPlan = await sequentialGenerate(seqPrompt, ctx, function (s) {
                   steps.push(s);
                   onStep && onStep(s);
-                });
+                }, runState);
                 decision = { kind: "files", plan: seqPlan };
                 lastErr = null;
               } catch (err2) {
@@ -1951,14 +3123,28 @@
             steps.push({ kind: "act", text: "Act: " + tool, tool: tool });
             onStep && onStep(steps[steps.length - 1]);
             if (tool === "done") {
-              const observation = observeRuntime([]);
-              const judged = evaluateBuild([], observation, scoreBuild([], observation.issues || []));
-              quality = judged.quality;
-              steps.push({ kind: "evaluate", text: "Brain evaluated: quality " + quality.score + (quality.pass ? " pass" : " — continue from a follow-up") });
+              const doneFiles = snapshotWorkspace();
+              const observation = observeRuntime(doneFiles);
+              // Recovery.verifyBuild composes the build-quality score with the
+              // Evidence (screenshot/log) gate and any test result — this is
+              // the same "is this build actually done" decision the done-tool
+              // dispatched through Engine.Loop.exec uses, so a `done` call
+              // here can no longer skip the evidence check just because this
+              // round loop returns early instead of going through Loop.exec.
+              const verified = (window.Engine.Recovery && window.Engine.Recovery.verifyBuild)
+                ? window.Engine.Recovery.verifyBuild(doneFiles, observation)
+                : { ok: true, reasons: [], buildScore: evaluateBuild(doneFiles, observation, scoreBuild(doneFiles, observation.issues || [])) };
+              quality = verified.buildScore.quality;
+              steps.push({ kind: "evaluate", text: "Brain evaluated: quality " + quality.score + (verified.ok ? " pass" : " — " + verified.reasons.join("; ")) });
               onStep && onStep(steps[steps.length - 1]);
-              steps.push({ kind: "done", text: "Run complete (LLM, " + round + " act(s), quality " + quality.score + "). Prompt again to keep editing this app." });
-              onStep && onStep(steps[steps.length - 1]);
-              return steps;
+              if (verified.ok) {
+                steps.push({ kind: "done", text: "Run complete (LLM, " + round + " act(s), quality " + quality.score + "). Prompt again to keep editing this app." });
+                onStep && onStep(steps[steps.length - 1]);
+                return steps;
+              }
+              extraUser = buildRefinePrompt(prompt, doneFiles, verified.buildScore.issues || [], quality, { followUp: followUp, capture: observation.capture, contractBlk: contractBlk }) +
+                "\n\nThe agent called done, but verification failed: " + verified.reasons.join("; ") + ". Address this before calling done again.";
+              continue;
             }
             let obs = { ok: false, error: "loop engine not loaded" };
             if (window.Engine.Loop && window.Engine.Loop.exec) {
@@ -2005,7 +3191,7 @@
           }
           const plan = decision && decision.plan;
           if (!plan || !plan.targets || !plan.targets.length) continue;
-          steps.push({ kind: "plan-result", text: "Plan: " + plan.summary, files: plan.targets, round: round });
+          steps.push({ kind: "plan-result", text: "Plan: " + plan.summary, files: plan.targets, round: round, suggestions: plan.suggestions });
           onStep && onStep(steps[steps.length - 1]);
           await writeTargets(plan.targets, steps, onStep);
           wrote = true;
@@ -2035,9 +3221,13 @@
           if (quality.pass) {
             steps.push({ kind: "done", text: "Run complete (LLM, " + round + " round(s), quality " + quality.score + "). Prompt again to keep editing this app." });
             onStep && onStep(steps[steps.length - 1]);
+            if (plan.suggestions && plan.suggestions.length) {
+              steps.push({ kind: "suggestions", text: "What next?", items: plan.suggestions });
+              onStep && onStep(steps[steps.length - 1]);
+            }
             return steps;
           }
-          extraUser = buildRefinePrompt(prompt, files, judged.issues, quality, { followUp: followUp, capture: observation.capture }) +
+          extraUser = buildRefinePrompt(prompt, files, judged.issues, quality, { followUp: followUp, capture: observation.capture, contractBlk: contractBlk }) +
             "\n\n" + formatRag(intent, followUp ? scanRepo() : null, engines.deps, observation, { followUp: followUp });
         }
         if (!wrote) {
@@ -2051,10 +3241,16 @@
           onStep && onStep(steps[steps.length - 1]);
           return steps;
         }
+        // Reaching here means no round passed (a passing round returns above),
+        // so this is never "done". It used to report kind "done" — "Run
+        // complete (LLM, 48 acts, quality 12)" on a live run that wrote one
+        // index.html and then died on an Ollama error — and it printed the
+        // round CAP (48), not the rounds actually run (3).
         steps.push({
-          kind: "done",
-          text: "Run complete (LLM, " + cap + " acts, quality " + quality.score +
-            "). Safety cap only — prompt the Agent again to continue. There is no product limit on tool calls."
+          kind: "warn",
+          text: "Stopped after " + roundsRun + " round(s) without a passing build (quality " + (quality ? quality.score : 0) + ")" +
+            (lastErr ? " — last error: " + humanizeTransportError(lastErr, cfg) : "") +
+            ". The files written so far are in the project; prompt the Agent again to keep fixing it."
         });
         onStep && onStep(steps[steps.length - 1]);
         return steps;
@@ -2071,6 +3267,7 @@
   window.Engine = window.Engine || {};
   window.Engine.LLM = {
     providers: PROVIDERS,
+    _harnessServerTests: harnessServerTests, // exposed for tests
     getConfig,
     setConfig,
     providerById,

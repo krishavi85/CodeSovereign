@@ -38,7 +38,7 @@ const ACCEPTANCE_BUILD = process.argv.includes('--acceptance-build');
 const RENDERER = path.join(__dirname, '..', 'dist', 'index.html');
 
 // The headless checks run on CI runners with no GPU / no desktop session.
-if (SMOKE || SMOKE_OBSERVER || ACCEPTANCE || ACCEPTANCE_BUILD || ACCEPTANCE_ULTRAMODE) {
+if (SMOKE || SMOKE_OBSERVER || ACCEPTANCE || ACCEPTANCE_BUILD) {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('in-process-gpu');
@@ -193,7 +193,9 @@ function registerIpc() {
     credsEncrypted: creds.available()
   }));
 
-  ipcMain.handle('app:recents', () => store.get('recents') || []);
+  // pruned: the renderer reopens recents[0] at launch — a folder that no
+  // longer exists must never be offered (it failed with "Folder not found")
+  ipcMain.handle('app:recents', () => store.pruneMissing());
   ipcMain.handle('app:clearRecents', () => { store.set('recents', []); rebuildMenu(); return ok(); });
   ipcMain.handle('app:setTitle', (_e, t) => {
     if (win) win.setTitle(typeof t === 'string' && t ? 'CodeSovereign — ' + t.slice(0, 120) : 'CodeSovereign');
@@ -291,7 +293,8 @@ function registerIpc() {
         }
       }
       await fsp.writeFile(r.filePath, zip.build(entries));
-      return ok({ path: r.filePath, fileCount: entries.length, sovereignExcluded: excluded });
+      // readTree stops at TREE_MAX_FILES; say so instead of passing off a partial archive as the project.
+      return ok({ path: r.filePath, fileCount: entries.length, sovereignExcluded: excluded, truncated: !!tree.truncated });
     } catch (e) { return fail(e); }
   });
 
@@ -311,7 +314,7 @@ function registerIpc() {
       let src = tree.files.filter((f) => f.path.indexOf('/delivery/') === 0);
       let prefix = '/delivery/';
       if (!src.length) { src = tree.files.filter((f) => f.path.indexOf('/.sovereign/') === 0); prefix = '/.sovereign/'; }
-      if (!src.length) return fail('Nothing to deliver — run an analysis or Ultra Mode pass first');
+      if (!src.length) return fail('Nothing to deliver — run an analysis first');
       const entries = [];
       for (const f of src) {
         const name = f.path.slice(prefix.length);
@@ -322,7 +325,7 @@ function registerIpc() {
         }
       }
       await fsp.writeFile(r.filePath, zip.build(entries));
-      return ok({ path: r.filePath, fileCount: entries.length, bundled: prefix });
+      return ok({ path: r.filePath, fileCount: entries.length, bundled: prefix, truncated: !!tree.truncated });
     } catch (e) { return fail(e); }
   });
 
@@ -651,6 +654,13 @@ function registerIpc() {
   ipcMain.handle('openclaw:openDashboard', async (_e, url) => {
     try { await shell.openExternal(url || ('http://127.0.0.1:' + openclawManager.GATEWAY_PORT + '/')); return { ok: true }; }
     catch (e) { return fail(e); }
+  });
+  // No confirmation dialog: install/gatewayInstall/gatewayStart confirm once
+  // because they install/start software. Selecting OpenClaw as the active
+  // execution backend in Settings is itself the user's one-time, deliberate
+  // consent — a per-generation-call dialog would break the agentic loop.
+  ipcMain.handle('openclaw:runAgentTurn', async (_e, opts) => {
+    try { return ok(await openclawManager.runAgentTurn(opts)); } catch (e) { return fail(e); }
   });
 
   /* ---- integrated terminal: real PTYs (PowerShell/CMD/Git Bash/WSL) over
