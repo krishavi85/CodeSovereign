@@ -249,6 +249,7 @@
   // After one network failure, skip the host for a cooldown, then try again.
   const SUPA_RETRY_MS = 5 * 60 * 1000;
   let _supaDownUntil = 0;
+  let _supaLastError = null; // { status, code } of the last HTTP error from the project
   async function _supa(path, opts) {
     opts = opts || {};
     if (!_supaCfg) { _supabase.online = false; _supabase.reason = 'not-configured'; return null; }
@@ -271,7 +272,16 @@
         _supabase.reason = 'unreachable';
         return null;
       }
-      if (!r.ok) return null;
+      if (!r.ok) {
+        // Keep why it failed: "no-table-or-offline" read like a connection
+        // problem when the project was reachable and only the table was
+        // missing (live: 404 PGRST205 for public.projects).
+        let code = null;
+        try { const body = await r.json(); code = body && body.code; } catch (_) {}
+        _supaLastError = { status: r.status, code: code };
+        return null;
+      }
+      _supaLastError = null;
       const ct = r.headers.get('content-type') || '';
       if (ct.indexOf('json') !== -1) return await r.json();
       return await r.text();
@@ -288,9 +298,17 @@
   }
   async function _pingSupabaseOnce() {
     try {
+      _supaLastError = null;
       const r = await _supa('/projects?select=id&limit=1', { method: 'GET' });
       _supabase.online = !!r; // null when offline or 404
-      _supabase.reason = r ? 'ok' : (!_supaCfg ? 'not-configured' : Date.now() < _supaDownUntil ? 'unreachable' : 'no-table-or-offline');
+      const le = _supaLastError;
+      _supabase.reason = r ? 'ok'
+        : !_supaCfg ? 'not-configured'
+        : Date.now() < _supaDownUntil ? 'unreachable'
+        : le && (le.code === 'PGRST205' || le.code === '42P01') ? 'projects-table-missing'
+        : le && (le.status === 401 || le.status === 403) ? 'key-rejected'
+        : le ? 'http-' + le.status
+        : 'no-table-or-offline';
       return _supabase.online;
     } catch (e) {
       _supabase.online = false;

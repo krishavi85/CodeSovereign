@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const vm = require('vm');
-const { spawnSync } = require('child_process');
+const { spawn } = require('child_process');
 
 function loadLLM() {
   const store = {};
@@ -37,10 +37,21 @@ const TEST = "const test = require('node:test'); const assert = require('node:as
   "test('constant URL', async () => { const r = await fetch(BASE + '/x?y=1'); assert.equal((await r.json()).path, '/x?y=1'); });\n" +
   "test('template URL', async () => { const id = 7; const r = await fetch(`http://127.0.0.1:3000/todos/${id}`); assert.equal((await r.json()).path, '/todos/7'); });\n";
 
+// Async on purpose: the :3000 "blocker" server lives in THIS process, and a
+// spawnSync would freeze its event loop — the child's fetch to it then hangs
+// until the timeout and the run reports nothing (0 pass / 0 fail).
 function runNodeTest(dir) {
-  const r = spawnSync(process.execPath, ['--test'], { cwd: dir, encoding: 'utf8', timeout: 60000 });
-  const out = (r.stdout || '') + (r.stderr || '');
-  return { code: r.status, pass: Number((/ℹ pass (\d+)/.exec(out) || [])[1] || 0), fail: Number((/ℹ fail (\d+)/.exec(out) || [])[1] || 0), out };
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, ['--test'], { cwd: dir });
+    let out = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    const timer = setTimeout(() => { try { child.kill(); } catch (_) {} }, 60000);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, pass: Number((/ℹ pass (\d+)/.exec(out) || [])[1] || 0), fail: Number((/ℹ fail (\d+)/.exec(out) || [])[1] || 0), out });
+    });
+  });
 }
 
 module.exports = async function (t) {
@@ -57,13 +68,13 @@ module.exports = async function (t) {
     fs.mkdirSync(path.join(dir, 'test'));
     fs.writeFileSync(path.join(dir, 'server.js'), SERVER);
     fs.writeFileSync(path.join(dir, 'test', 'todo.test.js'), TEST);
-    const before = runNodeTest(dir);
+    const before = await runNodeTest(dir);
     t.ok('without the harness the model\'s test fails (' + before.pass + ' pass / ' + before.fail + ' fail)', before.fail > 0);
 
     const out = H({ path: '/test/todo.test.js', content: TEST });
     t.ok('the harness is prepended', /Added by CodeSovereign/.test(out.content) && out.content.endsWith(TEST));
     fs.writeFileSync(path.join(dir, 'test', 'todo.test.js'), out.content);
-    const after = runNodeTest(dir);
+    const after = await runNodeTest(dir);
     t.ok('with the harness all 3 tests pass — literal, constant and template URLs, with :3000 already taken (' + after.pass + ' pass / ' + after.fail + ' fail)', after.pass === 3 && after.fail === 0 && after.code === 0);
 
     // Left alone: non-test files, tests that start a server themselves,

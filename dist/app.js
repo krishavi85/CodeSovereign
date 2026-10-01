@@ -2347,7 +2347,7 @@ function renderSettings(){
             const sup = (window.Backend && window.Backend._supabase) || { online: false, reason: 'not-checked' };
             const devId = (window.Backend && window.Backend.deviceId) || 'unassigned';
             const integrations = [
-              { name: 'Supabase',    status: sup.online ? 'connected (sync online)' : sup.reason === 'not-configured' ? 'not configured — local-only' : ('local-only (' + (sup.reason || 'no-table') + ')'), icon: I.shield, on: !!sup.online },
+              { name: 'Supabase',    status: sup.online ? 'connected (sync online)' : supaReasonText(sup.reason), icon: I.shield, on: !!sup.online },
               { name: 'IndexedDB',   status: (eng === 'indexeddb')   ? 'active' : 'fallback', icon: I.folder, on: eng === 'indexeddb' },
               { name: 'localStorage',status: (eng === 'localstorage') ? 'active' : 'idle',     icon: I.save || I.folder, on: eng === 'localstorage' },
               { name: 'Device id',   status: String(devId).slice(0, 18) + (String(devId).length > 18 ? '...' : ''), icon: I.user, on: devId !== 'unassigned' }
@@ -2497,12 +2497,24 @@ function renderArtTab(tab) {
   }
 }
 
+// Plain-language status for Settings > Integrations and the Test toast.
+function supaReasonText(reason) {
+  switch (reason) {
+    case 'not-configured': return 'not configured — local-only';
+    case 'projects-table-missing': return 'connected, but the projects table is missing — run dist/_init_projects.sql in the Supabase SQL editor';
+    case 'key-rejected': return 'the project rejected the key — check it is the project\'s publishable (anon) key';
+    case 'unreachable': return 'project not reachable — check the URL and your connection';
+    case 'not-checked': return 'not checked yet — click Test';
+    default: return 'local-only (' + (reason || 'unknown') + ')';
+  }
+}
+
 function bindSettings(){
   // Cloud sync (Supabase) — optional, user-supplied project
   const supaMsg = (r, okText) => toast(r && r.ok ? okText : ('Cloud sync: ' + ((r && r.error) || 'failed')), r && r.ok ? '#34d399' : '#ef4444');
   const supaCheck = () => window.Backend.checkSupabase().then(online => {
     const reason = (window.Backend._supabase || {}).reason;
-    toast(online ? 'Supabase connected — sync online' : 'Supabase not reachable (' + reason + ')', online ? '#34d399' : '#f59e0b');
+    toast(online ? 'Supabase connected — sync online' : 'Supabase: ' + supaReasonText(reason), online ? '#34d399' : '#f59e0b');
     renderAll();
   });
   const ss = document.getElementById('supaSave');

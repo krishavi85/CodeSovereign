@@ -89,4 +89,19 @@ module.exports = async function (t) {
     t.equal('configured: the next check actually contacts the project', calls, 1);
     t.ok('disconnect: clears the project', win.Backend.configureSupabase('', '').ok === true && win.Backend.SUPABASE_URL === null && win.localStorage.getItem('cs.supabase.config') === null);
   }
+  {
+    // Live 2026-09-30: the project was reachable and the key accepted, but
+    // public.projects didn't exist (404 PGRST205). The status said
+    // "no-table-or-offline", which read as a connection failure.
+    const reply = (status, body) => async () => ({ ok: false, status, headers: { get: () => 'application/json' }, json: async () => body, text: async () => JSON.stringify(body) });
+    let { win } = load(reply(404, { code: 'PGRST205', message: "Could not find the table 'public.projects' in the schema cache" }));
+    let info = await win.Backend.ping(); await settle();
+    t.equal('missing projects table is named as such', info.supabase.reason, 'projects-table-missing');
+    ({ win } = load(reply(401, { message: 'Invalid API key' })));
+    info = await win.Backend.ping(); await settle();
+    t.equal('a rejected key is reported as key-rejected', info.supabase.reason, 'key-rejected');
+    ({ win } = load(reply(500, { message: 'boom' })));
+    info = await win.Backend.ping(); await settle();
+    t.equal('other HTTP errors carry their status', info.supabase.reason, 'http-500');
+  }
 };
