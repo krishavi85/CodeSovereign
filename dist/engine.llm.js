@@ -1746,6 +1746,25 @@
     }).join("\n\n");
   }
 
+  // Route / export / listen lines of the backend's JS, with line numbers.
+  // Live 2026-10-02 (Qwen): server.js was 12.6k characters and its routes
+  // began near line 137, past the 4,000-character cut in llmTaskFilesBlock —
+  // the frontend and tests stages never saw a single endpoint.
+  const ROUTE_LINE_RE = /\b(?:app|router|server|api)\.(?:get|post|put|patch|delete|all|use|route)\s*\(|\b(?:pathname|urlPath|path|url|req\.url|route)\s*(?:===|==|\.startsWith\(|\.match\(|\.test\()|\bcase\s+['"`](?:GET|POST|PUT|PATCH|DELETE)\b|\bmodule\.exports\b|\bexports\.\w+\s*=|\.listen\s*\(/;
+  function backendOutline(paths) {
+    const FS = window.Engine && window.Engine.FS;
+    if (!FS) return "";
+    const out = [];
+    (paths || []).forEach(function (p) {
+      if (!/\.(c|m)?js$/.test(String(p)) || /(^|\/)test\//.test(p) || /\.test\.js$/.test(p)) return;
+      const lines = String(FS.read(p) || "").split("\n");
+      const hits = [];
+      lines.forEach(function (l, i) { if (ROUTE_LINE_RE.test(l) && hits.length < 40) hits.push("  " + (i + 1) + ": " + l.trim().slice(0, 160)); });
+      if (hits.length) out.push(p + " (" + lines.length + " lines):\n" + hits.join("\n"));
+    });
+    return out.length ? "\n\nBACKEND ROUTES / EXPORTS (complete list from the files — the file listings above may be cut short):\n" + out.join("\n") : "";
+  }
+
   // The end-to-end gate, shared by T-integration and the repair loop: reads
   // Engine.DoD's own per-criterion booleans (never a 4th "is it done" score).
   function integrationVerified() {
@@ -2493,7 +2512,7 @@
           // inline CSS+JS took longer than the 30-minute request limit; cut
           // mid-file, nothing could be kept and the stage started over. Three
           // smaller files finish sooner, and a cut keeps the completed ones.
-          "Write THREE separate files, each with its own write_file call, in this order: /index.html (markup only, with <link rel=\"stylesheet\" href=\"/styles.css\"> and <script src=\"/app.js\"></script>), then /styles.css, then /app.js (all client-side JS). Do not inline the CSS or JS in index.html.\n\nCURRENT BACKEND FILES:\n\n" + llmTaskFilesBlock(backendPaths);
+          "Write THREE separate files, each with its own write_file call, in this order: /index.html (markup only, with <link rel=\"stylesheet\" href=\"/styles.css\"> and <script src=\"/app.js\"></script>), then /styles.css, then /app.js (all client-side JS). Do not inline the CSS or JS in index.html.\n\nCURRENT BACKEND FILES:\n\n" + llmTaskFilesBlock(backendPaths) + backendOutline(backendPaths);
         const FSx = window.Engine && window.Engine.FS;
         const onDisk = function (p) { return !!(FSx && FSx.exists && FSx.exists(p)); };
         return llmTaskComplete("Build the frontend for: " + prompt, sys, runState, backendPaths).then(function (files) {
@@ -2536,10 +2555,13 @@
         // installed), required './server' from inside test/ (wrong path),
         // and there was no "test" script — which this stage can't add, since
         // package.json belongs to the backend stage and is protected.
+        // Stylesheets and images only cost prompt time here (live: a 15k
+        // styles.css, on a CPU model that reads a few tokens a second).
+        const testContextPaths = backendPaths.concat(frontendPaths).filter(function (p) { return !/\.(css|scss|svg|png|jpe?g|gif|ico|webp|woff2?)$/i.test(String(p)); });
         const sys = baseRules + "\n\nYOUR JOB — TESTS ONLY: write real automated tests against the ACTUAL files below — test real behavior, not placeholders. They run with `npm test` (= `node --test`), so:\n" +
           "- Use ONLY Node built-ins: `const test = require('node:test'); const assert = require('node:assert');` and the global fetch. Do NOT use jest, mocha, chai, supertest, or any other package — none is installed for tests.\n" +
           "- Put test files in /test/ named *.test.js, and import the app with `require('../server')` (one level up from /test/).\n" +
-          "- For HTTP tests, start the imported app on a free port inside the test (`const server = app.listen(0)`, read `server.address().port`), call it with fetch, and `server.close()` when done — otherwise the test process never exits.\n\nCURRENT APP FILES:\n\n" + llmTaskFilesBlock(backendPaths.concat(frontendPaths));
+          "- For HTTP tests, start the imported app on a free port inside the test (`const server = app.listen(0)`, read `server.address().port`), call it with fetch, and `server.close()` when done — otherwise the test process never exits.\n\nCURRENT APP FILES:\n\n" + llmTaskFilesBlock(testContextPaths) + backendOutline(backendPaths);
         return llmTaskComplete("Write tests for: " + prompt, sys, runState, backendPaths.concat(frontendPaths)).then(function (files) { testsDone = true; return (files || []).map(harnessServerTests); });
       },
       check: function () { return testsDone; }

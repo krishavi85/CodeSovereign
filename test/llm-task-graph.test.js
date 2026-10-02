@@ -109,10 +109,10 @@ module.exports = async function (t) {
       const sys = (body.messages.find((m) => m.role === 'system') || {}).content || '';
       requestsSeen.push(sys);
       if (/BACKEND ONLY/.test(sys)) {
-        return chatReply({ summary: 'real backend', files: [{ path: '/server.js', content: 'const http=require("http"); http.createServer((req,res)=>{ if(req.url==="/api/tasks") return res.end("[]"); res.end("ok"); }).listen(4319);' }] });
+        return chatReply({ summary: 'real backend', files: [{ path: '/server.js', content: '// ' + 'x'.repeat(5000) + '\nconst http=require("http"); http.createServer((req,res)=>{ if(req.url==="/api/tasks") return res.end("[]"); res.end("ok"); }).listen(4319);' }] });
       }
       if (/FRONTEND ONLY/.test(sys)) {
-        return chatReply({ summary: 'real frontend', files: [{ path: '/index.html', content: '<!doctype html><html><body>UI</body></html>' }] });
+        return chatReply({ summary: 'real frontend', files: [{ path: '/index.html', content: '<!doctype html><html><body>UI</body></html>' }, { path: '/styles.css', content: 'body{color:red} /* STYLE_MARKER */' }] });
       }
       if (/TESTS ONLY/.test(sys)) {
         return chatReply({ summary: 'real tests', files: [{ path: '/test/server.test.js', content: "require('node:test');" }] });
@@ -148,6 +148,10 @@ module.exports = async function (t) {
     t.ok('the tests prompt allows only node built-ins (nothing else is installed for tests)', /Use ONLY Node built-ins/.test(testsSys) && /Do NOT use jest, mocha, chai, supertest/.test(testsSys));
     t.ok('the tests prompt gives the correct relative import path from /test/', testsSys.includes("require('../server')"));
     t.ok('the tests prompt requires closing any server it starts, so node --test can exit', testsSys.includes('server.close()'));
+    // Live 2026-10-02: routes past the 4,000-character cut were invisible to both stages.
+    t.ok('the frontend prompt lists backend routes past the per-file cut', /BACKEND ROUTES \/ EXPORTS/.test(frontendSys) && /2: .*req\.url==="\/api\/tasks"/.test(frontendSys));
+    t.ok('the tests prompt lists backend routes past the per-file cut', /BACKEND ROUTES \/ EXPORTS/.test(testsSys) && /req\.url==="\/api\/tasks"/.test(testsSys));
+    t.ok('the tests prompt leaves out stylesheets', !/STYLE_MARKER/.test(testsSys) && /<body>UI/.test(testsSys));
     t.ok('the frontend request includes the REAL backend code already written, not a guess', requestsSeen.find((s) => /FRONTEND ONLY/.test(s)).includes('createServer'));
 
     t.ok('real files from every stage were actually written', win.Engine.FS.exists('/server.js') && win.Engine.FS.exists('/index.html') && win.Engine.FS.exists('/test/server.test.js'));
