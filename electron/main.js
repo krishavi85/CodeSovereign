@@ -134,7 +134,15 @@ function createWindow() {
       store.set('windowBounds', b);
     }
   });
-  win.on('closed', () => { win = null; });
+  // Closing the main window must end the app. The runtime observer keeps a
+  // hidden BrowserWindow (e.g. on a generated app's localhost:3000), so
+  // 'window-all-closed' never fired and CodeSovereign stayed running
+  // invisibly — holding the single-instance lock, so it wouldn't reopen.
+  win.on('closed', () => {
+    win = null;
+    try { observer.stop(); } catch (_) {}
+    if (process.platform !== 'darwin') app.quit();
+  });
 
   // External links open in the real browser, never in-app.
   win.webContents.setWindowOpenHandler(({ url }) => {

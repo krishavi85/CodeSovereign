@@ -3889,8 +3889,29 @@ h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
           if (!syn.ok) issues.push({ severity:'error', faultClass:'js.syntax', file:p, message:'JS syntax error: ' + syn.error });
           const code = stripJsComments(content);
           const logs = (code.match(/console\.log\(/g) || []).length;
-          if (logs > 0) issues.push({ severity:'info', faultClass:'js.console', file:p, message: logs + ' console.log statement(s) (consider removing for production)' });
+          // Only browser code: tests, CLI scripts and Node servers log on
+          // purpose (the generated scripts/release.js, server startup lines and
+          // test traces all showed up in Problems as "remove for production").
+          // (Not by a /scripts/ path: the offline generators put BROWSER code at /scripts/app.js.)
+          const nodeSide = /(^|\/)(test|tests|__tests__|bin)\//.test(p) || /\.(test|spec)\.m?js$/.test(p) ||
+            /^#!/.test(content) || /\brequire\s*\(|\bmodule\.exports\b|\bprocess\.(env|argv|exit)\b|from\s+['"]node:/.test(code);
+          if (logs > 0 && !nodeSide) issues.push({ severity:'info', faultClass:'js.console', file:p, message: logs + ' console.log statement(s) (consider removing for production)' });
           if (/\beval\s*\(/.test(code)) issues.push({ severity:'error', faultClass:'js.eval', file:p, message:'Use of eval() detected' });
+          // A local require() whose file doesn't exist crashes the app on start
+          // ("Cannot find module './app'") — the real defect in a generated
+          // todo app, while Problems showed only console.log hints.
+          {
+            const dir = p.slice(0, p.lastIndexOf('/') + 1) || '/';
+            const reqRe = /\brequire\s*\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g;
+            let rm;
+            while ((rm = reqRe.exec(code))) {
+              const segs = []; (dir + rm[1]).split('/').forEach(s => { if (s === '..') segs.pop(); else if (s && s !== '.') segs.push(s); });
+              const base = '/' + segs.join('/');
+              if (![base, base + '.js', base + '.json', base + '.cjs', base + '/index.js'].some(c => FS.isFile(c))) {
+                issues.push({ severity:'error', faultClass:'js.missing-module', file:p, message:"require('" + rm[1] + "') — no such file in the project; the app will crash with \"Cannot find module\"" });
+              }
+            }
+          }
         }
         if (p.endsWith('.css')){
           // broken reference: url(...)
@@ -3905,7 +3926,9 @@ h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
         // empty file
         if (content.trim().length === 0) issues.push({ severity:'warning', faultClass:'file.empty', file:p, message:'File is empty' });
         // TODO marker
-        if (/TODO|FIXME/.test(content)) issues.push({ severity:'info', faultClass:'file.todo', file:p, message:'Contains TODO/FIXME marker' });
+        // A marker is TODO/FIXME at the start of a comment — not the letters
+        // inside a name: a todo app is full of TODOS_FILE / TODO_KEY identifiers.
+        if (/(\/\/|\/\*+|^\s*\*|#|<!--)\s*(TODO|FIXME)\b/m.test(content)) issues.push({ severity:'info', faultClass:'file.todo', file:p, message:'Contains TODO/FIXME marker' });
       });
       // broken script/link references in HTML
       Object.keys(FS._data).forEach(p => {

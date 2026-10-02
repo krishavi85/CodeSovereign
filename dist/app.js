@@ -1550,10 +1550,21 @@ function renderIDE() {
 
   // Problems panel — real validators
   const issues = Engine.Validator.runAll();
-  const problemsBody = `<div style="flex:1;overflow:auto;padding:10px 16px">${issues.length === 0 ? '<div style="font-size:12px;color:#34d399;padding:12px">✓ No issues found</div>' : issues.map(p => {
+  // Fix / Fix all (Engine.ProblemFix): quick fixes are instant; the rest go to
+  // the AI one file at a time. S.problemFixBusy disables the buttons meanwhile.
+  const PF = Engine.ProblemFix;
+  S.problemList = issues;
+  const fixable = PF ? issues.filter(p => PF.canFix(p)) : [];
+  const fixBtn = (p, i) => {
+    if (!PF || !PF.canFix(p)) return '';
+    const label = S.problemFixBusy === i ? 'Fixing…' : (PF.canQuickFix(p) ? 'Fix' : 'Fix with AI');
+    return `<button class="btn ghost" data-fixissue="${i}" ${S.problemFixBusy != null ? 'disabled' : ''} title="${PF.canQuickFix(p) ? 'Instant fix, no AI' : 'Sends this file and its problems to your AI model'}" style="padding:2px 9px;font-size:11px;flex:none">${label}</button>`;
+  };
+  const fixAllBar = fixable.length ? `<div style="display:flex;align-items:center;gap:10px;padding:2px 0 8px;font-size:11.5px;color:#7b859c"><span style="flex:1">${S.problemFixBusy != null ? esc(S.problemFixStatus || 'Fixing…') : fixable.length + ' fixable · quick fixes are instant, the rest use your AI model'}</span><button class="btn primary" id="fixAllProblems" ${S.problemFixBusy != null ? 'disabled' : ''} style="padding:3px 11px;font-size:11.5px">${S.problemFixBusy === 'all' ? 'Fixing…' : 'Fix all'}</button></div>` : '';
+  const problemsBody = `<div style="flex:1;overflow:auto;padding:10px 16px">${issues.length === 0 ? '<div style="font-size:12px;color:#34d399;padding:12px">✓ No issues found</div>' : fixAllBar + issues.map((p, i) => {
     const color = p.severity==='error' ? '#f87171' : p.severity==='security' ? '#ef4444' : p.severity==='a11y' ? '#f59e0b' : '#8b93a7';
     const icon = p.severity==='error' ? I.alert : p.severity==='security' ? I.shield : p.severity==='a11y' ? I.eye : I.alert;
-    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:${color};width:14px;height:14px;flex:none;display:inline-flex;align-items:center;justify-content:center">${icon}</span><span style="flex:1">${esc(p.message || p.msg || '')}</span><span style="font:400 11px 'JetBrains Mono',monospace;color:#6b7488">${esc(p.file)}</span></div>`;
+    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid rgba(255,255,255,.05);font-size:12.5px"><span style="color:${color};width:14px;height:14px;flex:none;display:inline-flex;align-items:center;justify-content:center">${icon}</span><span style="flex:1">${esc(p.message || p.msg || '')}</span><span style="font:400 11px 'JetBrains Mono',monospace;color:#6b7488">${esc(p.file)}</span>${fixBtn(p, i)}</div>`;
   }).join('')}</div>`;
 
   // Git panel — shows file list with status
@@ -1967,8 +1978,40 @@ function bindAgentTab(editor) {
   bump();
 }
 
+// Problems tab: Fix one / Fix all (Engine.ProblemFix). Re-renders afterwards so
+// the list shows what the validators still report.
+function runProblemFix(which, work) {
+  if (S.problemFixBusy != null) return;
+  S.problemFixBusy = which; S.problemFixStatus = 'Fixing…'; renderAll();
+  Promise.resolve().then(work).then(r => {
+    S.problemFixBusy = null; S.problemFixStatus = '';
+    try { syncBuildFromFS && syncBuildFromFS(); } catch (_) {}
+    renderAll();
+    if (which === 'all') {
+      toast(r.remaining === 0 ? 'Fixed ' + r.fixed + ' problem' + (r.fixed === 1 ? '' : 's') + ' — Problems is clear'
+        : 'Fixed ' + r.fixed + ', ' + r.remaining + ' left' + (r.errors.length ? ' — ' + r.errors[0] : ''), r.remaining === 0 ? '#34d399' : '#f59e0b');
+    } else {
+      toast(r.ok ? 'Fixed' + (r.how === 'quick' ? ' (instant)' : ' with AI') : 'Not fixed: ' + (r.error || 'unknown'), r.ok ? '#34d399' : '#f59e0b');
+    }
+  }, e => {
+    S.problemFixBusy = null; S.problemFixStatus = ''; renderAll();
+    toast('Fix failed: ' + (e && e.message || e), '#ef4444');
+  });
+}
+
 function bindIDE() {
   try { bindPipelineModal(); } catch (_) {}
+  document.querySelectorAll('[data-fixissue]').forEach(el => el.onclick = () => {
+    const i = Number(el.dataset.fixissue);
+    const issue = (S.problemList || [])[i];
+    if (issue && Engine.ProblemFix) runProblemFix(i, () => Engine.ProblemFix.fixOne(issue));
+  });
+  const fixAll = document.getElementById('fixAllProblems');
+  if (fixAll && Engine.ProblemFix) fixAll.onclick = () => runProblemFix('all', () => Engine.ProblemFix.fixAll(S.problemList || [], t => {
+    S.problemFixStatus = t;
+    const bar = document.getElementById('fixAllProblems');
+    if (bar && bar.previousElementSibling) bar.previousElementSibling.textContent = t;
+  }));
   const openP = document.getElementById('openPipelineModal');
   if (openP) openP.onclick = openPipelineModal;
   document.querySelectorAll('[data-tab]').forEach(el => el.onclick = () => openFile(el.dataset.tab));

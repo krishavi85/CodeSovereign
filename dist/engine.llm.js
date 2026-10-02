@@ -2092,9 +2092,14 @@
       }
 
       function turn(n) {
+        // Live run 2026-10-01: a thinking model on LM Studio (~1-2 tok/s on
+        // CPU) was still writing server.js when the 10-minute limit cut the
+        // connection, so the backend stage ended with only package.json. A
+        // local model gets 30 minutes per request; cloud keeps 10.
+        const localModel = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/i.test(String((getConfig() || {}).baseUrl || ""));
         return complete(userPrompt, null, {
           system: systemPrompt, runState: runState, json: false,
-          openClawTimeoutMs: 180000, timeoutMs: 600000,
+          openClawTimeoutMs: 180000, timeoutMs: localModel ? 1800000 : 600000,
           tools: runState && runState.toolsUnsupported ? undefined : [WRITE_FILE_TOOL],
           messages: history
         }).then(onResponse, function (err) {
@@ -2231,6 +2236,47 @@
     return Object.assign({}, file, { content: pre + src });
   }
 
+  // "/server.js" from a written package.json whose start script is
+  // `node <file>`; null when there is no such script (static sites, other runners).
+  function startEntryOf(files) {
+    const pkg = (files || []).find(function (f) { return /(^|\/)package\.json$/.test(String(f.path || "")) && !/node_modules/.test(f.path); });
+    if (!pkg) return null;
+    let start = "";
+    try { start = String(((JSON.parse(pkg.content) || {}).scripts || {}).start || ""); } catch (_) { return null; }
+    const m = /^\s*node\s+(?:--[\w-]+(?:=\S+)?\s+)*([^\s&|;]+\.(?:c|m)?js)\b/.exec(start);
+    return m ? normalizePath("/" + m[1].replace(/^\.?\//, "")) : null;
+  }
+
+  // Local modules the written JS files require() but nobody wrote. Live run
+  // 2026-10-01 (Qwen): server.js required './app' and './db/schema', neither
+  // existed, and the backend stage still counted as done. Resolves each
+  // './x' / '../x' spec against the requiring file's folder, accepting
+  // x, x.js, x.json and x/index.js. Returns paths like "/app.js".
+  function missingLocalModules(files) {
+    const have = {};
+    (files || []).forEach(function (f) { have[normalizePath(f.path)] = true; });
+    const missing = [];
+    (files || []).forEach(function (f) {
+      const p = normalizePath(f.path);
+      if (!/\.(c|m)?js$/.test(p)) return;
+      const dir = p.slice(0, p.lastIndexOf("/") + 1) || "/";
+      const re = /\brequire\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g;
+      let m;
+      while ((m = re.exec(String(f.content || "")))) {
+        const parts = (dir + m[1]).split("/");
+        const out = [];
+        parts.forEach(function (seg) { if (seg === "..") out.pop(); else if (seg && seg !== ".") out.push(seg); });
+        const base = "/" + out.join("/");
+        const candidates = [base, base + ".js", base + ".json", base + "/index.js"];
+        if (!candidates.some(function (c) { return have[c]; })) {
+          const want = /\.(c|m)?js(on)?$/.test(base) ? base : base + ".js";
+          if (missing.indexOf(want) < 0) missing.push(want);
+        }
+      }
+    });
+    return missing;
+  }
+
   function buildLLMTaskGraph(prompt, contract, runState) {
     const st = contract.supportedStack || {};
     const entityNames = (contract.entities || []).map(function (e) { return e.name; }).join(", ") || "the app's data";
@@ -2247,6 +2293,7 @@
     // genuinely checks the whole assembled app, reads the real DoD state.
     const tasks = [];
     let backendDone = false;
+    let backendEntry = null; // "/server.js" etc. — what package.json's start script runs
     let frontendDone = false;
     let testsDone = false;
     // llmTaskFilesBlock() with NO paths falls back to "every file in the
@@ -2280,12 +2327,50 @@
           "- The server also serves the static frontend files (index.html, .css, .js) from the project root, so one `npm start` runs the whole app.\n" +
           "Do NOT output any frontend HTML/CSS/client JS.";
         return llmTaskComplete("Build the backend for: " + prompt, sys, runState).then(function (files) {
+          files = files || [];
+          // The stage can end with the server entry missing — a later turn
+          // timed out mid-file and the turns already written were kept (live:
+          // only package.json). Ask once more for exactly that file.
+          const entry = startEntryOf(files);
+          const has = function (p) { return files.some(function (f) { return normalizePath(f.path) === p; }); };
+          // Missing: the start-script entry, plus any local module a written
+          // file require()s that was never written.
+          let missing = (entry && !has(entry)) ? [entry] : [];
+          missingLocalModules(files).forEach(function (p) { if (missing.indexOf(p) < 0) missing.push(p); });
+          if (missing.length) {
+            return llmTaskComplete(
+              "Write ONLY these missing backend files: " + missing.join(", ") + ". " +
+              (entry && missing.indexOf(entry) >= 0 ? entry + " is the server entry point that /package.json's start script runs. " : "") +
+              "Other files already require() them, but they were never written (the previous attempt was cut off). Keep their exports consistent with how the existing files use them.\n\nEXISTING BACKEND FILES:\n\n" +
+              // From this stage's own output — it isn't in Engine.FS until the stage returns.
+              files.filter(function (f) { return /\.(c|m)?js(on)?$/.test(String(f.path)); }).map(function (f) { return "FILE: " + f.path + "\n```\n" + String(f.content || "").slice(0, 4000) + "\n```"; }).join("\n\n") +
+              "\n\nBuild the backend for: " + prompt,
+              sys, runState, files.map(function (f) { return f.path; })
+            ).then(function (more) { return files.concat(more || []); }, function () { return files; });
+          }
+          return files;
+        }).then(function (files) {
+          backendEntry = startEntryOf(files);
           backendDone = true;
           backendPaths = (files || []).map(function (f) { return f.path; });
           return files;
         });
       },
-      check: function () { return backendDone; }
+      // Done only when the file `npm start` runs actually exists — a stage
+      // that wrote just package.json used to report "generated".
+      check: function () {
+        if (!backendDone) return false;
+        const FSx = window.Engine && window.Engine.FS;
+        if (!FSx || !FSx.exists) return true;
+        if (backendEntry && !FSx.exists(backendEntry)) return false;
+        // ...and nothing a backend file require()s locally is missing (resolved
+        // against everything in the project, so modules from any stage count).
+        const all = Object.keys(FSx._data || {}).filter(function (p) { return FSx.isFile(p) && !/node_modules|^\/\.sovereign\//.test(p); })
+          .map(function (p) { return { path: p, content: FSx.read(p) || "" }; });
+        const mine = all.filter(function (f) { return backendPaths.indexOf(f.path) >= 0; });
+        const others = all.filter(function (f) { return backendPaths.indexOf(f.path) < 0; }).map(function (f) { return { path: f.path, content: "" }; });
+        return missingLocalModules(mine.concat(others)).length === 0;
+      }
     });
     tasks.push({
       id: "T-frontend",
@@ -3265,8 +3350,62 @@
 
   // ----- Public surface -----
   window.Engine = window.Engine || {};
+  // Fix the Problems-tab issues of ONE file with a single focused request:
+  // that file, its problems, and the files directly related to them — not the
+  // whole app, so it is far quicker than a build repair round. The model may
+  // only rewrite `file` and create files that a problem names as missing
+  // (js.missing-module); everything else in the project is read-only.
+  // Resolves { ok, written:[paths], error }.
+  function fixProblems(file, issues) {
+    const FSx = window.Engine && window.Engine.FS;
+    if (!FSx || !FSx.exists(file)) return Promise.resolve({ ok: false, written: [], error: file + " no longer exists" });
+    const list = (issues || []).filter(function (i) { return i && i.file === file; });
+    if (!list.length) return Promise.resolve({ ok: true, written: [] });
+    const content = FSx.read(file) || "";
+    // missing modules this file require()s: the model may create these
+    const creatable = [];
+    list.forEach(function (i) {
+      if (i.faultClass !== "js.missing-module") return;
+      const m = /require\('([^']+)'\)/.exec(i.message || "");
+      if (!m) return;
+      const dir = file.slice(0, file.lastIndexOf("/") + 1) || "/";
+      const segs = []; (dir + m[1]).split("/").forEach(function (s) { if (s === "..") segs.pop(); else if (s && s !== ".") segs.push(s); });
+      const p = "/" + segs.join("/");
+      creatable.push(/\.(c|m)?js(on)?$/.test(p) ? p : p + ".js");
+    });
+    const all = Object.keys(FSx._data || {}).filter(function (p) { return FSx.isFile(p) && !/node_modules|^\/\.sovereign\//.test(p); });
+    const protectedPaths = all.filter(function (p) { return p !== file && creatable.indexOf(p) < 0; });
+    // context: package.json, plus files that load this one or that it loads
+    const base = file.replace(/^\//, "").replace(/\.(c|m)?js$/, "");
+    const related = all.filter(function (p) {
+      if (p === file) return false;
+      if (p === "/package.json") return true;
+      const c = FSx.read(p) || "";
+      return c.indexOf(base) >= 0 || content.indexOf(p.replace(/^\//, "").replace(/\.(c|m)?js$/, "")) >= 0;
+    }).slice(0, 4);
+    const sys = "You fix specific problems in ONE file of an existing app. Call write_file with the COMPLETE corrected content of " + file +
+      (creatable.length ? " and, to fix the missing modules, the COMPLETE content of " + creatable.join(", ") : "") +
+      ". Change only what the problems require; keep everything else exactly as it is. Do not touch any other file. When done, reply with one short line and no tool calls.\n\n" +
+      "PROBLEMS IN " + file + ":\n" + list.map(function (i) { return "- [" + i.severity + "] " + i.faultClass + ": " + i.message; }).join("\n") +
+      "\n\nFILE: " + file + "\n```\n" + content.slice(0, 20000) + "\n```" +
+      (related.length ? "\n\nRELATED FILES (read-only):\n\n" + related.map(function (p) { return "FILE: " + p + "\n```\n" + String(FSx.read(p) || "").slice(0, 4000) + "\n```"; }).join("\n\n") : "");
+    return llmTaskComplete("Fix the listed problems in " + file + ".", sys, { forceBackend: null }, protectedPaths).then(function (files) {
+      const written = [];
+      (files || []).forEach(function (f) {
+        const p = normalizePath(f.path);
+        if (p !== file && creatable.indexOf(p) < 0) return; // never write outside the allowed set
+        FSx.write(p, f.content);
+        written.push(p);
+      });
+      return { ok: written.length > 0, written: written, error: written.length ? null : "the model did not return a corrected file" };
+    }, function (err) {
+      return { ok: false, written: [], error: String((err && err.message) || err) };
+    });
+  }
+
   window.Engine.LLM = {
     providers: PROVIDERS,
+    fixProblems: fixProblems,
     _harnessServerTests: harnessServerTests, // exposed for tests
     getConfig,
     setConfig,

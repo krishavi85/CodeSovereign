@@ -1137,4 +1137,73 @@ module.exports = async function (t) {
     const repairSys = (repairBodies[0] && repairBodies[0].messages.find((m) => m.role === 'system').content) || '';
     t.ok('a timed-out npm test is explained, not reported as a bare exit code', /`npm test` did not finish/.test(repairSys) && /close every server a test starts/.test(repairSys) && !/failed \(exit -2\)/.test(repairSys));
   }
+  {
+    // Live run 2026-10-01 (Qwen on LM Studio): the 10-minute request limit cut
+    // server.js off mid-generation; the backend stage kept only package.json
+    // and still reported "generated". It now asks once more for exactly the
+    // file the start script runs.
+    const win = load();
+    win.Engine.Proj.create('entry1', 'saas-dashboard');
+    setupDesktopMocks(win, { dependenciesConnected: true, runtimeActionSucceeds: true, buildSucceeds: true, testsSucceed: true });
+    win.Engine.LLM.setConfig({ enabled: true, providerId: 'lmstudio', model: 'qwen', baseUrl: 'http://127.0.0.1:1234', localToken: '' });
+    const PKG = JSON.stringify({ name: 'x', scripts: { start: 'node server.js', test: 'node --test' }, dependencies: { express: '^4' } });
+    const SERVER = "const express = require('express'); const app = express(); app.use(express.static(__dirname)); if (require.main === module) app.listen(process.env.PORT || 3000); module.exports = app;";
+    const backendUserPrompts = [];
+    win.fetch = async (url, init) => {
+      if (!/chat\/completions/.test(String(url))) return { ok: false, status: 404, text: async () => '' };
+      const body = JSON.parse((init && init.body) || '{}');
+      const sys = (body.messages.find((m) => m.role === 'system') || {}).content || '';
+      const user = (body.messages.find((m) => m.role === 'user') || {}).content || '';
+      const tools = body.messages.filter((m) => m.role === 'tool');
+      if (/BACKEND ONLY/.test(sys)) {
+        if (!tools.length) backendUserPrompts.push(user);
+        if (tools.length) return chatReply('done');
+        if (/Write ONLY these missing backend files: \/server\.js/.test(user)) return chatToolCalls([{ path: '/server.js', content: SERVER }]);
+        return chatToolCalls([{ path: '/package.json', content: PKG }]); // ...then "done": server.js never written
+      }
+      if (tools.length) return chatReply('done');
+      if (/FRONTEND ONLY/.test(sys)) return chatToolCalls([{ path: '/index.html', content: '<!doctype html><title>T</title><h1>T</h1><button>Go</button>' }]);
+      if (/TESTS ONLY/.test(sys)) return chatToolCalls([{ path: '/test/x.test.js', content: "require('node:test')('x', () => {});" }]);
+      return chatReply('done');
+    };
+    const steps = await win.Engine.Agent.run(SUBSTANTIAL_PROMPT);
+    t.ok('a backend that stopped without its server entry is asked for exactly that file', backendUserPrompts.some((u) => /Write ONLY these missing backend files: \/server\.js/.test(u)));
+    t.equal('the server entry ends up written', win.Engine.FS.read('/server.js'), SERVER);
+    t.ok('the backend stage is reported done only with the entry present', steps.some((s) => s.kind === 'task-done' && s.taskId === 'T-backend' && /verified/.test(s.text || '')));
+  }
+  {
+    // Live run 2026-10-01 (Qwen): server.js required './app' and './db/schema'
+    // but neither was written; the stage still counted as done. The backend
+    // stage now asks for every missing local module.
+    const win = load();
+    win.Engine.Proj.create('mods1', 'saas-dashboard');
+    setupDesktopMocks(win, { dependenciesConnected: true, runtimeActionSucceeds: true, buildSucceeds: true, testsSucceed: true });
+    win.Engine.LLM.setConfig({ enabled: true, providerId: 'lmstudio', model: 'qwen', baseUrl: 'http://127.0.0.1:1234', localToken: '' });
+    const PKG = JSON.stringify({ name: 'x', scripts: { start: 'node server.js', test: 'node --test' }, dependencies: { express: '^4' } });
+    const SERVER = "const { createApp } = require('./app'); const { migrate } = require('./db/schema'); migrate(); const app = createApp(); if (require.main === module) app.listen(3000); module.exports = app;";
+    const APP = "const express = require('express'); exports.createApp = () => express();";
+    const SCHEMA = "exports.migrate = () => {};";
+    const followUps = [];
+    win.fetch = async (url, init) => {
+      if (!/chat\/completions/.test(String(url))) return { ok: false, status: 404, text: async () => '' };
+      const body = JSON.parse((init && init.body) || '{}');
+      const sys = (body.messages.find((m) => m.role === 'system') || {}).content || '';
+      const user = (body.messages.find((m) => m.role === 'user') || {}).content || '';
+      const tools = body.messages.filter((m) => m.role === 'tool');
+      if (/BACKEND ONLY/.test(sys)) {
+        if (tools.length) return chatReply('done');
+        if (/Write ONLY these missing backend files/.test(user)) { followUps.push(user); return chatToolCalls([{ path: '/app.js', content: APP }, { path: '/db/schema.js', content: SCHEMA }]); }
+        return chatToolCalls([{ path: '/package.json', content: PKG }, { path: '/server.js', content: SERVER }]);
+      }
+      if (tools.length) return chatReply('done');
+      if (/FRONTEND ONLY/.test(sys)) return chatToolCalls([{ path: '/index.html', content: '<!doctype html><title>T</title><h1>T</h1><button>Go</button>' }]);
+      if (/TESTS ONLY/.test(sys)) return chatToolCalls([{ path: '/test/x.test.js', content: "require('node:test')('x', () => {});" }]);
+      return chatReply('done');
+    };
+    const steps = await win.Engine.Agent.run(SUBSTANTIAL_PROMPT);
+    t.ok('the follow-up names both missing local modules', followUps.length === 1 && /\/app\.js/.test(followUps[0]) && /\/db\/schema\.js/.test(followUps[0]));
+    t.ok('the follow-up shows the file that requires them', followUps.length === 1 && /FILE: \/server\.js/.test(followUps[0]));
+    t.ok('both modules end up written', win.Engine.FS.read('/app.js') === APP && win.Engine.FS.read('/db/schema.js') === SCHEMA);
+    t.ok('the backend stage verifies once nothing is missing', steps.some((s) => s.kind === 'task-done' && s.taskId === 'T-backend' && /verified/.test(s.text || '')));
+  }
 };
