@@ -765,7 +765,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { proc.killAll(); observer.stop(); terminalManager.killAll(); });
+  app.on('before-quit', () => { proc.killAllSync(); observer.stop(); terminalManager.killAll(); });
 }
 
 /* -------- observer integration check: serve a fixture page, crawl it -------- */

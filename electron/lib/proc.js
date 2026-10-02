@@ -6,7 +6,7 @@
  *          renderer over the "proc:data" channel.
  * run()    is a one-shot: resolves with { code, stdout, stderr }.
  */
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const crossSpawn = require('cross-spawn');
 const path = require('path');
 const workspace = require('./workspace');
@@ -213,8 +213,30 @@ function killAll() {
   for (const id of Array.from(procs.keys())) kill(id);
 }
 
+// For app quit: killAll()'s taskkill is fire-and-forget, and the app exited
+// before it ran. Live 2026-10-02: quitting killed only the top cmd.exe of a
+// verified app's `npm start`; npm and `node server.js` kept :3000, and the
+// next session's observer would have crawled that stale server. Waits for
+// each taskkill (capped) so the whole tree is gone before the app exits.
+function killAllSync() {
+  for (const [id, rec] of Array.from(procs.entries())) {
+    procs.delete(id);
+    if (!rec || rec.killed) continue;
+    rec.killed = true;
+    const pid = rec.child && rec.child.pid;
+    if (!pid) continue;
+    try {
+      if (process.platform === 'win32') {
+        spawnSync('taskkill', ['/pid', String(pid), '/f', '/t'], { windowsHide: true, stdio: 'ignore', timeout: 5000 });
+      } else {
+        try { process.kill(-pid, 'SIGKILL'); } catch { try { rec.child.kill('SIGKILL'); } catch { /* gone */ } }
+      }
+    } catch { /* ignore */ }
+  }
+}
+
 function running() {
   return Array.from(procs.entries()).map(([id, r]) => ({ id, cwd: r.cwd, pid: r.child.pid }));
 }
 
-module.exports = { spawnManaged, spawnAllowed, runManaged, spawnShell, write, kill, killAll, running, sanitizedEnv, ALLOWED };
+module.exports = { spawnManaged, spawnAllowed, runManaged, spawnShell, write, kill, killAll, killAllSync, running, sanitizedEnv, ALLOWED };

@@ -1798,6 +1798,10 @@
   // 800-char tail kept only stack frames and cut off the error itself, so
   // the repair model "fixed" package.json instead. Errors come FIRST in
   // Node's output; stack frames and ANSI colour codes are pure noise.
+  // An uncaught error / crash in a server's output (not a log line that merely
+  // mentions "error", e.g. "GET /api/errors").
+  const SERVER_ERROR_RE = /^\s*(?:\w*Error(?::|\s*\[|\s*$)|Uncaught\b|UnhandledPromiseRejection|\[server process exited with code [1-9])|\bE(?:ADDRINUSE|ACCES|CONNREFUSED)\b|Cannot find module/m;
+
   function summarizeCommandOutput(raw) {
     const lines = String(raw || "")
       .replace(/\u001b\[[0-9;]*[A-Za-z]/g, "")
@@ -1895,7 +1899,8 @@
       lines.push("/package.json is NOT valid JSON (" + String((e && e.message) || e) + ") — so no dependencies were installed, `npm test` and `npm start` could not run, and the app was treated as a static site. Rewrite /package.json as raw JSON only.");
     }
     const rt = read("runtime-trace.json");
-    if (rt && fresh(rt.at)) {
+    let failure = null;
+    if (rt && fresh(rt.at) && !((failure = read("runtime-failure.json")) && failure.at > rt.at)) {
       const how = rt.serverStartedByUs === false
         ? "did NOT start the app itself — it found an already-running server at "
         : "started the app with `npm start` and loaded ";
@@ -1918,6 +1923,18 @@
       }
       (rt.consoleErrors || []).slice(0, 5).forEach(function (e) { lines.push("Browser console error: " + summarizeCommandOutput((e && (e.text || e.message)) || e).slice(0, 300)); });
       (rt.network || []).filter(function (n) { return n && n.status >= 400; }).slice(0, 5).forEach(function (n) { lines.push("HTTP " + n.status + " for " + (n.method || "GET") + " " + n.url); });
+      if (SERVER_ERROR_RE.test(rt.serverLog || "")) {
+        lines.push("The server printed errors while the page was being used (`npm start` output):\n" + summarizeCommandOutput(rt.serverLog));
+      }
+    } else if ((failure = read("runtime-failure.json")) && failure.at && fresh(failure.at)) {
+      // Live 2026-10-02: the page loaded, then the server crashed on its first
+      // API call — and the model was told it "may crash on startup".
+      lines.push("Runtime check: the verifier could not finish observing the app at http://localhost:3000/: " + String(failure.reason || "unknown error").slice(0, 300) + ".");
+      if (failure.serverLog && failure.serverLog.trim()) {
+        lines.push("Output of `npm start` (the server) — fix the error it shows:\n" + summarizeCommandOutput(failure.serverLog));
+      } else {
+        lines.push("The server printed nothing — check that `npm start` runs the server and that it listens on process.env.PORT || 3000.");
+      }
     } else {
       lines.push("Runtime check: the app could not be loaded at http://localhost:3000/ at all — `npm start` may crash on startup (e.g. a require() of a package missing from package.json, or a syntax error), or the server isn't listening on process.env.PORT || 3000.");
     }
@@ -3533,6 +3550,7 @@
     providers: PROVIDERS,
     fixProblems: fixProblems,
     _harnessServerTests: harnessServerTests, // exposed for tests
+    _integrationEvidence: integrationEvidence, // exposed for tests
     getConfig,
     setConfig,
     providerById,

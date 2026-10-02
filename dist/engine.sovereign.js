@@ -72,6 +72,7 @@
     // interactivity (spec 7)
     'interaction-inventory.json': 'Every interactive control with a stable id + contract slots',
     'runtime-trace.json':        'Observed console / network / navigation + per-control event->effect (desktop)',
+    'runtime-failure.json':      'Why the last runtime observation failed + the dev server\'s output (desktop)',
     'repairs/repair-ledger.md':  'Failed contract, root cause, patch, tests, rollback per repair',
     // rollups
     'analysis-summary.md':       'The latest full analysis in one readable page',
@@ -829,7 +830,11 @@
       return Promise.resolve({ ok: false, reason: 'runtime observation needs the desktop app with a project folder open' });
     }
     return O.run(opts).then(function (r) {
-      if (!r.ok) return r;
+      if (!r.ok) {
+        // Why it failed, and what the server printed — repair needs both.
+        write('runtime-failure.json', { at: Date.now(), reason: r.reason || '', serverLog: r.serverLog || '' });
+        return r;
+      }
       var trace = r.trace;
       write('runtime-trace.json', trace);
 

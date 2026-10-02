@@ -22,6 +22,27 @@
   var COMMON_PORTS = [5173, 4173, 3000, 8080, 1420, 4321, 5000, 8000, 3001];
   var serverProc = null;
 
+  // Tail of what the dev server printed. Live 2026-10-02: the generated
+  // server crashed on its first API call (ReferenceError at server.js:241);
+  // the crawl failed and the model was only told "could not be loaded at
+  // all", never the crash. Events can arrive before spawnAllowed() returns
+  // the id, so output is kept per id for the last few processes.
+  var outputs = {}, outputOrder = [], lastServerId = null;
+  var OUTPUT_CAP = 6000;
+  if (D.proc && typeof D.proc.onData === 'function') {
+    D.proc.onData(function (evt) {
+      if (!evt || !evt.id) return;
+      if (!(evt.id in outputs)) {
+        outputs[evt.id] = '';
+        outputOrder.push(evt.id);
+        while (outputOrder.length > 6) delete outputs[outputOrder.shift()];
+      }
+      var add = evt.stream === 'exit' ? '\n[server process exited with code ' + evt.code + ']\n' : String(evt.data || '');
+      outputs[evt.id] = (outputs[evt.id] + add).slice(-OUTPUT_CAP);
+    });
+  }
+  function serverLog() { return (lastServerId && outputs[lastServerId]) || ''; }
+
   function available() { return !!(FS && FS.__hasWorkspace && FS.__hasWorkspace()); }
 
   function pkg() { try { return JSON.parse(FS.read('/package.json') || 'null'); } catch (_) { return null; } }
@@ -80,7 +101,7 @@
       if (!det) return Promise.reject(new Error('No dev/start script in package.json and nothing serving on common ports. Pass a URL.'));
       try { window.toast && window.toast('Starting dev server (' + det.script + ')…', '#a78bfa'); } catch (_) {}
       return D.proc.spawnAllowed({ cmd: (pkg() && detectPm()) || 'npm', args: ['run', det.script], cwd: '.' }).then(function (r) {
-        if (r && r.id) serverProc = r.id;
+        if (r && r.id) { serverProc = r.id; lastServerId = r.id; }
         return tryLoad(det.url, 30, 1000).then(function (res) {
           if (!res.ok) throw new Error('Dev server did not come up at ' + det.url + ' within 30s');
           return { url: det.url, started: true };
@@ -113,7 +134,9 @@
   function run(opts) {
     opts = opts || {};
     if (!available()) return Promise.resolve({ ok: false, reason: 'open a project folder in the desktop app first' });
+    var startedHere = false;
     return ensureServer(opts.url).then(function (srv) {
+      startedHere = !!srv.started;
       try { window.toast && window.toast('Observing ' + srv.url + ' …', '#22d3ee'); } catch (_) {}
       // Let a freshly-started server warm up: reload once and settle so the
       // first API calls a crawled control makes resolve inside the observer's
@@ -128,6 +151,7 @@
         var trace = res;
         trace.serverUrl = srv.url;
         trace.serverStartedByUs = srv.started;
+        if (srv.started) trace.serverLog = serverLog().slice(-3000);
         // visual validation (§12-13): a multi-breakpoint render pass, feeds Engine.VisualCheck
         if (opts.visual !== false && D.observer.visualProbe) {
           return D.observer.visualProbe({}).then(function (vp) {
@@ -145,7 +169,11 @@
         }
         return { ok: true, trace: trace };
       });
-    }).catch(function (e) { return { ok: false, reason: e.message }; });
+    }).catch(function (e) {
+      // A server we started (or tried to) — its output usually says why.
+      var log = (startedHere || lastServerId === serverProc) ? serverLog() : '';
+      return { ok: false, reason: (e && e.message) || String(e), serverLog: log.slice(-3000) };
+    });
   }
 
   function stop() {
@@ -153,6 +181,6 @@
     if (serverProc) { try { D.proc.kill(serverProc); } catch (_) {} serverProc = null; }
   }
 
-  window.CSObserve = { available: available, detectDevServer: detectDevServer, ensureServer: ensureServer, run: run, stop: stop };
+  window.CSObserve = { available: available, detectDevServer: detectDevServer, ensureServer: ensureServer, run: run, stop: stop, serverLog: serverLog };
   console.info('[desktop-observe] runtime observer ready — window.CSObserve');
 })();

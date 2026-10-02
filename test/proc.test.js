@@ -66,5 +66,28 @@ module.exports = async function (t) {
   const se = proc.sanitizedEnv();
   t.ok('sanitizedEnv drops *TOKEN*/*SECRET*/*KEY*', !Object.keys(se).some((k) => /TOKEN|SECRET|_KEY$|PASSWORD/i.test(k)));
 
+  // killAllSync (app quit): the whole tree is gone when it returns. Live
+  // 2026-10-02 the fire-and-forget killAll() on quit ended only the top
+  // process; the verified app's `node server.js` kept :3000.
+  {
+    const PARENT = "const {spawn}=require('child_process');" +
+      "const g=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});" +
+      "console.log('GRANDCHILD '+g.pid);setInterval(()=>{},1000);";
+    let grand = 0;
+    await new Promise((resolve) => {
+      proc.spawnAllowed({ cmd: 'node', args: ['-e', PARENT], cwd: '.' }, (e) => {
+        const m = e.stream === 'stdout' && /GRANDCHILD (\d+)/.exec(e.data);
+        if (m) { grand = Number(m[1]); resolve(); }
+      });
+      setTimeout(resolve, 10000);
+    });
+    const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (_) { return false; } };
+    t.ok('killAllSync: a grandchild was started', grand > 0 && alive(grand));
+    proc.killAllSync();
+    t.ok('killAllSync: the grandchild is gone when it returns (no waiting)', grand > 0 && !alive(grand));
+    t.equal('killAllSync: nothing is left registered', proc.running().length, 0);
+    if (grand && alive(grand)) { try { process.kill(grand); } catch (_) {} }
+  }
+
   fs.rmSync(tmp, { recursive: true, force: true });
 };
