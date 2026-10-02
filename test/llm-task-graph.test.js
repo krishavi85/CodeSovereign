@@ -970,19 +970,25 @@ module.exports = async function (t) {
     win.Engine.Proj.create('t3', 'saas-dashboard');
     setupDesktopMocks(win, { dependenciesConnected: true, runtimeActionSucceeds: true, buildSucceeds: true, testsSucceed: true });
     win.Engine.LLM.setConfig({ enabled: true, providerId: 'lmstudio', model: 'test-model', baseUrl: 'http://127.0.0.1:1234', localToken: 'lms-token' });
+    const laterStages = [];
     win.fetch = async (url, init) => {
       if (!/chat\/completions/.test(String(url))) return { ok: false, status: 404, text: async () => '' };
       const body = JSON.parse((init && init.body) || '{}');
       const sys = (body.messages.find((m) => m.role === 'system') || {}).content || '';
       if (/BACKEND ONLY/.test(sys)) throw new Error('model timed out');
-      if (/FRONTEND ONLY/.test(sys)) return chatReply({ summary: 'frontend', files: [{ path: '/index.html', content: 'ok' }] });
-      if (/TESTS ONLY/.test(sys)) return chatReply({ summary: 'tests', files: [{ path: '/test/x.test.js', content: 'ok' }] });
+      if (/FRONTEND ONLY/.test(sys)) { laterStages.push('frontend'); return chatReply({ summary: 'frontend', files: [{ path: '/index.html', content: 'ok' }] }); }
+      if (/TESTS ONLY/.test(sys)) { laterStages.push('tests'); return chatReply({ summary: 'tests', files: [{ path: '/test/x.test.js', content: 'ok' }] }); }
       return { ok: false, status: 500, text: async () => '' };
     };
     const steps = await win.Engine.Agent.run(SUBSTANTIAL_PROMPT);
     t.ok('the run does not crash when one stage genuinely fails', steps.length > 0);
     t.ok('a real failure reason is surfaced, not swallowed', steps.some((s) => s.kind === 'warn' && /model timed out/.test(s.text)));
-    t.ok('sibling stages (frontend/tests) still ran despite backend failing', win.Engine.FS.exists('/index.html') && win.Engine.FS.exists('/test/x.test.js'));
+    // Policy changed 2026-10-02: stages that DEPEND on the failed backend are
+    // skipped (live, they spent another hour building on a backend that
+    // didn't exist). They are reported as skipped, never run, never written.
+    t.equal('stages that depend on the failed backend are skipped: the model is never asked for them', laterStages.join(','), '');
+    t.ok('the skip says which stage it was waiting on', steps.some((s) => s.kind === 'task-done' && s.taskId === 'T-frontend' && /skipped: depends on "Backend/.test(s.text)));
+    t.ok('no repair rounds are spent when nothing was built', !steps.some((s) => s.kind === 'repair'));
 
     // The intermediate per-stage status must not claim "generated" for a
     // stage whose generate() actually failed — Orchestrator's robustness
@@ -993,8 +999,6 @@ module.exports = async function (t) {
     // timed-out stage was shown as "generated — verifying next").
     const backendTaskDone = steps.find((s) => s.kind === 'task-done' && s.taskId === 'T-backend');
     t.ok('a stage whose generate() failed is reported as failed, not as "generated"', !!backendTaskDone && /stage failed/.test(backendTaskDone.text) && /model timed out/.test(backendTaskDone.text));
-    const frontendTaskDone = steps.find((s) => s.kind === 'task-done' && s.taskId === 'T-frontend');
-    t.ok('a stage that genuinely produced files still says "generated"', !!frontendTaskDone && /generated — verifying next/.test(frontendTaskDone.text));
   }
 
   // ---- NOT desktop: falls through unchanged to the existing round loop ----
@@ -1205,5 +1209,47 @@ module.exports = async function (t) {
     t.ok('the follow-up shows the file that requires them', followUps.length === 1 && /FILE: \/server\.js/.test(followUps[0]));
     t.ok('both modules end up written', win.Engine.FS.read('/app.js') === APP && win.Engine.FS.read('/db/schema.js') === SCHEMA);
     t.ok('the backend stage verifies once nothing is missing', steps.some((s) => s.kind === 'task-done' && s.taskId === 'T-backend' && /verified/.test(s.text || '')));
+  }
+  {
+    // Live 2026-10-02: the backend's single 30-minute answer was cut at the
+    // limit and ALL of it was lost. Local-model answers are now streamed; a
+    // cut keeps files that were complete and drops the one that was cut.
+    const win = load();
+    win.Engine.Proj.create('partial1', 'saas-dashboard');
+    setupDesktopMocks(win, { dependenciesConnected: true, runtimeActionSucceeds: true, buildSucceeds: true, testsSucceed: true });
+    win.Engine.LLM.setConfig({ enabled: true, providerId: 'lmstudio', model: 'qwen', baseUrl: 'http://127.0.0.1:1234', localToken: '' });
+    const PKG = JSON.stringify({ name: 'x', scripts: { start: 'node server.js', test: 'node --test' }, dependencies: { express: '^4' } });
+    const SERVER = "const express = require('express'); const app = express(); app.use(express.static(__dirname)); if (require.main === module) app.listen(process.env.PORT || 3000); module.exports = app;";
+    const sse = (deltas) => deltas.map((d) => 'data: ' + JSON.stringify({ choices: [{ delta: d }] })).join('\n\n') + '\n\n';
+    const toolDelta = (i, name, args) => ({ tool_calls: [{ index: i, id: 'c' + i, function: { name, arguments: args } }] });
+    const seen = { streamed: 0, followUp: '' };
+    win.desktop.ai = {
+      request: async (o) => {
+        const body = JSON.parse(o.body || '{}');
+        if (body.stream) seen.streamed++;
+        const sys = (body.messages.find((m) => m.role === 'system') || {}).content || '';
+        const user = (body.messages.find((m) => m.role === 'user') || {}).content || '';
+        const answered = body.messages.some((m) => m.role === 'tool');
+        const reply = (deltas, partial) => ({ ok: true, status: 200, partial: !!partial, body: sse(deltas) });
+        if (answered) return reply([{ content: 'done' }]);
+        if (/BACKEND ONLY/.test(sys)) {
+          if (/Write ONLY these missing backend files/.test(user)) { seen.followUp = user; return reply([toolDelta(0, 'write_file', JSON.stringify({ path: '/server.js', content: SERVER }))]); }
+          // package.json complete, server.js cut mid-arguments by the time limit
+          const full = JSON.stringify({ path: '/server.js', content: SERVER });
+          return reply([toolDelta(0, 'write_file', JSON.stringify({ path: '/package.json', content: PKG })), toolDelta(1, 'write_file', full.slice(0, 40))], true);
+        }
+        if (/FRONTEND ONLY/.test(sys)) {
+          // text mode, cut inside the second file
+          return reply([{ content: 'FILE: /index.html\n```html\n<!doctype html><title>T</title><h1>T</h1><button>Go</button>\n```\nFILE: /app.js\n```js\nconst half = ' }], true);
+        }
+        return reply([toolDelta(0, 'write_file', JSON.stringify({ path: '/test/x.test.js', content: "require('node:test')('x', () => {});" }))]);
+      }
+    };
+    await win.Engine.Agent.run(SUBSTANTIAL_PROMPT);
+    t.ok('local-model answers are requested as a stream', seen.streamed > 0);
+    t.equal('a complete tool call from a cut answer is kept', win.Engine.FS.read('/package.json'), PKG);
+    t.ok('the cut-off file is not saved half-written; the follow-up asks for it', /\/server\.js/.test(seen.followUp) && win.Engine.FS.read('/server.js') === SERVER);
+    t.ok('text mode: the complete FILE block is kept', /<h1>T<\/h1>/.test(win.Engine.FS.read('/index.html') || ''));
+    t.ok('text mode: the FILE block that was cut is dropped', !win.Engine.FS.exists('/app.js'));
   }
 };

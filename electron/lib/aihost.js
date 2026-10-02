@@ -44,9 +44,18 @@ function allowed(u) {
   return false;
 }
 
+// opts.partialOnTimeout: for a streamed (SSE) model response, hitting the time
+// limit after data has started arriving resolves { ok:true, partial:true,
+// body:<what arrived> } instead of an error, so the caller can keep every
+// file the model had finished. Live 2026-10-02: a 30-minute local-model
+// answer was cut at the limit and all of it was thrown away.
+// timeoutMs is a TOTAL deadline here, not just the socket idle timeout —
+// with streaming, data keeps flowing, so an idle timeout alone never fires.
 function request(opts) {
   const o = opts || {};
-  return new Promise((resolve) => {
+  return new Promise((_resolve) => {
+    let settled = false, deadline = null;
+    const resolve = (v) => { if (!settled) { settled = true; if (deadline) clearTimeout(deadline); _resolve(v); } };
     if (!allowed(o.url)) { resolve({ ok: false, error: 'host not allowed: ' + o.url }); return; }
     let url;
     try { url = new URL(o.url); } catch { resolve({ ok: false, error: 'bad url' }); return; }
@@ -67,6 +76,12 @@ function request(opts) {
         }
       }
       const chunks = []; let n = 0;
+      const partialResult = () => ({
+        ok: true, partial: true, status: res.statusCode,
+        headers: { 'content-type': res.headers['content-type'] || '' },
+        body: Buffer.concat(chunks).toString('utf8').slice(0, MAX_BYTES)
+      });
+      cutPartial = () => { if (o.partialOnTimeout && n > 0) { resolve(partialResult()); res.destroy(); return true; } return false; };
       res.on('data', (c) => { n += c.length; if (n <= MAX_BYTES) chunks.push(c); if (n > MAX_BYTES) { res.destroy(); } });
       res.on('end', () => resolve({
         ok: true, status: res.statusCode,
@@ -74,8 +89,12 @@ function request(opts) {
         body: Buffer.concat(chunks).toString('utf8').slice(0, MAX_BYTES),
         truncated: n > MAX_BYTES
       }));
+      res.on('error', () => { if (!cutPartial()) resolve({ ok: false, error: 'response aborted' }); });
     });
-    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+    let cutPartial = () => false;
+    const onTimeout = () => { if (!cutPartial()) { req.destroy(); resolve({ ok: false, error: 'timeout' }); } };
+    if (o.timeoutMs) deadline = setTimeout(onTimeout, o.timeoutMs);
+    req.on('timeout', onTimeout);
     req.on('error', (e) => resolve({ ok: false, error: String(e && e.code || e && e.message || e) }));
     if (body) req.write(body);
     req.end();

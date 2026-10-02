@@ -698,7 +698,7 @@ function registerIpc() {
     try {
       const o = opts || {};
       if (typeof o.url !== 'string') return fail('url required');
-      const r = await aihost.request({ url: o.url, method: o.method, headers: o.headers, body: o.body, timeoutMs: o.timeoutMs });
+      const r = await aihost.request({ url: o.url, method: o.method, headers: o.headers, body: o.body, timeoutMs: o.timeoutMs, partialOnTimeout: !!o.partialOnTimeout });
       return r;
     } catch (e) { return fail(e); }
   });

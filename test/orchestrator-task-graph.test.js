@@ -171,11 +171,20 @@ module.exports = async function (t) {
     const order = [];
     const tasks = [
       { id: 'T-fails', name: 'Fails', dependsOn: [], generate: () => { order.push('T-fails'); return Promise.reject(new Error('model timed out')); } },
-      { id: 'T-sibling', name: 'Sibling', dependsOn: ['T-fails'], generate: () => { order.push('T-sibling'); return []; } }
+      { id: 'T-dependent', name: 'Dependent', dependsOn: ['T-fails'], generate: () => { order.push('T-dependent'); return []; } },
+      { id: 'T-chained', name: 'Chained', dependsOn: ['T-dependent'], generate: () => { order.push('T-chained'); return []; } },
+      { id: 'T-independent', name: 'Independent', dependsOn: [], generate: () => { order.push('T-independent'); return [{ path: '/ok.txt', content: 'ok' }]; } }
     ];
     const record = await win.Engine.Orchestrator.run({ tasks, deferProof: true, desktop: false });
-    t.equal('a run with a rejecting generator does not throw and still runs the sibling task', order.join(','), 'T-fails,T-sibling');
-    t.equal('both tasks are recorded in the result', record.tasks.length, 2);
+    // Policy changed 2026-10-02: a task that DEPENDS on a failed one is skipped
+    // (live, dependents spent an hour building on a backend that didn't
+    // exist); independent tasks still run, and the run never throws.
+    t.equal('the run does not throw; independent tasks still run; dependents do not', order.join(','), 'T-fails,T-independent');
+    t.equal('all tasks are recorded in the result', record.tasks.length, 4);
+    const dep = record.tasks.find((t2) => t2.id === 'T-dependent');
+    const chained = record.tasks.find((t2) => t2.id === 'T-chained');
+    t.ok('a direct dependent is SKIPPED, naming the failed task', dep.status === 'SKIPPED' && /depends on "Fails", which produced nothing/.test(dep.notes.join(' ')));
+    t.ok('the skip cascades down the chain', chained.status === 'SKIPPED' && /depends on "Dependent", which was skipped/.test(chained.notes.join(' ')));
     const failedTr = record.tasks.find((t2) => t2.id === 'T-fails');
     t.ok('the failing task records the real error reason in its notes', failedTr.notes.some((n) => /generate failed.*model timed out/.test(n)));
   }

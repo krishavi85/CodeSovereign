@@ -363,9 +363,9 @@
       const r = await D.ai.request({
         url: url, method: (init && init.method) || "GET",
         headers: (init && init.headers) || {}, body: (init && init.body) || null,
-        timeoutMs: init && init.timeoutMs
+        timeoutMs: init && init.timeoutMs, partialOnTimeout: !!(init && init.partialOnTimeout)
       });
-      if (r && r.ok) return { ok: r.status >= 200 && r.status < 300, status: r.status, text: async () => r.body };
+      if (r && r.ok) return { ok: r.status >= 200 && r.status < 300, status: r.status, partial: !!r.partial, text: async () => r.body };
       throw new Error((r && r.error) || "request failed");
     }
     const res = await fetch(url, init);
@@ -536,6 +536,40 @@
 
   // The plain HTTP chat-completions path — used directly by complete() for
   // 'direct'/'hermes', and as the fallback target when OpenClaw fails.
+  // Rebuild a chat-completions message from an SSE stream ("data: {…}" lines
+  // with choices[0].delta). With `partial` (the stream was cut at the time
+  // limit) keep only what is provably complete: tool calls whose arguments
+  // parse as JSON, and text up to the start of its last FILE: block (that
+  // block may be cut mid-file — saving it would write a truncated file).
+  function parseChatStream(text, partial) {
+    let content = "";
+    const calls = [];
+    String(text || "").split(/\r?\n/).forEach(function (line) {
+      const m = /^data:\s*(.*)$/.exec(line);
+      if (!m || m[1] === "[DONE]") return;
+      let j; try { j = JSON.parse(m[1]); } catch (_) { return; }
+      const ch = j && j.choices && j.choices[0];
+      if (!ch) return;
+      const d = ch.delta || ch.message || {};
+      if (typeof d.content === "string") content += d.content;
+      (d.tool_calls || []).forEach(function (tc) {
+        const i = tc.index != null ? tc.index : calls.length;
+        const cur = calls[i] || (calls[i] = { id: tc.id, function: { name: "", arguments: "" } });
+        if (tc.id) cur.id = tc.id;
+        if (tc.function && tc.function.name) cur.function.name += tc.function.name;
+        if (tc.function && tc.function.arguments) cur.function.arguments += tc.function.arguments;
+      });
+    });
+    let toolCalls = calls.filter(Boolean);
+    if (partial) {
+      toolCalls = toolCalls.filter(function (c) { try { JSON.parse(c.function.arguments || ""); return !!c.function.name; } catch (_) { return false; } });
+      const heads = []; const re = /^[ \t]*(?:FILE|Path)\s*[:\-]/gim; let h;
+      while ((h = re.exec(content))) heads.push(h.index);
+      if (heads.length) content = content.slice(0, heads[heads.length - 1]);
+    }
+    return { content: content, tool_calls: toolCalls };
+  }
+
   async function completeDirect(prompt, ctx, opts, effectiveCfg) {
     const provider = resolveProvider(effectiveCfg);
     if (!isConfigured(effectiveCfg) && !opts.force) {
@@ -547,6 +581,11 @@
     const systemPrompt = opts.system || buildSystemPrompt(ctx || null);
     const userPrompt = String(prompt || "").trim();
     const req = buildRequest(provider, effectiveCfg, systemPrompt, userPrompt, opts);
+    // opts.allowPartial (the task-graph tool loop): stream the answer from a
+    // local model through the desktop proxy, so a time-limit cut keeps the
+    // files that were already complete instead of losing the whole answer.
+    const streaming = !!(opts.allowPartial && window.desktop && window.desktop.isDesktop && window.desktop.ai && isLocalEndpoint(provider, effectiveCfg));
+    if (streaming) req.body.stream = true;
     // Route through the desktop proxy (httpText) rather than a bare fetch — the
     // renderer CSP blocks localhost + most API hosts directly; the main-process
     // proxy is the vetted bypass. In a plain browser httpText falls back to fetch.
@@ -557,7 +596,8 @@
         method: "POST",
         headers: req.headers,
         body: JSON.stringify(req.body),
-        timeoutMs: opts.timeoutMs || 300000
+        timeoutMs: opts.timeoutMs || 300000,
+        partialOnTimeout: streaming
       });
     };
     let res = await send();
@@ -578,7 +618,13 @@
       throw new Error("HTTP " + res.status + " " + (text || "").slice(0, 240));
     }
     let data = null;
-    try { data = JSON.parse(text); } catch (_) { data = null; }
+    const isStream = streaming && /^\s*(data:|:)/.test(text || "");
+    if (isStream) {
+      const msg = parseChatStream(text, res.partial);
+      data = { choices: [{ message: { content: msg.content, tool_calls: msg.tool_calls } }], partial: !!res.partial };
+    } else {
+      try { data = JSON.parse(text); } catch (_) { data = null; }
+    }
     const message = data && data.choices && data.choices[0] && data.choices[0].message;
     const content = (message && message.content) || text;
     // Standard OpenAI tool-calls shape: message.tool_calls = [{id, function:
@@ -589,7 +635,7 @@
     const toolCalls = (message && Array.isArray(message.tool_calls) ? message.tool_calls : [])
       .filter(function (c) { return c && c.function && typeof c.function.name === "string"; })
       .map(function (c) { return { id: c.id, name: c.function.name, arguments: c.function.arguments }; });
-    return { raw: data, content: String(content || ""), model: req.body.model || effectiveCfg.model || "", toolCalls: toolCalls };
+    return { raw: data, content: String((isStream ? (message && message.content) : content) || ""), model: req.body.model || effectiveCfg.model || "", toolCalls: toolCalls, partial: !!(isStream && res.partial) };
   }
 
   // executionBackend === 'openclaw': route through the OpenClaw agent
@@ -2100,6 +2146,7 @@
         return complete(userPrompt, null, {
           system: systemPrompt, runState: runState, json: false,
           openClawTimeoutMs: 180000, timeoutMs: localModel ? 1800000 : 600000,
+          allowPartial: true, // keep complete files if the time limit cuts the answer
           tools: runState && runState.toolsUnsupported ? undefined : [WRITE_FILE_TOOL],
           messages: history
         }).then(onResponse, function (err) {
@@ -2141,6 +2188,10 @@
             if (r.progressed) progressed = true;
             history.push({ role: "tool", tool_call_id: c.id, content: r.message });
           });
+          // The answer was cut at the time limit: keep what was salvaged and
+          // end the stage rather than start another equally long turn (the
+          // backend stage then asks only for files that are still missing).
+          if (res.partial) return finish();
           // A rejected write gets ONE chance to self-correct; two turns in a
           // row with nothing new written means the model is looping.
           stalls = progressed ? 0 : stalls + 1;
@@ -2925,6 +2976,7 @@
                   : tr.status === "GENERATED" && !wroteAny && genErr ? "stage failed (" + genErr.replace(/^generate failed: /, "") + ") — will not verify"
                   : tr.status === "GENERATED" ? "generated — verifying next"
                   : tr.status === "FAILED" ? "did not verify"
+                  : tr.status === "SKIPPED" ? ((tr.notes || []).filter(function (n) { return /^skipped/.test(n || ""); })[0] || "skipped")
                   : "blocked";
                 steps.push({ kind: "task-done", text: tr.name + ": " + verb, taskId: tr.id, taskName: tr.name, status: tr.status });
                 onStep && onStep(steps[steps.length - 1]);
@@ -2945,6 +2997,9 @@
               const integ = (record.tasks || []).find(function (t2) { return t2.id === "T-integration"; });
               if (!integ || integ.status === "COMPLETE" || integ.status === "ALREADY_MET") return record;
               if (round > MAX_REPAIR_ROUNDS || (window.S && window.S.agentStopped)) return record;
+              // Nothing was built (every stage failed or was skipped): there is
+              // no app to repair, and a repair round can't rebuild it in one go.
+              if (!(record.tasks || []).some(function (t2) { return !t2.genFailed && t2.status !== "SKIPPED" && (t2.notes || []).some(function (n) { return /^wrote /.test(n); }); })) return record;
               const appPaths = [];
               (record.tasks || []).forEach(function (t2) {
                 (t2.notes || []).forEach(function (n) {
@@ -3042,11 +3097,11 @@
               // as much "never actually verified" as FAILED — treating only
               // FAILED as failure would let a run report done while some
               // task silently never even ran.
-              const failed = (record.tasks || []).filter(function (t2) { return t2.status === "FAILED" || t2.status === "BLOCKED"; });
+              const failed = (record.tasks || []).filter(function (t2) { return t2.status === "FAILED" || t2.status === "BLOCKED" || t2.status === "SKIPPED"; });
               if (failed.length) {
                 const reasons = failed.map(function (t2) {
                   const genErr = (t2.notes || []).find(function (n) { return /^generate failed/.test(n); });
-                  return t2.name + (genErr ? " (" + genErr.replace(/^generate failed: /, "") + ")" : "");
+                  return t2.name + (genErr ? " (" + genErr.replace(/^generate failed: /, "") + ")" : t2.status === "SKIPPED" ? " (skipped)" : "");
                 }).join(", ");
                 steps.push({ kind: "warn", text: "Built via task graph (" + record.summary + "), but " + reasons + " did not verify — see .sovereign/orchestrator-run.json." });
               } else {

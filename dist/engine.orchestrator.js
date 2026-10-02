@@ -451,10 +451,25 @@
     var onTaskDone = typeof opts.onTaskDone === 'function' ? opts.onTaskDone : null;
     var notifyDone = function (tr, task) { if (onTaskDone) { try { onTaskDone(tr, task); } catch (_) {} } };
 
+    // A task whose dependency produced nothing is skipped, not run: live
+    // 2026-10-02, the backend's only request timed out, and the frontend,
+    // tests and integration stages then spent another hour building on a
+    // backend that didn't exist.
+    var trById = {};
+    var depFailed = function (d) { return d && (d.genFailed || d.status === 'SKIPPED' || d.status === 'BLOCKED'); };
+
     tasks.forEach(function (task) {
       chain = chain.then(function () {
         var tr = { id: task.id || task.name, name: task.name || task.id, status: 'PENDING', cycles: 0, notes: [] };
         record.tasks.push(tr);
+        trById[tr.id] = tr;
+        var badDep = (task.dependsOn || []).map(function (d) { return trById[d]; }).filter(depFailed)[0];
+        if (badDep) {
+          tr.status = 'SKIPPED';
+          tr.notes.push('skipped: depends on "' + badDep.name + '", which ' + (badDep.status === 'SKIPPED' ? 'was skipped' : 'produced nothing'));
+          notifyDone(tr, task);
+          return;
+        }
         if (onTaskStart) { try { onTaskStart(tr, task); } catch (_) {} }
         if (!allows('generate') || !allows('write')) {
           tr.status = 'BLOCKED';
@@ -477,9 +492,11 @@
               // direction: report the real failure honestly, don't let it
               // silently abort sibling tasks that would have succeeded.
               tr.notes.push('generate failed: ' + String((err && err.message) || err));
+              tr.genFailed = true;
               return [];
             })
             .then(function (files) {
+              if (tr.genFailed && (files || []).length) tr.genFailed = false; // a later cycle produced files
               (files || []).forEach(function (f) {
                 if (f && typeof f.path === 'string' && typeof f.content === 'string') {
                   FS.write(f.path.charAt(0) === '/' ? f.path : '/' + f.path, f.content);
@@ -515,7 +532,10 @@
 
     // one full proof pass (fresh dev server, real npm gates, one crawl), then
     // verify every deferred task against it.
-    return chain.then(function () { return reproof(desktop, { evidence: true, observe: true }); }).then(function () {
+    // Nothing to prove only when EVERY task failed to generate, was skipped or
+    // blocked. ALREADY_MET (re-verifying an existing app) still gets the pass.
+    var producedAny = function () { return !record.tasks.length || record.tasks.some(function (t) { return !(t.genFailed || t.status === 'SKIPPED' || t.status === 'BLOCKED'); }); };
+    return chain.then(function () { return producedAny() ? reproof(desktop, { evidence: true, observe: true }) : null; }).then(function () {
       record.tasks.forEach(function (tr) {
         if (tr.status === 'GENERATED') {
           var task = tasks.filter(function (x) { return x._tr === tr; })[0];
