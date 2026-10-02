@@ -47,4 +47,10 @@ module.exports = async function (t) {
 
   t.ok('the real shell process exited cleanly', exitInfo.exitCode === 0 || exitInfo.exitCode === null);
   t.ok('the terminal echoed back the marker we sent it', /TERM_MANAGER_TEST_MARKER/.test(out));
+  // Live 2026-10-02: an exited shell kept node-pty's output worker alive, and
+  // the whole test run never exited after printing its results.
+  // (node-pty flushes output for ~1s before stopping the worker)
+  const ports = () => process._getActiveHandles().filter((h) => h && h.constructor && h.constructor.name === 'MessagePort').length;
+  for (let i = 0; i < 25 && ports(); i++) await new Promise((r) => setTimeout(r, 200));
+  t.equal('a shell that exits on its own leaves no pty worker behind', ports(), 0);
 };

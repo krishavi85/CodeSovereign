@@ -188,4 +188,19 @@ module.exports = async function (t) {
     const failedTr = record.tasks.find((t2) => t2.id === 'T-fails');
     t.ok('the failing task records the real error reason in its notes', failedTr.notes.some((n) => /generate failed.*model timed out/.test(n)));
   }
+
+  // ---- runsAfter orders without skipping: live 2026-10-02 the tests stage
+  // produced nothing and the end-to-end check was skipped with it. ----
+  {
+    const win = load();
+    const order = [];
+    const tasks = [
+      { id: 'T-check', name: 'Check', dependsOn: ['T-build'], runsAfter: ['T-tests'], generate: () => { order.push('T-check'); return []; } },
+      { id: 'T-tests', name: 'Tests', dependsOn: ['T-build'], generate: () => { order.push('T-tests'); return Promise.reject(new Error('no file plan')); } },
+      { id: 'T-build', name: 'Build', dependsOn: [], generate: () => { order.push('T-build'); return [{ path: '/a.txt', content: 'a' }]; } }
+    ];
+    const record = await win.Engine.Orchestrator.run({ tasks, deferProof: true, desktop: false });
+    t.equal('runsAfter is honored in the order, even when listed first', order.join(','), 'T-build,T-tests,T-check');
+    t.ok('a failed runsAfter task does not skip the task waiting on it', record.tasks.find((x) => x.id === 'T-check').status !== 'SKIPPED');
+  }
 };

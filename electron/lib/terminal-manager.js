@@ -97,6 +97,25 @@ const terminals = new Map(); // id -> { pty, onData, onExit }
 
 function ptyAvailable() { return !!pty; }
 
+// A shell that exits on its own (`exit`) still holds node-pty 1.1's ConPTY
+// input pipe and output worker thread on Windows — one leaked worker per
+// closed terminal, and it kept the test runner from exiting. kill() would
+// free them but first forks a helper to list the (now gone) console's
+// processes, which crashes with "AttachConsole failed"; free them directly.
+function releaseExited(term) {
+  const a = term && term._agent;
+  try {
+    if (a && a._useConpty && !a._useConptyDll && a._conoutSocketWorker) {
+      try { a._ptyNative.kill(a._pty, a._useConptyDll); } catch (_) {}
+      try { a._conoutSocketWorker.dispose(); } catch (_) {}
+      try { a._inSocket && a._inSocket.destroy(); } catch (_) {}
+      try { a._outSocket && a._outSocket.destroy(); } catch (_) {}
+    } else {
+      term.kill();
+    }
+  } catch (_) {}
+}
+
 async function create(id, opts, onData, onExit) {
   if (!pty) return { ok: false, error: 'node-pty is not available in this build' };
   opts = opts || {};
@@ -126,6 +145,7 @@ async function create(id, opts, onData, onExit) {
   term.onData((data) => { try { onData(data); } catch (_) {} });
   term.onExit(({ exitCode, signal }) => {
     terminals.delete(id);
+    setImmediate(() => releaseExited(term));
     try { onExit({ exitCode: exitCode == null ? null : exitCode, signal: signal == null ? null : signal }); } catch (_) {}
   });
 

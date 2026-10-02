@@ -2530,7 +2530,10 @@
     tasks.push({
       id: "T-integration",
       name: "Integration: frontend/backend wired end-to-end",
-      dependsOn: ["T-frontend", "T-tests"],
+      // The new tests are wanted first but not required: without them the
+      // end-to-end check still runs the app (and the backend's own tests).
+      dependsOn: ["T-frontend"],
+      runsAfter: ["T-tests"],
       // A pure-verification task needs SOME generator or resolveGenerator()
       // marks it BLOCKED before check() ever runs — and BLOCKED must not
       // be mistaken for success by the caller below.

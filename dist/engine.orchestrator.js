@@ -393,7 +393,8 @@
       if (visited[id]) return;
       if (inStack[id]) { acyclic = false; return; }
       inStack[id] = true;
-      (t.dependsOn || []).forEach(function (depId) {
+      // runsAfter: ordering only — see the skip rule in run().
+      (t.dependsOn || []).concat(t.runsAfter || []).forEach(function (depId) {
         var dep = byId[depId];
         if (dep) visit(dep, tasks.indexOf(dep));
       });
@@ -454,7 +455,9 @@
     // A task whose dependency produced nothing is skipped, not run: live
     // 2026-10-02, the backend's only request timed out, and the frontend,
     // tests and integration stages then spent another hour building on a
-    // backend that didn't exist.
+    // backend that didn't exist. Only dependsOn skips; a task listed in
+    // runsAfter is waited for but may fail (live: the tests stage produced
+    // nothing and the end-to-end check of a built app was skipped with it).
     var trById = {};
     var depFailed = function (d) { return d && (d.genFailed || d.status === 'SKIPPED' || d.status === 'BLOCKED'); };
 
