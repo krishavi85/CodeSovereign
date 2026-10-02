@@ -2328,6 +2328,45 @@
     return missing;
   }
 
+  // Local scripts/stylesheets the written HTML loads but nobody wrote. Live
+  // run 2026-10-02 (Qwen): the frontend was cut at the time limit inside
+  // /client.js; index.html and styles.css were kept, the page loaded a
+  // script that didn't exist, and the stage still said "generated".
+  // `exists(path)` lets the caller count files from other stages too.
+  function missingPageAssets(files, exists) {
+    const have = {};
+    (files || []).forEach(function (f) { have[normalizePath(f.path)] = true; });
+    const missing = [];
+    (files || []).forEach(function (f) {
+      const p = normalizePath(f.path);
+      if (!/\.html?$/.test(p)) return;
+      const dir = p.slice(0, p.lastIndexOf("/") + 1) || "/";
+      const src = String(f.content || "");
+      const refs = [];
+      let m;
+      const scriptRe = /<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']/gi;
+      while ((m = scriptRe.exec(src))) refs.push(m[1]);
+      const linkRe = /<link\b[^>]*>/gi;
+      while ((m = linkRe.exec(src))) {
+        if (!/\brel\s*=\s*["']?stylesheet/i.test(m[0])) continue;
+        const h = /\bhref\s*=\s*["']([^"']+)["']/i.exec(m[0]);
+        if (h) refs.push(h[1]);
+      }
+      refs.forEach(function (ref) {
+        if (/^([a-z][\w+.-]*:|\/\/|#|data:)/i.test(ref)) return; // external / inline
+        const clean = ref.split(/[?#]/)[0];
+        if (!clean) return;
+        const parts = (clean.charAt(0) === "/" ? clean : dir + clean).split("/");
+        const out = [];
+        parts.forEach(function (seg) { if (seg === "..") out.pop(); else if (seg && seg !== ".") out.push(seg); });
+        const want = "/" + out.join("/");
+        if (have[want] || (exists && exists(want))) return;
+        if (missing.indexOf(want) < 0) missing.push(want);
+      });
+    });
+    return missing;
+  }
+
   function buildLLMTaskGraph(prompt, contract, runState) {
     const st = contract.supportedStack || {};
     const entityNames = (contract.entities || []).map(function (e) { return e.name; }).join(", ") || "the app's data";
@@ -2432,14 +2471,43 @@
         // and with no data yet the runtime observer found 0 controls to
         // exercise — nothing it could verify as actually working.
         const sys = baseRules + "\n\nYOUR JOB — FRONTEND ONLY: build index.html, styles, and client-side JS. The backend below ALREADY EXISTS and is real — call its actual endpoints exactly as written; do not invent different routes. Ship a distinctive, polished, dark-themed UI with real interactivity, no 'Simple Notepad' placeholders.\n" +
-          "The page must be usable from an EMPTY start: put real <form>s, <input>s and <button>s for creating, listing and deleting every entity directly in index.html (not only rendered after data loads), and wire each one to the matching endpoint.\n\nCURRENT BACKEND FILES:\n\n" + llmTaskFilesBlock(backendPaths);
+          "The page must be usable from an EMPTY start: put real <form>s, <input>s and <button>s for creating, listing and deleting every entity directly in index.html (not only rendered after data loads), and wire each one to the matching endpoint.\n" +
+          // Live 2026-10-02 (Qwen on CPU): one ~29k-character index.html with
+          // inline CSS+JS took longer than the 30-minute request limit; cut
+          // mid-file, nothing could be kept and the stage started over. Three
+          // smaller files finish sooner, and a cut keeps the completed ones.
+          "Write THREE separate files, each with its own write_file call, in this order: /index.html (markup only, with <link rel=\"stylesheet\" href=\"/styles.css\"> and <script src=\"/app.js\"></script>), then /styles.css, then /app.js (all client-side JS). Do not inline the CSS or JS in index.html.\n\nCURRENT BACKEND FILES:\n\n" + llmTaskFilesBlock(backendPaths);
+        const FSx = window.Engine && window.Engine.FS;
+        const onDisk = function (p) { return !!(FSx && FSx.exists && FSx.exists(p)); };
         return llmTaskComplete("Build the frontend for: " + prompt, sys, runState, backendPaths).then(function (files) {
+          files = files || [];
+          // A cut answer can keep index.html but lose a file it loads — ask
+          // once more for exactly those files.
+          const missing = missingPageAssets(files, onDisk);
+          if (missing.length) {
+            return llmTaskComplete(
+              "Write ONLY these missing frontend files: " + missing.join(", ") + ". " +
+              "index.html already loads them, but they were never written (the previous attempt was cut off). Wire every form and button in the existing index.html below to the backend endpoints.\n\nEXISTING FRONTEND FILES:\n\n" +
+              files.filter(function (f) { return /\.(html?|js)$/.test(String(f.path)); }).map(function (f) { return "FILE: " + f.path + "\n```\n" + String(f.content || "").slice(0, 6000) + "\n```"; }).join("\n\n") +
+              "\n\nBuild the frontend for: " + prompt,
+              sys, runState, backendPaths.concat(files.map(function (f) { return f.path; }))
+            ).then(function (more) { return files.concat(more || []); }, function () { return files; });
+          }
+          return files;
+        }).then(function (files) {
           frontendDone = true;
           frontendPaths = (files || []).map(function (f) { return f.path; });
           return files;
         });
       },
-      check: function () { return frontendDone; }
+      // Done only when every local script/stylesheet the page loads exists.
+      check: function () {
+        if (!frontendDone) return false;
+        const FSx = window.Engine && window.Engine.FS;
+        if (!FSx || !FSx.exists) return true;
+        const mine = frontendPaths.filter(function (p) { return FSx.exists(p); }).map(function (p) { return { path: p, content: FSx.read(p) || "" }; });
+        return missingPageAssets(mine, function (p) { return FSx.exists(p); }).length === 0;
+      }
     });
     tasks.push({
       id: "T-tests",

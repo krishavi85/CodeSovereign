@@ -143,6 +143,7 @@ module.exports = async function (t) {
     t.ok('the backend prompt requires listening only when run directly, so tests can import the app', backendSys.includes('require.main === module') && backendSys.includes('module.exports = app'));
     const frontendSys = requestsSeen.find((s) => /FRONTEND ONLY/.test(s));
     t.ok('the frontend prompt requires real forms/buttons in index.html from an empty start (the observer needs controls to exercise)', /usable from an EMPTY start/.test(frontendSys) && /<form>s, <input>s and <button>s/.test(frontendSys));
+    t.ok('the frontend prompt asks for three separate files (a cut answer keeps the finished ones)', /Write THREE separate files/.test(frontendSys) && /\/styles\.css/.test(frontendSys) && /\/app\.js/.test(frontendSys) && /Do not inline the CSS or JS/.test(frontendSys));
     const testsSys = requestsSeen.find((s) => /TESTS ONLY/.test(s));
     t.ok('the tests prompt allows only node built-ins (nothing else is installed for tests)', /Use ONLY Node built-ins/.test(testsSys) && /Do NOT use jest, mocha, chai, supertest/.test(testsSys));
     t.ok('the tests prompt gives the correct relative import path from /test/', testsSys.includes("require('../server')"));
@@ -1251,5 +1252,49 @@ module.exports = async function (t) {
     t.ok('the cut-off file is not saved half-written; the follow-up asks for it', /\/server\.js/.test(seen.followUp) && win.Engine.FS.read('/server.js') === SERVER);
     t.ok('text mode: the complete FILE block is kept', /<h1>T<\/h1>/.test(win.Engine.FS.read('/index.html') || ''));
     t.ok('text mode: the FILE block that was cut is dropped', !win.Engine.FS.exists('/app.js'));
+  }
+  {
+    // Live 2026-10-02 (Qwen): the frontend was cut inside /client.js; the kept
+    // index.html loaded a script that didn't exist and the stage still said
+    // "generated". The stage now asks once more for exactly the missing file.
+    const win = load();
+    win.Engine.Proj.create('partial2', 'saas-dashboard');
+    setupDesktopMocks(win, { dependenciesConnected: true, runtimeActionSucceeds: true, buildSucceeds: true, testsSucceed: true });
+    win.Engine.LLM.setConfig({ enabled: true, providerId: 'lmstudio', model: 'qwen', baseUrl: 'http://127.0.0.1:1234', localToken: '' });
+    const PKG = JSON.stringify({ name: 'x', scripts: { start: 'node server.js', test: 'node --test' }, dependencies: { express: '^4' } });
+    const SERVER = "const express = require('express'); const app = express(); app.use(express.static(__dirname)); if (require.main === module) app.listen(process.env.PORT || 3000); module.exports = app;";
+    const PAGE = '<!doctype html><html lang="en"><head><title>T</title><link rel="stylesheet" href="/styles.css"><link rel="icon" href="/favicon.ico"><script src="https://cdn.example.com/x.js"></script></head><body><form id="f"><input name="t"><button>Add</button></form><script src="/client.js"></script></body></html>';
+    const CLIENT = "document.getElementById('f').addEventListener('submit', function (e) { e.preventDefault(); fetch('/api/tasks', { method: 'POST' }); });";
+    const sse = (deltas) => deltas.map((d) => 'data: ' + JSON.stringify({ choices: [{ delta: d }] })).join('\n\n') + '\n\n';
+    const toolDelta = (i, name, args) => ({ tool_calls: [{ index: i, id: 'c' + i, function: { name, arguments: args } }] });
+    const seen = { followUp: '' };
+    win.desktop.ai = {
+      request: async (o) => {
+        const body = JSON.parse(o.body || '{}');
+        const sys = (body.messages.find((m) => m.role === 'system') || {}).content || '';
+        const user = (body.messages.find((m) => m.role === 'user') || {}).content || '';
+        const answered = body.messages.some((m) => m.role === 'tool');
+        const reply = (deltas, partial) => ({ ok: true, status: 200, partial: !!partial, body: sse(deltas) });
+        if (answered) return reply([{ content: 'done' }]);
+        if (/BACKEND ONLY/.test(sys)) {
+          return reply([toolDelta(0, 'write_file', JSON.stringify({ path: '/package.json', content: PKG })), toolDelta(1, 'write_file', JSON.stringify({ path: '/server.js', content: SERVER }))]);
+        }
+        if (/FRONTEND ONLY/.test(sys)) {
+          if (/Write ONLY these missing frontend files/.test(user)) { seen.followUp = user; return reply([toolDelta(0, 'write_file', JSON.stringify({ path: '/client.js', content: CLIENT }))]); }
+          const cut = JSON.stringify({ path: '/client.js', content: CLIENT });
+          return reply([
+            toolDelta(0, 'write_file', JSON.stringify({ path: '/index.html', content: PAGE })),
+            toolDelta(1, 'write_file', JSON.stringify({ path: '/styles.css', content: 'body{background:#111}' })),
+            toolDelta(2, 'write_file', cut.slice(0, 30))
+          ], true);
+        }
+        return reply([toolDelta(0, 'write_file', JSON.stringify({ path: '/test/x.test.js', content: "require('node:test')('x', () => {});" }))]);
+      }
+    };
+    await win.Engine.Agent.run(SUBSTANTIAL_PROMPT);
+    t.ok('the frontend follow-up asks for exactly the cut script (not the CDN script, icon or written stylesheet)', /Write ONLY these missing frontend files: \/client\.js\. /.test(seen.followUp));
+    t.ok('the follow-up shows the kept index.html so the script matches its forms', /<form id="f">/.test(seen.followUp));
+    t.equal('the missing script is written', win.Engine.FS.read('/client.js'), CLIENT);
+    t.equal('the kept page is not rewritten', win.Engine.FS.read('/index.html'), PAGE);
   }
 };
