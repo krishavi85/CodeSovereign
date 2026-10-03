@@ -28,6 +28,50 @@ const actionLog = [];                          // everything the observer did th
 const DESTRUCTIVE = /\b(delete|remove|destroy|drop|erase|wipe|purge|deactivate|disable|revoke|cancel subscription|unsubscribe|pay|buy|purchase|checkout|order|charge|withdraw|transfer|send|submit|publish|deploy|release|confirm|approve|invite|share|archive)\b/i;
 const MUTATING_TAGS = new Set(['form']);
 
+// What the crawl does with one control:
+//   'skip'  — not activated
+//   'click' — clicked as is
+//   'fill'  — the form's empty fields get sample values first, then click
+// 'verify' is for an app the build itself started from the project folder:
+// it submits creating forms ("Add task") with sample data, which observe mode
+// never does — live 2026-10-02, a fresh todo app's only control on an empty
+// page was its Add form, so a working app could never pass the runtime check.
+// A destructive-sounding name is skipped in every mode but 'interactive'.
+function planControl(c, mode) {
+  const named = DESTRUCTIVE.test(c.name || '');
+  const formy = c.type === 'submit' || (c.inForm && c.tag === 'button' && c.type !== 'button');
+  if (mode === 'interactive') return formy ? 'fill' : 'click';
+  if (named) return 'skip';
+  if (formy) return mode === 'verify' ? 'fill' : 'skip';
+  return 'click';
+}
+
+// Page-side: give the empty fields of the control's form plausible values.
+const FILL_FORM_JS = (i) => `(() => {
+  const el = document.querySelector('[data-cs-obs="${i}"]');
+  const form = el && (el.form || el.closest('form'));
+  if (!form) return 0;
+  const today = new Date().toISOString().slice(0, 10);
+  const sample = { email: 'test@example.com', url: 'https://example.com', tel: '5550100', date: today,
+    'datetime-local': today + 'T12:00', time: '12:00', month: today.slice(0, 7), week: '', color: '#3366ff',
+    password: 'Test-pass-123', number: '1', range: '' };
+  let n = 0;
+  form.querySelectorAll('input, textarea, select').forEach((f) => {
+    const type = (f.getAttribute('type') || f.tagName).toLowerCase();
+    if (f.disabled || f.readOnly || /^(hidden|submit|button|reset|file|image|checkbox|radio)$/.test(type) || f.value) return;
+    let v;
+    if (f.tagName === 'SELECT') { const o = Array.from(f.options).find((x) => x.value); v = o ? o.value : ''; }
+    else if (type === 'number' || type === 'range') v = f.min || '1';
+    else v = type in sample ? sample[type] : 'Test item';
+    if (!v) return;
+    f.value = v;
+    f.dispatchEvent(new Event('input', { bubbles: true }));
+    f.dispatchEvent(new Event('change', { bubbles: true }));
+    n++;
+  });
+  return n;
+})()`;
+
 function assertAllowedUrl(target) {
   let u;
   try { u = new url.URL(target); } catch { throw new Error('Invalid URL'); }
@@ -167,7 +211,7 @@ async function screenshot() {
 async function crawl(opts = {}) {
   const w = ensureWin();
   const max = Math.min(opts.max || 40, 120);
-  const mode = opts.mode === 'interactive' ? 'interactive' : 'observe';
+  const mode = opts.mode === 'interactive' || opts.mode === 'verify' ? opts.mode : 'observe';
   actionLog.push({ t: Date.now(), kind: 'crawl-start', mode, url: w.webContents.getURL() });
 
   const controls = await w.webContents.executeJavaScript(`(() => {
@@ -200,19 +244,22 @@ async function crawl(opts = {}) {
       trace.push({ control: c, status: c.disabled ? 'DISABLED' : 'HIDDEN', effects: {} });
       continue;
     }
-    const risky = DESTRUCTIVE.test(c.name) || c.type === 'submit' || (c.inForm && c.tag === 'button' && c.type !== 'button');
-    if (risky && mode === 'observe') {
+    const plan = planControl(c, mode);
+    const risky = plan !== 'click';
+    if (plan === 'skip') {
       actionLog.push({ t: Date.now(), kind: 'skipped-destructive', control: c.name });
-      trace.push({ control: c, status: 'SKIPPED', reason: 'destructive/mutating — not activated in observe mode', effects: {} });
+      trace.push({ control: c, status: 'SKIPPED', reason: 'destructive/mutating — not activated in ' + mode + ' mode', effects: {} });
       continue;
     }
-    actionLog.push({ t: Date.now(), kind: 'activate', control: c.name, risky });
+    actionLog.push({ t: Date.now(), kind: plan === 'fill' ? 'fill-and-submit' : 'activate', control: c.name, risky });
     // Let the previous control's in-flight async (a pending fetch, a debounced
     // render) drain and be discarded before this control's window opens, so an
     // effect is attributed to the control that actually caused it. Wait for the
     // page to actually go quiet (no in-flight fetch, no mutations) rather than a
     // fixed sleep that is too short on a fast host and racy on a slow one.
     await quietWait(250, 3000);
+    // Fill before the counters reset, so typing isn't counted as the effect.
+    if (plan === 'fill') { try { await w.webContents.executeJavaScript(FILL_FORM_JS(c.i), true); } catch (_) { /* page changed */ } }
     await reset();
     await wait(120);
     await reset();
@@ -367,4 +414,4 @@ function stop() {
   obsWin = null;
 }
 
-module.exports = { load, read, reset, screenshot, crawl, visualProbe, stop, assertAllowedUrl, DESTRUCTIVE };
+module.exports = { load, read, reset, screenshot, crawl, visualProbe, stop, assertAllowedUrl, DESTRUCTIVE, planControl, FILL_FORM_JS };

@@ -32,6 +32,47 @@ module.exports = async function (t) {
     for (const label of ['View details', 'Open settings', 'Next page', 'Refresh', 'Search']) {
       t.ok('safe: "' + label + '"', !D.test(label));
     }
+
+    // planControl: observe never submits a form; verify (the build's own
+    // freshly started app) fills and submits creating forms; destructive
+    // names are skipped in both. Live 2026-10-02: a todo app's only control
+    // on an empty page was "+ Add Task", so it could never pass.
+    const P = observer.planControl;
+    const add = { name: '+ Add Task', tag: 'button', type: 'submit', inForm: true };
+    const implicitSubmit = { name: 'Save', tag: 'button', type: '', inForm: true };
+    const del = { name: 'Delete', tag: 'button', type: 'button', inForm: false };
+    const sendForm = { name: 'Send message', tag: 'button', type: 'submit', inForm: true };
+    const refresh = { name: 'Refresh', tag: 'button', type: 'button', inForm: false };
+    t.equal('observe: a creating form is not submitted', P(add, 'observe'), 'skip');
+    t.equal('verify: a creating form is filled and submitted', P(add, 'verify'), 'fill');
+    t.equal('verify: a button that submits its form implicitly counts as a form submit', P(implicitSubmit, 'verify'), 'fill');
+    t.equal('verify: a destructive-named button is still skipped', P(del, 'verify'), 'skip');
+    t.equal('verify: a destructive-named form submit is still skipped', P(sendForm, 'verify'), 'skip');
+    t.equal('verify/observe: a plain button is clicked', P(refresh, 'verify') + '/' + P(refresh, 'observe'), 'click/click');
+    t.equal('interactive (user confirmed): destructive controls are clicked', P(del, 'interactive'), 'click');
+
+    // FILL_FORM_JS on a minimal fake page
+    const vm = require('vm');
+    const field = (tag, type, extra) => Object.assign({ tagName: tag, value: '', disabled: false, readOnly: false, events: [],
+      getAttribute: (k) => (k === 'type' ? type : null), dispatchEvent(e) { this.events.push(e.type); } }, extra || {});
+    const fields = {
+      title: field('INPUT', 'text'), due: field('INPUT', 'date'), email: field('INPUT', 'email'),
+      count: field('INPUT', 'number', { min: '3' }), hidden: field('INPUT', 'hidden'), done: field('INPUT', 'checkbox'),
+      prefilled: field('INPUT', 'text', { value: 'keep me' }), notes: field('TEXTAREA', null),
+      pick: field('SELECT', null, { options: [{ value: '' }, { value: 'high' }] })
+    };
+    const form = { querySelectorAll: () => Object.values(fields) };
+    const btn = { form };
+    const ctx = vm.createContext({ document: { querySelector: (s) => (s === '[data-cs-obs="4"]' ? btn : null) }, Event: function (type) { this.type = type; }, Date });
+    const filled = vm.runInContext(observer.FILL_FORM_JS(4), ctx);
+    t.equal('fill: text fields get a sample value', fields.title.value, 'Test item');
+    t.ok('fill: date fields get today (ISO)', /^\d{4}-\d{2}-\d{2}$/.test(fields.due.value));
+    t.equal('fill: email fields get an email', fields.email.value, 'test@example.com');
+    t.equal('fill: number fields respect min', fields.count.value, '3');
+    t.equal('fill: textarea and select are filled', fields.notes.value + '|' + fields.pick.value, 'Test item|high');
+    t.ok('fill: hidden, checkbox and already-filled fields are left alone', fields.hidden.value === '' && fields.done.value === '' && fields.prefilled.value === 'keep me');
+    t.ok('fill: frameworks hear input and change events', fields.title.events.join() === 'input,change');
+    t.equal('fill: reports how many fields it filled', filled, 6);
   }
 
   // ---- engine.sovereign redaction ----

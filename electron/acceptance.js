@@ -53,6 +53,7 @@ function check(name, pass, detail) {
 function driverSource() {
   return `(async () => {
     const R = { stages: {}, files: {}, diagnostics: {}, errors: [] };
+    const DESTRUCTIVE = new RegExp(${JSON.stringify(observer.DESTRUCTIVE.source)}, 'i');
     const S = window.Engine.Sovereign;
     const FS = window.Engine.FS;
     const sov = (p) => { try { return FS.read('/.sovereign/' + p); } catch (_) { return null; } };
@@ -128,6 +129,10 @@ function driverSource() {
           add:     obsByName['add task'] || null
         },
         skippedDestructive: (tr.actionLog || []).filter((a) => a.kind === 'skipped-destructive').map((a) => a.control),
+        // Verify mode (the run started this app itself): creating forms are
+        // filled with sample data and submitted; destructive names never are.
+        submittedForms: (tr.actionLog || []).filter((a) => a.kind === 'fill-and-submit').map((a) => a.control),
+        destructiveActivated: (tr.actionLog || []).filter((a) => (a.kind === 'activate' || a.kind === 'fill-and-submit') && DESTRUCTIVE.test(a.control || '')).map((a) => a.control),
         consoleErrors: (tr.consoleErrors || []).length,
         blocked: (tr.blockedRequests || []).length
       };
@@ -204,7 +209,7 @@ function driverSource() {
         executionReal: g.testsPass === true && g.buildPasses === true && g.lintClean === true,
         runtimeObserved: obs.ok && obs.controlsExercised >= 3
           && (obs.byStatus.BROKEN || 0) >= 1 && (obs.byStatus.MOCK || 0) >= 1,
-        boundariesHeld: obs.skippedDestructive.length >= 1 && obs.blocked === 0,
+        boundariesHeld: obs.destructiveActivated.length === 0 && obs.blocked === 0,
         repairExecuted: !rep.rolledBack && patchesApplied > 0,
         retestReal: R.stages.retest.gates.testsPass === true && R.stages.retest.gates.buildPasses === true,
         evidenceRegenerated: !!a2.ok && !!fp2 && !!fp1 && 'driftDetected' in ds2,
@@ -421,8 +426,14 @@ async function run() {
       check('OBSERVE: the mock controls were seen doing nothing (Export/Help -> MOCK)',
         st.observe.observed.export === 'MOCK' && st.observe.observed.help === 'MOCK',
         'export=' + st.observe.observed.export + ' help=' + st.observe.observed.help);
-      check('OBSERVE: the mutating control was NOT auto-activated (Add task skipped)',
-        st.observe.skippedDestructive.length > 0, JSON.stringify(st.observe.skippedDestructive));
+      // Rule changed 2026-10-02 (user decision): verifying an app the run
+      // started itself submits creating forms with sample data; a control
+      // with a destructive name is still never activated.
+      check('OBSERVE: the creating form was filled with sample data and submitted (Add task -> REAL)',
+        st.observe.submittedForms.indexOf('Add task') >= 0 && st.observe.observed.add === 'REAL',
+        'submitted=' + JSON.stringify(st.observe.submittedForms) + ' add=' + st.observe.observed.add);
+      check('OBSERVE: no destructive-named control was activated',
+        st.observe.destructiveActivated.length === 0, JSON.stringify(st.observe.destructiveActivated));
       check('OBSERVE: no external / non-loopback requests were allowed',
         st.observe.blocked === 0, st.observe.blocked + ' blocked');
 

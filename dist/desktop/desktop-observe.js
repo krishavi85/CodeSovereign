@@ -145,7 +145,10 @@
         ? D.observer.load(srv.url).then(function () { return new Promise(function (r) { setTimeout(r, 2500); }); })
         : Promise.resolve();
       return settle.then(function () {
-        return D.observer.crawl({ max: opts.max || 40, mode: opts.mode || 'observe' });
+        // The project's own server, started here from its folder: creating
+        // forms may be submitted with sample data ('verify'). A server we
+        // only found running stays read-only.
+        return D.observer.crawl({ max: opts.max || 40, mode: opts.mode || (srv.started ? 'verify' : 'observe') });
       }).then(function (res) {
         if (res && res.ok === false) throw new Error(res.error || 'crawl failed');
         var trace = res;

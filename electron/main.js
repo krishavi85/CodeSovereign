@@ -495,7 +495,7 @@ function registerIpc() {
         });
         if (r.response !== 0) return fail('interactive observation declined');
       }
-      return ok(await observer.crawl({ max: o.max, mode: o.mode === 'interactive' ? 'interactive' : 'observe' }));
+      return ok(await observer.crawl({ max: o.max, mode: o.mode === 'interactive' || o.mode === 'verify' ? o.mode : 'observe' }));
     } catch (e) { return fail(e); }
   });
   ipcMain.handle('obs:screenshot', async () => {

@@ -34,15 +34,16 @@ function baseWin() {
   return win;
 }
 
-function loadObserver(crawlResult) {
+function loadObserver(crawlResult, alreadyRunning) {
   const win = baseWin();
   let subscriber = null;
-  let started = false;
+  let started = !!alreadyRunning;
+  const crawlModes = [];
   win.desktop = {
     isDesktop: true,
     observer: {
       load: async () => (started ? { ok: true, title: 'Todo' } : { ok: false, error: 'ERR_CONNECTION_REFUSED' }),
-      crawl: async () => crawlResult,
+      crawl: async (o) => { crawlModes.push(o && o.mode); return crawlResult; },
       stop: () => {}
     },
     proc: {
@@ -66,6 +67,7 @@ function loadObserver(crawlResult) {
   win.Engine.FS.write('/package.json', JSON.stringify({ scripts: { start: 'node server.js' } }));
   win.Engine.FS.write('/index.html', '<title>Todo</title>');
   vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'dist', 'desktop', 'desktop-observe.js'), 'utf8'), ctx, { filename: 'desktop-observe.js' });
+  win.__crawlModes = crawlModes;
   return win;
 }
 
@@ -96,6 +98,12 @@ module.exports = async function (t) {
     const win = loadObserver({ ok: true, at: 1, url: 'http://localhost:3000', controlsFound: 2, controlsExercised: 2, trace: [] });
     const r = await win.CSObserve.run({ visual: false });
     t.ok('a successful observation of a server we started carries its output too', r.ok && /ReferenceError/.test(r.trace.serverLog || ''));
+    t.equal('the app it started itself is crawled in verify mode (creating forms get submitted)', win.__crawlModes[0], 'verify');
+  }
+  {
+    const win = loadObserver({ ok: true, at: 1, url: 'http://localhost:3000', controlsFound: 1, controlsExercised: 0, trace: [] }, true);
+    const r = await win.CSObserve.run({ visual: false });
+    t.ok('a server that was already running is crawled read-only (observe)', r.ok && r.trace.serverStartedByUs === false && win.__crawlModes[0] === 'observe');
   }
 
   const ROUND = 1000;
