@@ -1862,9 +1862,22 @@
       const n = /ℹ tests (\d+)/.exec(tail);
       if (n) testsRun = Number(n[1]);
     }
-    return { failing: failing, testsPassed: testsPassed, testsRun: testsRun };
+    // Did the observer get the app running in this window? true = a fresh
+    // runtime trace, false = a fresh failure (or newer than the trace),
+    // null = no observation either way.
+    const fresh = function (x) { return x && x.at && (!since || x.at >= since); };
+    const rt = sovRead("runtime-trace.json"), rf = sovRead("runtime-failure.json");
+    const runs = fresh(rt) && !(fresh(rf) && rf.at > rt.at) ? true : fresh(rf) ? false : null;
+    return { failing: failing, testsPassed: testsPassed, testsRun: testsRun, runs: runs };
   }
   function repairWorse(after, before) {
+    // A running app is judged by more checks than a crashed one (a crash
+    // leaves some passing for lack of evidence), so the count can rise while
+    // the app got better. Live 2026-10-02: repair 1 fixed a server crash, the
+    // page loaded, 3 failing checks became 4 — and it was rolled back to the
+    // crashing server. Starting at all comes first.
+    if (before.runs === false && after.runs === true) return false;
+    if (before.runs === true && after.runs === false) return true;
     if (after.failing !== before.failing) return after.failing > before.failing;
     if (after.testsPassed != null && before.testsPassed != null && after.testsPassed !== before.testsPassed) return after.testsPassed < before.testsPassed;
     // Tie-break on how many tests even ran. Live run 2026-09-29: a repair

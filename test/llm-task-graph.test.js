@@ -909,6 +909,46 @@ module.exports = async function (t) {
     t.ok('the repair prompt forbids swapping JSON storage for a database package', /do NOT switch to sequelize, sqlite, mongoose/.test(repairSys));
   }
   {
+    // Live 2026-10-02 (Qwen build 5): repair 1 fixed the server crash and the
+    // page loaded, but a running app is judged by more checks — 3 failing
+    // became 4 — and the fix was rolled back to the crashing server.
+    const win = load();
+    win.Engine.Proj.create('r1g', 'saas-dashboard');
+    setupDesktopMocks(win, {});
+    const srv = () => win.Engine.FS.read('/server.js') || '';
+    const crashes = () => /crash/.test(srv());
+    win.Engine.DoD = { evaluate: () => {}, load: () => ({ PASS: false, criteria: crashes()
+      ? { dependenciesConnected: false, runtimeActionSucceeds: false, noFakeImplementation: false, visualIntegrityPass: true }
+      : { dependenciesConnected: false, runtimeActionSucceeds: false, noFakeImplementation: false, visualIntegrityPass: false } }) };
+    win.Engine.Sovereign.observe = () => {
+      if (crashes()) win.Engine.Sovereign.write('runtime-failure.json', { at: Date.now(), reason: 'Dev server did not come up', serverLog: 'TypeError: x.reduce is not a function' });
+      else win.Engine.Sovereign.write('runtime-trace.json', { at: Date.now(), url: 'http://localhost:3000/', controlsFound: 1, controlsExercised: 0, trace: [] });
+      return Promise.resolve({});
+    };
+    win.Engine.LLM.setConfig({ enabled: true, providerId: 'openai_compat', model: 'llama3.1:8b', baseUrl: 'http://localhost:11434' });
+    let repairRound = 0;
+    win.fetch = async (url, init) => {
+      if (!/chat\/completions/.test(String(url))) return { ok: false, status: 404, text: async () => '' };
+      const body = JSON.parse((init && init.body) || '{}');
+      const sys = (body.messages.find((m) => m.role === 'system') || {}).content || '';
+      if (body.messages.some((m) => m.role === 'tool')) return chatReply('done');
+      if (/YOUR JOB — REPAIR/.test(sys)) {
+        repairRound++;
+        return chatToolCalls([{ path: '/server.js', content: repairRound === 1 ? "const mode = 'fixed';" : "const mode = 'crash again';" }]);
+      }
+      if (/BACKEND ONLY/.test(sys)) return chatToolCalls([{ path: '/server.js', content: "const mode = 'crash';" }]);
+      if (/FRONTEND ONLY/.test(sys)) return chatToolCalls([{ path: '/index.html', content: '<!doctype html>' }]);
+      if (/TESTS ONLY/.test(sys)) return chatToolCalls([{ path: '/test/x.test.js', content: 'v0' }]);
+      return { ok: false, status: 500, text: async () => '' };
+    };
+    const steps = await win.Engine.Agent.run(SUBSTANTIAL_PROMPT);
+    const rbs = steps.filter((s) => s.kind === 'repair' && /made things worse/.test(s.text));
+    t.equal('both repair rounds ran', repairRound, 2);
+    t.ok('the round that got a crashing app running is kept, though more checks fail', !rbs.some((s) => /Repair round 1/.test(s.text)));
+    t.ok('the round that made it crash again is rolled back, though fewer checks fail', rbs.some((s) => /Repair round 2/.test(s.text)));
+    t.equal('the running server is what is left', srv(), "const mode = 'fixed';");
+  }
+  {
     // Confirmed live: the observer clicked all 6 buttons and every one was
     // MOCK, but the evidence only said "found 6, exercised 6".
     const win = load();
