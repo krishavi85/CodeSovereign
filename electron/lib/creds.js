@@ -28,7 +28,10 @@ async function loadAll() {
 }
 
 async function saveAll(map) {
-  await fsp.writeFile(file(), JSON.stringify(map), { mode: 0o600 });
+  const f = file();
+  const tmp = f + '.tmp';
+  await fsp.writeFile(tmp, JSON.stringify(map), { mode: 0o600 });
+  await fsp.rename(tmp, f);
 }
 
 function available() {

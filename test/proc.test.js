@@ -46,5 +46,48 @@ module.exports = async function (t) {
   });
   t.ok('spawnAllowed: streams + exits 0', ev2.some((e) => e.stream === 'stdout' && /streamed/.test(e.data)) && ev2.some((e) => e.stream === 'exit' && e.code === 0));
 
+  // sanitized environment — secrets in the parent env do not reach the child
+  process.env.MY_SECRET_TOKEN = 'leaked-value-xyz';
+  process.env.NPM_TOKEN = 'npm-leaked';
+  const envRun = await proc.runManaged({ cmd: 'node', args: ['-e', 'process.stdout.write(JSON.stringify({s:process.env.MY_SECRET_TOKEN||null,n:process.env.NPM_TOKEN||null,ci:process.env.CI||null,path:!!process.env.PATH||!!process.env.Path}))'], cwd: '.' });
+  const env = JSON.parse(envRun.stdout || '{}');
+  t.equal('secret env var is stripped', env.s, null);
+  t.equal('NPM_TOKEN is stripped', env.n, null);
+  t.ok('PATH is preserved', env.path === true);
+  t.ok('CI is blanked', !env.ci);
+  delete process.env.MY_SECRET_TOKEN; delete process.env.NPM_TOKEN;
+
+  // timeout terminates a hung process
+  const t0 = Date.now();
+  const hung = await proc.runManaged({ cmd: 'node', args: ['-e', 'setInterval(()=>{},1000)'], cwd: '.', timeoutMs: 1500 });
+  t.ok('timeout kills a hung process (~1.5s)', hung.code === -2 && (Date.now() - t0) < 6000);
+
+  // sanitizedEnv() has no obviously-sensitive keys
+  const se = proc.sanitizedEnv();
+  t.ok('sanitizedEnv drops *TOKEN*/*SECRET*/*KEY*', !Object.keys(se).some((k) => /TOKEN|SECRET|_KEY$|PASSWORD/i.test(k)));
+
+  // killAllSync (app quit): the whole tree is gone when it returns. Live
+  // 2026-10-02 the fire-and-forget killAll() on quit ended only the top
+  // process; the verified app's `node server.js` kept :3000.
+  {
+    const PARENT = "const {spawn}=require('child_process');" +
+      "const g=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});" +
+      "console.log('GRANDCHILD '+g.pid);setInterval(()=>{},1000);";
+    let grand = 0;
+    await new Promise((resolve) => {
+      proc.spawnAllowed({ cmd: 'node', args: ['-e', PARENT], cwd: '.' }, (e) => {
+        const m = e.stream === 'stdout' && /GRANDCHILD (\d+)/.exec(e.data);
+        if (m) { grand = Number(m[1]); resolve(); }
+      });
+      setTimeout(resolve, 10000);
+    });
+    const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (_) { return false; } };
+    t.ok('killAllSync: a grandchild was started', grand > 0 && alive(grand));
+    proc.killAllSync();
+    t.ok('killAllSync: the grandchild is gone when it returns (no waiting)', grand > 0 && !alive(grand));
+    t.equal('killAllSync: nothing is left registered', proc.running().length, 0);
+    if (grand && alive(grand)) { try { process.kill(grand); } catch (_) {} }
+  }
+
   fs.rmSync(tmp, { recursive: true, force: true });
 };

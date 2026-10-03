@@ -17,7 +17,12 @@ function load() {
 }
 
 function save() {
-  try { fs.writeFileSync(file(), JSON.stringify(load(), null, 2)); } catch { /* ignore */ }
+  try {
+    const f = file();
+    const tmp = f + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(load(), null, 2));
+    fs.renameSync(tmp, f);
+  } catch { /* ignore */ }
 }
 
 function get(key) { return load()[key]; }
@@ -37,4 +42,34 @@ function removeRecent(p) {
   save();
 }
 
-module.exports = { get, set, addRecent, removeRecent, load, save };
+// Drop recents whose folder no longer exists. Confirmed on a real install:
+// every recent pointed at a deleted folder, so each launch tried to reopen
+// one, failed with "Folder not found", removed only THAT entry — and the next
+// launch failed on the next dead one. Returns the (pruned) list.
+function pruneMissing() {
+  const s = load();
+  const alive = s.recents.filter(r => r && typeof r.path === 'string' && fs.existsSync(r.path));
+  const lastGone = s.lastWorkspace && !fs.existsSync(s.lastWorkspace);
+  if (alive.length !== s.recents.length || lastGone) {
+    s.recents = alive;
+    if (lastGone) s.lastWorkspace = null;
+    save();
+  }
+  return s.recents;
+}
+
+// For automated harnesses that open throwaway temp folders through the real
+// app: put the user's recents back exactly as they were afterwards.
+function snapshotRecents() {
+  const s = load();
+  return { recents: s.recents.slice(), lastWorkspace: s.lastWorkspace };
+}
+function restoreRecents(snap) {
+  if (!snap) return;
+  const s = load();
+  s.recents = snap.recents.slice();
+  s.lastWorkspace = snap.lastWorkspace;
+  save();
+}
+
+module.exports = { get, set, addRecent, removeRecent, pruneMissing, snapshotRecents, restoreRecents, load, save };

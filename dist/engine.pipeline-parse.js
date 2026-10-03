@@ -16,9 +16,17 @@
   function isProduct(p) { return !SELF_RE.test(p); }
   function yaml() { return window.jsyaml || null; }
 
+  var YAML_MAX = 512 * 1024;
   function safeYaml(src) {
     var y = yaml(); if (!y) return null;
-    try { return y.load(src); } catch (e) { return { __error: e.message }; }
+    if (typeof src !== 'string' || src.length > YAML_MAX) return { __error: 'file too large / not text' };
+    // crude anchor-bomb guard: a workflow with hundreds of aliases is not real
+    if ((src.match(/(^|\s)[*&][A-Za-z0-9_-]+/g) || []).length > 200 || (src.match(/<<\s*:/g) || []).length > 50) {
+      return { __error: 'excessive YAML anchors/merges — refusing to expand' };
+    }
+    // js-yaml v4 load() has no code-execution tags; json:true rejects duplicate keys
+    try { return y.load(src, { json: true }); }
+    catch (e) { return { __error: String(e && e.message || e) }; }
   }
 
   function secretsIn(str) {

@@ -311,31 +311,40 @@
     return { ok: !!objective, objective: objective, recurringHint: every, notice: notice, deadlineMs: deadlineMs };
   }
 
+  // Engine.Recovery.run()/verify() are the authoritative repair+verify
+  // primitives (analyze -> plan -> repair -> retest, one cycle) — the same
+  // ones the done-tool's Recovery.verifyBuild() reads from. This used to
+  // hand-roll its own run_tests + a zero-arg Engine.Recovery.repair() call;
+  // repair(plan, opts) requires a plan and threw on the missing argument,
+  // silently swallowed by the catch below, so "Fix" never actually fixed
+  // anything. Delegating to run() gets the real analyze/plan/repair sequence.
+  // runV3() (multi-cycle) is intentionally not used here — runGoal()'s own
+  // outer loop (capped at SAFETY_CAP) already provides the outer iteration.
   async function healOnce(g, onStep) {
     function emit(kind, text, extra) {
       const s = Object.assign({ kind: kind, text: text }, extra || {});
       g.steps.push(s);
       onStep && onStep(s);
     }
-    emit('goal', 'Run tests');
-    const tests = Engine.Loop && Engine.Loop.exec ? await Engine.Loop.exec('run_tests', {}) : { ok: false };
-    g.lastTests = tests;
-    if (tests.ok) {
+    emit('goal', 'Analyze + repair');
+    let result = null;
+    try {
+      result = (Engine.Recovery && Engine.Recovery.run) ? await Engine.Recovery.run() : null;
+    } catch (_) {}
+    // Recovery.run()'s loopRecord already carries its own verify() result
+    // (computed once against the post-repair levels) — reuse it rather than
+    // recomputing, and only fall back to a fresh call if it's missing.
+    const verified = result && result.verify
+      ? result.verify
+      : (result && Engine.Recovery && Engine.Recovery.verify) ? Engine.Recovery.verify(result) : { ok: false, failed: [] };
+    g.lastRun = result;
+    if (verified.ok) {
       g.status = 'satisfied';
       emit('done', 'GOAL SATISFIED');
       return g;
     }
-    emit('goal', 'Failures? YES — Analyze');
-    const issues = (tests.issues || []).slice(0, 12);
-    emit('diagnose', issues.length ? (issues.length + ' failure(s)') : (tests.output || 'tests failed'));
-    emit('goal', 'Fix');
-    if (Engine.Recovery && Engine.Recovery.repair) {
-      try { await Engine.Recovery.repair(); } catch (_) {}
-    }
-    const first = issues[0];
-    if (first && first.file && Engine.FS && Engine.FS.read) {
-      g.repairs = (g.repairs || 0) + 1;
-    }
+    emit('diagnose', (verified.failed || []).join(', ') || 'unverified');
+    g.repairs = (g.repairs || 0) + (result && result.repairedCount || 0);
     emit('goal', 'Run again');
     g.rounds += 1;
     return g;

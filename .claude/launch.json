@@ -4,8 +4,9 @@
     {
       "name": "codesovereign-dist",
       "runtimeExecutable": "npx",
-      "runtimeArgs": ["-y", "serve", "-l", "4173", "dist"],
-      "port": 4173
+      "runtimeArgs": ["-y", "serve", "dist"],
+      "port": 4173,
+      "autoPort": true
     }
   ]
 }

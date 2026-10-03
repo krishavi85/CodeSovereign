@@ -11,8 +11,23 @@
 (function() {
   'use strict';
 
-  const SUPABASE_URL = 'https://zobgxrwvyejfqekdumej.supabase.co';
-  const SUPABASE_ANON_KEY = 'sb_publishable_zQZ4mFPfeDzqHWnabfRgqw_d6ZbRoZ6';
+  // Cloud sync is opt-in. It used to be hard-wired to one Supabase project
+  // whose host no longer exists (DNS: ENOTFOUND, confirmed 2026-09-29), so
+  // every launch sent requests to a dead address and sync could never work.
+  // The project URL + publishable (anon) key now come from Settings >
+  // Integrations and live in localStorage; with none saved, sync is off and
+  // no request is made. Only https://<ref>.supabase.co is accepted — the
+  // CSP's connect-src allows exactly that, anything else would be blocked.
+  const SUPA_CFG_KEY = 'cs.supabase.config';
+  const SUPA_URL_RE = /^https:\/\/[a-z0-9-]+\.supabase\.co$/i;
+  function readSupaConfig() {
+    try {
+      const c = JSON.parse(localStorage.getItem(SUPA_CFG_KEY) || 'null');
+      if (c && typeof c.url === 'string' && SUPA_URL_RE.test(c.url) && typeof c.anonKey === 'string' && c.anonKey) return { url: c.url, anonKey: c.anonKey };
+    } catch (_) { /* unreadable → not configured */ }
+    return null;
+  }
+  let _supaCfg = readSupaConfig();
   const DB_NAME = 'codesovereign';
   const DB_VERSION = 1;
   const STORES = ['projects', 'files', 'deploys', 'scans', 'agent_runs', 'meta'];
@@ -226,30 +241,74 @@
 
   // -------- Supabase optional sync (best-effort) --------
   let _supabase = { online: false, reason: 'not-checked' };
+  // Circuit breaker. fetch() only THROWS on a network-level failure (DNS,
+  // offline, TLS) — never on an HTTP error status. Confirmed live: the
+  // configured project host stopped resolving (ERR_NAME_NOT_RESOLVED), and
+  // the health ping, project sync, marketplace, ratings and workspaces all
+  // kept re-hitting it — a console error and a wasted request every time.
+  // After one network failure, skip the host for a cooldown, then try again.
+  const SUPA_RETRY_MS = 5 * 60 * 1000;
+  let _supaDownUntil = 0;
+  let _supaLastError = null; // { status, code } of the last HTTP error from the project
   async function _supa(path, opts) {
     opts = opts || {};
+    if (!_supaCfg) { _supabase.online = false; _supabase.reason = 'not-configured'; return null; }
+    if (Date.now() < _supaDownUntil) return null;
     const headers = {
-      'apikey': SUPABASE_ANON_KEY,
-      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      'apikey': _supaCfg.anonKey,
+      'Authorization': 'Bearer ' + _supaCfg.anonKey,
       'Content-Type': 'application/json',
       'Prefer': opts.prefer || 'return=minimal'
     };
     const init = { method: opts.method || 'GET', headers: headers };
     if (opts.body) init.body = JSON.stringify(opts.body);
     try {
-      const r = await fetch(SUPABASE_URL + '/rest/v1' + path, init);
-      if (!r.ok) return null;
+      let r;
+      try {
+        r = await fetch(_supaCfg.url + '/rest/v1' + path, init);
+      } catch (netErr) {
+        _supaDownUntil = Date.now() + SUPA_RETRY_MS;
+        _supabase.online = false;
+        _supabase.reason = 'unreachable';
+        return null;
+      }
+      if (!r.ok) {
+        // Keep why it failed: "no-table-or-offline" read like a connection
+        // problem when the project was reachable and only the table was
+        // missing (live: 404 PGRST205 for public.projects).
+        let code = null;
+        try { const body = await r.json(); code = body && body.code; } catch (_) {}
+        _supaLastError = { status: r.status, code: code };
+        return null;
+      }
+      _supaLastError = null;
       const ct = r.headers.get('content-type') || '';
       if (ct.indexOf('json') !== -1) return await r.json();
       return await r.text();
     } catch (e) { return null; }
   }
 
-  async function pingSupabase() {
+  // app.js pings twice at startup; both started before the first failed, so
+  // the breaker never saw it and the dead host got two requests (and two
+  // console errors) per launch. Concurrent probes now share one request.
+  let _pingInFlight = null;
+  function pingSupabase() {
+    if (!_pingInFlight) _pingInFlight = _pingSupabaseOnce().finally(function () { _pingInFlight = null; });
+    return _pingInFlight;
+  }
+  async function _pingSupabaseOnce() {
     try {
+      _supaLastError = null;
       const r = await _supa('/projects?select=id&limit=1', { method: 'GET' });
       _supabase.online = !!r; // null when offline or 404
-      _supabase.reason = r ? 'ok' : 'no-table-or-offline';
+      const le = _supaLastError;
+      _supabase.reason = r ? 'ok'
+        : !_supaCfg ? 'not-configured'
+        : Date.now() < _supaDownUntil ? 'unreachable'
+        : le && (le.code === 'PGRST205' || le.code === '42P01') ? 'projects-table-missing'
+        : le && (le.status === 401 || le.status === 403) ? 'key-rejected'
+        : le ? 'http-' + le.status
+        : 'no-table-or-offline';
       return _supabase.online;
     } catch (e) {
       _supabase.online = false;
@@ -438,8 +497,34 @@
   }
 
   // -------- Expose --------
+  // Save (or clear, with an empty url) the cloud-sync project. Returns
+  // { ok, error } — the Settings form shows the error as-is.
+  function configureSupabase(url, anonKey) {
+    url = String(url || '').trim().replace(/\/+$/, '');
+    anonKey = String(anonKey || '').trim();
+    if (!url) {
+      try { localStorage.removeItem(SUPA_CFG_KEY); } catch (_) {}
+      _supaCfg = null; _supabase.online = false; _supabase.reason = 'not-configured';
+      return { ok: true, cleared: true };
+    }
+    if (!SUPA_URL_RE.test(url)) return { ok: false, error: 'Use your project URL, like https://<project-ref>.supabase.co' };
+    if (!anonKey) return { ok: false, error: 'Paste the project\'s publishable (anon) key' };
+    try { localStorage.setItem(SUPA_CFG_KEY, JSON.stringify({ url: url, anonKey: anonKey })); }
+    catch (e) { return { ok: false, error: 'Could not save: ' + (e && e.message || e) }; }
+    _supaCfg = { url: url, anonKey: anonKey };
+    _supaDownUntil = 0; _supabase.reason = 'not-checked';
+    return { ok: true };
+  }
+
   window.Backend = {
-    SUPABASE_URL: SUPABASE_URL,
+    // null until a project is configured (marketplace/ratings check this)
+    get SUPABASE_URL() { return _supaCfg ? _supaCfg.url : null; },
+    // Settings > Integrations reads this; it was never exported, so the card
+    // always showed "not-checked" whatever the real status was.
+    get _supabase() { return _supabase; },
+    supabaseConfig: function () { return _supaCfg ? { url: _supaCfg.url } : null; },
+    configureSupabase: configureSupabase,
+    checkSupabase: pingSupabase,
     deviceId: getDeviceId(),
     get engine() { return _engine; },
     ping: ping,

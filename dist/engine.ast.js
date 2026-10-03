@@ -46,9 +46,12 @@
     return null;
   }
 
+  var MAX_SRC = 1.5 * 1024 * 1024;   // don't parse huge bundled/minified files
   function parse(src, filename) {
     var empty = { ok: false, imports: [], requires: [], dynamicImports: [], reexports: [], exports: [], routes: [], functions: [], classes: [], calls: [] };
     if (!acornReady() || typeof src !== 'string' || !src) return empty;
+    if (src.length > MAX_SRC) return empty;                       // size guard (proxy for a time limit)
+    if (/(^|\/)\.sovereign\//.test(filename || '')) return empty; // never analyze our own memory
     // acorn has no JSX/TS grammar; don't even try for those.
     if (/\.(tsx|jsx)$/.test(filename || '')) return empty;
     var ast = tryParse(src);
@@ -121,6 +124,7 @@
       var upgraded = 0;
       (G.files || []).forEach(function (p) {
         if (!/\.(js|mjs|cjs)$/.test(p)) return;
+        if (/(^|\/)(\.sovereign|node_modules|vendor|dist|build)\//.test(p)) return;
         var res = parse(FS.read(p) || '', p);
         if (!res.ok) return;
         G.ast[p] = res;

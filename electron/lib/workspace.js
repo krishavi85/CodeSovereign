@@ -94,9 +94,11 @@ function toVirtual(abs) {
   return '/' + rel;
 }
 
+// A ".." path used to be swallowed here and reported as "protected directory";
+// let normalizeVirtual's precise error through instead (every caller refuses
+// the operation either way).
 function isProtected(virtualPath) {
-  let parts;
-  try { parts = normalizeVirtual(virtualPath); } catch { return true; }
+  const parts = normalizeVirtual(virtualPath);
   const top = parts[0];
   return top === '.git' || IGNORED_DIRS.has(top);
 }
@@ -160,6 +162,7 @@ async function readTree() {
     for (const ent of entries) {
       if (out.length >= TREE_MAX_FILES) { truncated = true; return; }
       if (ent.name.startsWith('.git')) continue;
+      if (ent.name.includes('.cs-tmp-')) continue;      // in-flight atomic write
       if (ent.isSymbolicLink()) continue;               // never follow links out of the tree
       const abs = path.join(dir, ent.name);
       if (ent.isDirectory()) {
@@ -190,7 +193,16 @@ async function writeFile(virtualPath, content) {
   const abs = resolveInside(virtualPath);
   await assertRealInside(abs);
   await ensureDir(path.dirname(abs));
-  await fsp.writeFile(abs, String(content == null ? '' : content), 'utf8');
+  // atomic: write to a sibling temp file, then rename over the target
+  const tmp = abs + '.cs-tmp-' + process.pid + '-' + Date.now();
+  const body = String(content == null ? '' : content);
+  try {
+    await fsp.writeFile(tmp, body, 'utf8');
+    await fsp.rename(tmp, abs);
+  } catch (e) {
+    try { await fsp.rm(tmp, { force: true }); } catch { /* ignore */ }
+    throw e;
+  }
   return { ok: true, path: toVirtual(abs) };
 }
 

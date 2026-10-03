@@ -105,7 +105,11 @@ module.exports = async function (t) {
   t.ok('terminal still blocks node -e', badScript.ok === false);
 
   const g = await E.Goal.run('/goal All tests pass');
-  t.ok('goal loop records run/analyze/fix', g.steps.some((s) => /Run tests/.test(s.text)) && (g.status === 'satisfied' || g.status === 'capped' || g.status === 'active'));
+  // healOnce() delegates the whole analyze->plan->repair->retest cycle to
+  // Engine.Recovery.run()/verify() (see engine.runtime.js) rather than
+  // hand-rolling its own run_tests call, so each round is recorded as one
+  // 'Analyze + repair' step instead of a separate 'Run tests' step.
+  t.ok('goal loop records analyze+repair rounds', g.steps.some((s) => /Analyze \+ repair/.test(s.text)) && (g.status === 'satisfied' || g.status === 'capped' || g.status === 'active'));
   t.ok('goal is not a fixed 4-step cap', g.rounds >= 0 && g.status !== undefined);
 
   const env = E.Cloud.spawn({ secrets: ['OPENAI_API_KEY'] });
