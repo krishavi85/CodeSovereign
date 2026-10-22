@@ -51,11 +51,12 @@ artifact as-is. The `dist/desktop/` scripts are inert without Electron.
 ## Screens
 
 Top nav: Welcome · Agent · IDE · Factory · Pipelines · Marketplace · Workspaces ·
-Ratings · Actions · GitHub · OAuth. Left rail: Welcome · Universal · Agent · IDE ·
-Factory · Recovery · **Ultra Mode** · Settings.
+Ratings · Actions · GitHub · OAuth. Left rail: Welcome · Agent · IDE · Factory ·
+Recovery · Settings.
 
-**Ultra Mode** is the closed loop: one natural-language request →
-`Engine.UltraMode` derives a machine-readable contract, generates a real
+**Welcome** (which absorbed the former Universal and Ultra Mode tabs) runs the
+closed loop: one natural-language request →
+the engine derives a machine-readable contract, generates a real
 project, runs its real tests/build, observes it running, repairs what fails, and
 returns **SOVEREIGN VERIFIED** or an honest blocked/failed result, gated on a
 14-criterion Definition-of-Done (adds accessibility, visual-integrity, licence-compatibility and performance-health gates).
