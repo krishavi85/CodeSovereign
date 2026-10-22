@@ -176,6 +176,14 @@ async function staticValidate(r, insp, host) {
 
   // strongest: a real Swift toolchain
   if (host.swift) {
+    // Syntax first: `swiftc -parse` needs no SDK, and a SwiftPM build only compiles the
+    // targets in Package.swift, so it would pass over a broken file outside them.
+    let parseOut = '';
+    for (const f of swiftFiles.slice(0, 40)) {
+      const c = await run(r, which('swiftc'), ['-parse', f], { timeoutMs: 60000 });
+      if (c.code !== 0 && /error:/.test(c.out + c.err)) parseOut += (c.out + c.err).slice(0, 400);
+    }
+    if (parseOut) return { status: 'FAIL', tool: 'swiftc -parse', detail: parseOut.slice(0, 600) };
     if (insp.hasPackageSwift) {
       const b = await run(r, which('swift'), ['build', '-c', 'debug', '--build-tests'], { timeoutMs: 6 * 60 * 1000 });
       // an iOS-only SwiftPM target often can't link on a non-Apple host; a clean

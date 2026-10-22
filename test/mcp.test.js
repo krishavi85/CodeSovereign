@@ -36,5 +36,6 @@ module.exports = async function (t) {
   // that is still some process's cwd — the MCP child may still be exiting,
   // which made this throw EPERM on every Windows run. rmSync's own retry
   // options exist for exactly this.
-  fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 });
+  // a leftover temp dir is not a failure of what this test checks
+  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 }); } catch (_) { /* best effort */ }
 };

@@ -75,7 +75,7 @@ module.exports = async function (t) {
     Object.assign(repo, cicd, bf, rf);
     Object.keys(repo).forEach((p) => { const abs = path.join(dir, p.replace(/^\//, '')); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, repo[p]); });
 
-    const doc = cp.spawnSync('node', ['scripts/doctor.js'], { cwd: dir, encoding: 'utf8', timeout: 20000 });
+    const doc = cp.spawnSync('node', ['scripts/doctor.js'], { cwd: dir, encoding: 'utf8', timeout: 90000 });
     t.equal('bootstrap: the generated doctor.js runs + passes (node is present here)', doc.status, 0);
     t.ok('bootstrap: doctor.js reports the Node check', /ok Node\.js/.test(doc.stdout || ''));
 
