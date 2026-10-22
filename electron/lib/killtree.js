@@ -30,6 +30,8 @@ function killTree(child, signal) {
       k.on('exit', () => { clearTimeout(cap); resolve(); });
     });
   }
+  // unix: a child spawned `detached` leads its own process group — end the whole group
+  if (pid) { try { process.kill(-pid, signal || 'SIGKILL'); return Promise.resolve(); } catch (_) { /* not a group leader */ } }
   direct();
   return Promise.resolve();
 }

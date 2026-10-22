@@ -15,7 +15,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function startTree() {
   return new Promise((resolve, reject) => {
-    const parent = spawn(process.execPath, ['-e', PARENT], { windowsHide: true });
+    const parent = spawn(process.execPath, ['-e', PARENT], { windowsHide: true, detached: process.platform !== 'win32' });
     let out = '';
     parent.stdout.on('data', (d) => {
       out += d; const m = /GRANDCHILD (\d+)/.exec(out);

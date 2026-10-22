@@ -49,7 +49,7 @@ function runNodeTest(dir) {
     const timer = setTimeout(() => { try { child.kill(); } catch (_) {} }, 60000);
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ code, pass: Number((/ℹ pass (\d+)/.exec(out) || [])[1] || 0), fail: Number((/ℹ fail (\d+)/.exec(out) || [])[1] || 0), out });
+      resolve({ code, pass: Number((/(?:ℹ|#) pass (\d+)/.exec(out) || [])[1] || 0), fail: Number((/(?:ℹ|#) fail (\d+)/.exec(out) || [])[1] || 0), out });
     });
   });
 }

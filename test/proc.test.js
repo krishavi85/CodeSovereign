@@ -84,6 +84,8 @@ module.exports = async function (t) {
     const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (_) { return false; } };
     t.ok('killAllSync: a grandchild was started', grand > 0 && alive(grand));
     proc.killAllSync();
+    // SIGKILL is delivered at once, but the kernel may still list the orphan until init reaps it
+    for (let i = 0; i < 20 && alive(grand); i++) await new Promise((r) => setTimeout(r, 100));
     t.ok('killAllSync: the grandchild is gone when it returns (no waiting)', grand > 0 && !alive(grand));
     t.equal('killAllSync: nothing is left registered', proc.running().length, 0);
     if (grand && alive(grand)) { try { process.kill(grand); } catch (_) {} }

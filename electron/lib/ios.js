@@ -189,7 +189,10 @@ async function staticValidate(r, insp, host) {
       // treat "cannot find 'SwiftUI'" as an SDK-availability note, a real syntax error as FAIL.
       const text = (c.out + c.err);
       out += text.slice(0, 400);
-      if (/error: expected|error: consecutive|error: unterminated|error: cannot find type|error: use of unresolved|error: expressions are not allowed/.test(text)
+      // a parse error is real whatever SDK the host has (without the iOS SDK `import SwiftUI`
+      // also reports "no such module", which must not mask a syntax error in the same file)
+      if (/error: (expected|consecutive|unterminated|expressions are not allowed)/.test(text)) hadError = true;
+      else if (/error: (cannot find type|use of unresolved)/.test(text)
         && !/no such module|cannot find 'SwiftUI'|cannot find 'UIKit'|SDK/.test(text)) hadError = true;
     }
     if (hadError) return { status: 'FAIL', tool: 'swiftc -typecheck', detail: out.slice(0, 600) };
