@@ -70,8 +70,15 @@ async function status() {
   const inside = await exec(['rev-parse', '--is-inside-work-tree']);
   if (inside.code !== 0 || inside.stdout.trim() !== 'true') return { repo: false };
 
-  const branchRes = await exec(['rev-parse', '--abbrev-ref', 'HEAD']);
-  const branch = branchRes.stdout.trim() || 'HEAD';
+  // symbolic-ref names the branch even before the first commit (rev-parse
+  // --abbrev-ref fails there, so a fresh `git init` showed "HEAD"); it only
+  // fails on a detached HEAD, where rev-parse gives the right answer.
+  const sym = await exec(['symbolic-ref', '--short', 'HEAD']);
+  let branch = sym.code === 0 ? sym.stdout.trim() : '';
+  if (!branch) {
+    const branchRes = await exec(['rev-parse', '--abbrev-ref', 'HEAD']);
+    branch = branchRes.stdout.trim() || 'HEAD';
+  }
 
   let ahead = 0, behind = 0;
   const counts = await exec(['rev-list', '--left-right', '--count', '@{upstream}...HEAD']);

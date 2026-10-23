@@ -20,6 +20,9 @@ const t = {
   equal(name, actual, expected) {
     record(actual === expected, name, actual === expected ? '' : `(got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)})`);
   },
+  notEqual(name, actual, expected) {
+    record(actual !== expected, name, actual !== expected ? '' : `(got ${JSON.stringify(actual)}, did not want it)`);
+  },
   deepEqual(name, actual, expected) {
     const a = JSON.stringify(actual), e = JSON.stringify(expected);
     record(a === e, name, a === e ? '' : `(got ${a}, want ${e})`);
@@ -27,6 +30,14 @@ const t = {
   async throwsAsync(name, fn) {
     try { await fn(); record(false, name, '(did not throw)'); }
     catch { record(true, name); }
+  },
+  match(name, str, re) {
+    const ok = re.test(String(str));
+    record(ok, name, ok ? '' : `(no match for ${re} in ${JSON.stringify(String(str).slice(0, 120))})`);
+  },
+  doesNotMatch(name, str, re) {
+    const ok = !re.test(String(str));
+    record(ok, name, ok ? '' : `(unexpected match for ${re})`);
   }
 };
 

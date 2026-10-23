@@ -11,12 +11,18 @@
 const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
 const path = require('path');
 const fsp = require('fs/promises');
+const crypto = require('crypto');
 
 const workspace = require('./lib/workspace');
 const proc = require('./lib/proc');
 const mcp = require('./lib/mcp');
 const net = require('./lib/net');
 const observer = require('./lib/observer');
+const trust = require('./lib/trust');
+const hardware = require('./lib/hardware');
+const aihost = require('./lib/aihost');
+const openclawManager = require('./lib/openclaw-manager');
+const terminalManager = require('./lib/terminal-manager');
 const git = require('./lib/git');
 const creds = require('./lib/creds');
 const zip = require('./lib/zip');
@@ -27,10 +33,12 @@ const { applyMenu } = require('./menu');
 const DEV = process.argv.includes('--dev');
 const SMOKE = process.argv.includes('--smoke');
 const SMOKE_OBSERVER = process.argv.includes('--smoke-observer');
+const ACCEPTANCE = process.argv.includes('--acceptance');
+const ACCEPTANCE_BUILD = process.argv.includes('--acceptance-build');
 const RENDERER = path.join(__dirname, '..', 'dist', 'index.html');
 
 // The headless checks run on CI runners with no GPU / no desktop session.
-if (SMOKE || SMOKE_OBSERVER) {
+if (SMOKE || SMOKE_OBSERVER || ACCEPTANCE || ACCEPTANCE_BUILD) {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('in-process-gpu');
@@ -126,7 +134,15 @@ function createWindow() {
       store.set('windowBounds', b);
     }
   });
-  win.on('closed', () => { win = null; });
+  // Closing the main window must end the app. The runtime observer keeps a
+  // hidden BrowserWindow (e.g. on a generated app's localhost:3000), so
+  // 'window-all-closed' never fired and CodeSovereign stayed running
+  // invisibly — holding the single-instance lock, so it wouldn't reopen.
+  win.on('closed', () => {
+    win = null;
+    try { observer.stop(); } catch (_) {}
+    if (process.platform !== 'darwin') app.quit();
+  });
 
   // External links open in the real browser, never in-app.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -163,7 +179,10 @@ function sendMenu(action, payload) {
   if (win && !win.isDestroyed()) win.webContents.send('menu:action', { action, payload });
 }
 function procEvent(evt) {
-  if (win && !win.isDestroyed()) win.webContents.send('proc:data', evt);
+  // Normally there is exactly one window; during the --acceptance run the harness
+  // owns its own window instead of `win`, so broadcast to whatever is open.
+  if (win && !win.isDestroyed()) { win.webContents.send('proc:data', evt); return; }
+  BrowserWindow.getAllWindows().forEach((w) => { if (!w.isDestroyed()) w.webContents.send('proc:data', evt); });
 }
 
 /* ------------------------------------------------------------ ipc: handlers */
@@ -182,7 +201,9 @@ function registerIpc() {
     credsEncrypted: creds.available()
   }));
 
-  ipcMain.handle('app:recents', () => store.get('recents') || []);
+  // pruned: the renderer reopens recents[0] at launch — a folder that no
+  // longer exists must never be offered (it failed with "Folder not found")
+  ipcMain.handle('app:recents', () => store.pruneMissing());
   ipcMain.handle('app:clearRecents', () => { store.set('recents', []); rebuildMenu(); return ok(); });
   ipcMain.handle('app:setTitle', (_e, t) => {
     if (win) win.setTitle(typeof t === 'string' && t ? 'CodeSovereign — ' + t.slice(0, 120) : 'CodeSovereign');
@@ -255,9 +276,10 @@ function registerIpc() {
     } catch (e) { return fail(e); }
   });
 
-  ipcMain.handle('ws:exportZip', async () => {
+  ipcMain.handle('ws:exportZip', async (_e, opts) => {
     const root = workspace.getRoot();
     if (!root) return fail('No workspace');
+    const includeSovereign = !!(opts && opts.includeSovereign);
     const r = await dialog.showSaveDialog(win, {
       title: 'Export project as ZIP',
       defaultPath: path.join(app.getPath('downloads'), workspace.name() + '.zip'),
@@ -267,7 +289,9 @@ function registerIpc() {
     try {
       const tree = await workspace.readTree();
       const entries = [];
+      let excluded = 0;
       for (const f of tree.files) {
+        if (!includeSovereign && f.path.indexOf('/.sovereign/') === 0) { excluded++; continue; }
         const name = f.path.replace(/^\//, '');
         if (f.binary || f.content == null) {
           const abs = workspace.resolveInside(f.path);
@@ -277,7 +301,39 @@ function registerIpc() {
         }
       }
       await fsp.writeFile(r.filePath, zip.build(entries));
-      return ok({ path: r.filePath, fileCount: entries.length });
+      // readTree stops at TREE_MAX_FILES; say so instead of passing off a partial archive as the project.
+      return ok({ path: r.filePath, fileCount: entries.length, sovereignExcluded: excluded, truncated: !!tree.truncated });
+    } catch (e) { return fail(e); }
+  });
+
+  ipcMain.handle('ws:exportDelivery', async () => {
+    const root = workspace.getRoot();
+    if (!root) return fail('No workspace');
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Export delivery archive',
+      defaultPath: path.join(app.getPath('downloads'), workspace.name() + '-delivery.zip'),
+      filters: [{ name: 'ZIP archive', extensions: ['zip'] }]
+    });
+    if (r.canceled || !r.filePath) return null;
+    try {
+      const tree = await workspace.readTree();
+      // the delivery archive is the /delivery subtree the renderer assembled;
+      // fall back to bundling the raw .sovereign evidence if it isn't there yet.
+      let src = tree.files.filter((f) => f.path.indexOf('/delivery/') === 0);
+      let prefix = '/delivery/';
+      if (!src.length) { src = tree.files.filter((f) => f.path.indexOf('/.sovereign/') === 0); prefix = '/.sovereign/'; }
+      if (!src.length) return fail('Nothing to deliver — run an analysis first');
+      const entries = [];
+      for (const f of src) {
+        const name = f.path.slice(prefix.length);
+        if (f.binary || f.content == null) {
+          entries.push({ name, data: await fsp.readFile(workspace.resolveInside(f.path)) });
+        } else {
+          entries.push({ name, data: f.content });
+        }
+      }
+      await fsp.writeFile(r.filePath, zip.build(entries));
+      return ok({ path: r.filePath, fileCount: entries.length, bundled: prefix, truncated: !!tree.truncated });
     } catch (e) { return fail(e); }
   });
 
@@ -303,28 +359,100 @@ function registerIpc() {
      No ARBITRARY programmatic spawn is exposed. The renderer gets:
        proc:shell         -> the OS shell only (the user then types into it)
        proc:run           -> an allowlisted project tool, one-shot, workspace-scoped
-       proc:spawnAllowed  -> same allowlist, but streamed for long jobs (install/build) */
-  ipcMain.handle('proc:shell', (_e, cwd) => {
-    try { return ok(proc.spawnShell(procEvent, typeof cwd === 'string' ? cwd : '.')); } catch (e) { return fail(e); }
+       proc:spawnAllowed  -> same allowlist, but streamed for long jobs (install/build)
+     Nothing runs in a workspace the user has not explicitly trusted. */
+
+  // Ask once per workspace; the exact command + cwd is shown before anything runs.
+  async function ensureTrusted(cmdLabel) {
+    const root = workspace.getRoot();
+    if (!root) throw new Error('No project folder is open');
+    if (trust.isTrusted(root)) return root;
+    const r = await dialog.showMessageBox(win, {
+      type: 'warning',
+      title: 'Run project commands?',
+      message: 'CodeSovereign wants to run a command from this project.',
+      detail:
+        'Folder:  ' + root + '\n' +
+        'Command: ' + cmdLabel + '\n\n' +
+        "A project's package.json scripts run with your account's permissions. " +
+        'Only trust folders whose code you have reviewed.',
+      buttons: ['Trust this folder & run', 'Cancel'],
+      defaultId: 1, cancelId: 1, noLink: true
+    });
+    if (r.response !== 0) { const e = new Error('Command declined — folder not trusted'); e.code = 'EUNTRUSTED'; throw e; }
+    trust.grant(root);
+    rebuildMenu();
+    return root;
+  }
+
+  ipcMain.handle('proc:shell', async (_e, cwd) => {
+    try {
+      await ensureTrusted('interactive shell');
+      const r = proc.spawnShell(procEvent, typeof cwd === 'string' ? cwd : '.');
+      trust.audit({ kind: 'shell', cwd: workspace.getRoot(), pid: r.pid });
+      return ok(r);
+    } catch (e) { return fail(e); }
   });
-  ipcMain.handle('proc:spawnAllowed', (_e, opts) => {
+  ipcMain.handle('proc:spawnAllowed', async (_e, opts) => {
     try {
       const o = opts || {};
       if (typeof o.cmd !== 'string' || !Array.isArray(o.args)) return fail('cmd/args required');
-      return ok(proc.spawnAllowed({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.' }, procEvent));
+      const label = o.cmd + ' ' + o.args.map(String).join(' ');
+      await ensureTrusted(label);
+      const r = proc.spawnAllowed({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.', timeoutMs: o.timeoutMs }, procEvent);
+      trust.audit({ kind: 'spawn', cmd: label, cwd: workspace.getRoot(), pid: r.pid });
+      return ok(r);
     } catch (e) { return fail(e); }
   });
   ipcMain.handle('proc:write', (_e, id, data) => {
     if (typeof id === 'string' && typeof data === 'string') proc.write(id, data.slice(0, 100000));
   });
   ipcMain.handle('proc:kill', (_e, id) => { if (typeof id === 'string') proc.kill(id); });
+  ipcMain.handle('proc:killAll', () => { proc.killAll(); return ok(); });
+  ipcMain.handle('proc:running', () => proc.running());
   ipcMain.handle('proc:run', async (_e, opts) => {
     try {
       const o = opts || {};
       if (typeof o.cmd !== 'string' || !Array.isArray(o.args)) return fail('cmd/args required');
-      return ok(await proc.runManaged({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.' }));
+      const label = o.cmd + ' ' + o.args.map(String).join(' ');
+      await ensureTrusted(label);
+      const res = await proc.runManaged({ cmd: o.cmd, args: o.args.map(String), cwd: typeof o.cwd === 'string' ? o.cwd : '.', timeoutMs: o.timeoutMs });
+      trust.audit({ kind: 'run', cmd: label, cwd: workspace.getRoot(), code: res.code });
+      return ok(res);
     } catch (e) { return fail(e); }
   });
+
+  /* ---- runtime adapters (blockchain / native mobile / ML training) ----
+     Per the Three-Blocked-Capabilities plan: each specialised target runs
+     through a real runtime adapter. probe() is read-only and free; a real
+     adapter run (compile + local chain / gradle + emulator / python training)
+     needs the same one-time folder-trust prompt as any other command. */
+  ipcMain.handle('adapter:probe', async () => {
+    try { return ok(require('./lib/adapters').probe()); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('adapter:run', async (_e, opts) => {
+    try {
+      const o = opts || {};
+      const kind = String(o.kind || '');
+      if (['evm', 'android', 'ios', 'ml', 'ios-probe', 'ios-inspect', 'audio', 'registry', 'sign', 'otel', 'extension', 'desktop'].indexOf(kind) < 0) return fail('unknown adapter: ' + kind);
+      if (kind === 'ios-probe' || kind === 'ios-inspect') return ok({ result: await require('./lib/adapters').run(kind, o.opts || {}) });
+      const LABEL = { evm: ' (solidity compile + local chain)', android: ' (gradle build + emulator)', ml: ' (pytorch training run)', ios: ' (swift build / xcross / theos)',
+        audio: ' (ffmpeg + local whisper)', registry: ' (npm pack + local registry round-trip)', sign: ' (checksums + SBOM + cosign)', otel: ' (send a span to a local OTel collector)', extension: ' (MV3 build + load-unpacked)', desktop: ' (cargo check / electron smoke)' };
+      await ensureTrusted('runtime adapter: ' + kind + (LABEL[kind] || ''));
+      const res = await require('./lib/adapters').run(kind, o.opts || {});
+      trust.audit({ kind: 'adapter', cmd: kind, cwd: workspace.getRoot(), status: res && res.status });
+      return ok(res);
+    } catch (e) { return fail(e); }
+  });
+
+  /* ---- workspace trust ---- */
+  ipcMain.handle('trust:status', () => {
+    const root = workspace.getRoot();
+    return { root, trusted: root ? trust.isTrusted(root) : false };
+  });
+  ipcMain.handle('trust:grant', () => { const r = workspace.getRoot(); if (r) { trust.grant(r); rebuildMenu(); } return ok({ trusted: true }); });
+  ipcMain.handle('trust:revoke', () => { const r = workspace.getRoot(); if (r) { trust.revoke(r); rebuildMenu(); } return ok({ trusted: false }); });
+  ipcMain.handle('trust:audit', (_e, limit) => trust.readAudit(typeof limit === 'number' ? limit : 200));
 
   /* ---- MCP stdio (allowlisted spawn + JSON-RPC) ---- */
   ipcMain.handle('mcp:start', (_e, opts) => {
@@ -355,10 +483,26 @@ function registerIpc() {
     try { return ok(await observer.read()); } catch (e) { return fail(e); }
   });
   ipcMain.handle('obs:crawl', async (_e, opts) => {
-    try { return ok(await observer.crawl(opts || {})); } catch (e) { return fail(e); }
+    try {
+      const o = opts || {};
+      if (o.mode === 'interactive') {
+        const r = await dialog.showMessageBox(win, {
+          type: 'warning', noLink: true,
+          title: 'Interactive observation',
+          message: 'Run the observer in INTERACTIVE mode?',
+          detail: 'It will click controls that look like they submit forms, send messages, or change data. Only do this against a disposable dev environment with test data.',
+          buttons: ['Run interactive', 'Cancel'], defaultId: 1, cancelId: 1
+        });
+        if (r.response !== 0) return fail('interactive observation declined');
+      }
+      return ok(await observer.crawl({ max: o.max, mode: o.mode === 'interactive' || o.mode === 'verify' ? o.mode : 'observe' }));
+    } catch (e) { return fail(e); }
   });
   ipcMain.handle('obs:screenshot', async () => {
     try { return ok({ dataUrl: await observer.screenshot() }); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('obs:visualProbe', async (_e, opts) => {
+    try { return ok(await observer.visualProbe(opts || {})); } catch (e) { return fail(e); }
   });
   ipcMain.handle('obs:stop', () => { observer.stop(); return ok(); });
 
@@ -397,6 +541,167 @@ function registerIpc() {
   ipcMain.handle('snap:list', () => snapshots.list());
   ipcMain.handle('snap:create', (_e, reason) => snapshots.create(reason));
   ipcMain.handle('snap:restore', (_e, id) => snapshots.restore(id));
+
+  /* ---- hardware (read-only) + local AI ---- */
+  let _hwCache = null;
+  ipcMain.handle('hw:probe', async () => {
+    try {
+      if (_hwCache && Date.now() - _hwCache.at < 60000) return _hwCache;
+      _hwCache = await hardware.probe(app);
+      return _hwCache;
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('ai:discover', async () => {
+    try { return ok(await aihost.discover()); } catch (e) { return fail(e); }
+  });
+  let _omniOkd = false;
+  ipcMain.handle('ai:omniroute', async (_e, action) => {
+    try {
+      if (action === 'start' || action === 'ensure') {
+        const running = await aihost.omniRunning();
+        if (!running && !_omniOkd) {
+          const r = await dialog.showMessageBox(win, {
+            type: 'info', noLink: true,
+            title: 'Start OmniRoute?',
+            message: 'Run the OmniRoute AI gateway locally?',
+            detail: 'This runs `npx omniroute serve` (downloads the MIT-licensed package on first use) and starts a local server on port 20128. It fans out to free AI provider tiers. Nothing leaves your machine except the model calls you make.',
+            buttons: ['Install & start', 'Cancel'], defaultId: 0, cancelId: 1
+          });
+          if (r.response !== 0) return { ok: false, error: 'declined' };
+          _omniOkd = true;
+        }
+      }
+      const res = await aihost.omniroute(action, (s) => { if (win && !win.isDestroyed()) win.webContents.send('proc:data', { id: 'omniroute', stream: 'stdout', data: s + '\n' }); });
+      return res;
+    } catch (e) { return fail(e); }
+  });
+  /* ---- OpenClaw: local agent gateway, fully behind IPC (see
+     electron/lib/openclaw-manager.js for the lifecycle + the verified CLI
+     contract). The renderer never shells out itself. ---- */
+  let _openclawCliOkd = false;
+  let _openclawGatewayInstallOkd = false;
+  let _openclawGatewayStartOkd = false;
+  const openclawStream = (s) => { if (win && !win.isDestroyed()) win.webContents.send('proc:data', { id: 'openclaw', stream: 'stdout', data: s + '\n' }); };
+
+  ipcMain.handle('openclaw:detect', async () => {
+    try { return ok(await openclawManager.detect()); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:status', async () => {
+    try { return ok(await openclawManager.getStatus()); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:probe', async () => {
+    try { return ok(await openclawManager.probe()); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:install', async () => {
+    try {
+      if (!_openclawCliOkd) {
+        const r = await dialog.showMessageBox(win, {
+          type: 'info', noLink: true,
+          title: 'Install OpenClaw?',
+          message: 'Install the OpenClaw CLI globally via npm?',
+          detail: 'Runs `npm install -g openclaw` (MIT-licensed). This puts the `openclaw` command on your PATH so CodeSovereign can manage it directly instead of re-resolving it through npx every time.',
+          buttons: ['Install', 'Cancel'], defaultId: 0, cancelId: 1
+        });
+        if (r.response !== 0) return { ok: false, error: 'declined' };
+        _openclawCliOkd = true;
+      }
+      return await openclawManager.install(openclawStream);
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:gatewayInstall', async () => {
+    try {
+      if (!_openclawGatewayInstallOkd) {
+        const r = await dialog.showMessageBox(win, {
+          type: 'info', noLink: true,
+          title: 'Install the OpenClaw Gateway service?',
+          message: 'Register the OpenClaw Gateway as a background service?',
+          detail: 'Runs `openclaw gateway install`, which registers a loopback-only (127.0.0.1:18789) service (Scheduled Task on Windows, launchd/systemd elsewhere). It does not start automatically — you still choose when to start it.',
+          buttons: ['Install service', 'Cancel'], defaultId: 0, cancelId: 1
+        });
+        if (r.response !== 0) return { ok: false, error: 'declined' };
+        _openclawGatewayInstallOkd = true;
+      }
+      return await openclawManager.gatewayInstall();
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:gatewayStart', async () => {
+    try {
+      if (!_openclawGatewayStartOkd) {
+        const r = await dialog.showMessageBox(win, {
+          type: 'info', noLink: true,
+          title: 'Start the OpenClaw Gateway?',
+          message: 'Start the OpenClaw Gateway service?',
+          detail: 'Loopback-only, port 18789. It survives app restarts until you stop it — CodeSovereign never sends generation traffic through it unless you pick OpenClaw as the active backend.',
+          buttons: ['Start', 'Cancel'], defaultId: 0, cancelId: 1
+        });
+        if (r.response !== 0) return { ok: false, error: 'declined' };
+        _openclawGatewayStartOkd = true;
+      }
+      return await openclawManager.gatewayStart();
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:gatewayStop', async () => {
+    try { return await openclawManager.gatewayStop(); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:gatewayRestart', async () => {
+    try { return await openclawManager.gatewayRestart(); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:openOnboarding', async () => {
+    try {
+      const r = await dialog.showMessageBox(win, {
+        type: 'info', noLink: true,
+        title: 'Open OpenClaw setup?',
+        message: 'Open a terminal running `openclaw onboard`?',
+        detail: 'First-time setup (models, Gateway, workspace, channels) is interactive, so it opens in a real terminal window for you to complete — CodeSovereign cannot fill in credentials on your behalf.',
+        buttons: ['Open terminal', 'Cancel'], defaultId: 0, cancelId: 1
+      });
+      if (r.response !== 0) return { ok: false, error: 'declined' };
+      return openclawManager.openOnboarding();
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('openclaw:openDashboard', async (_e, url) => {
+    try { await shell.openExternal(url || ('http://127.0.0.1:' + openclawManager.GATEWAY_PORT + '/')); return { ok: true }; }
+    catch (e) { return fail(e); }
+  });
+  // No confirmation dialog: install/gatewayInstall/gatewayStart confirm once
+  // because they install/start software. Selecting OpenClaw as the active
+  // execution backend in Settings is itself the user's one-time, deliberate
+  // consent — a per-generation-call dialog would break the agentic loop.
+  ipcMain.handle('openclaw:runAgentTurn', async (_e, opts) => {
+    try { return ok(await openclawManager.runAgentTurn(opts)); } catch (e) { return fail(e); }
+  });
+
+  /* ---- integrated terminal: real PTYs (PowerShell/CMD/Git Bash/WSL) over
+     node-pty, entirely behind IPC — the renderer never spawns a process
+     itself. No command sandboxing here by design: once a terminal is open
+     it behaves like a real terminal window; the IPC surface itself
+     (create/input/resize/kill only) is the security boundary. ---- */
+  ipcMain.handle('terminal:listShells', async () => {
+    try { return ok({ shells: await terminalManager.detectShells() }); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('terminal:create', async (event, opts) => {
+    try {
+      if (!terminalManager.ptyAvailable()) return { ok: false, error: 'terminal engine unavailable (node-pty failed to load)' };
+      const id = crypto.randomUUID();
+      const sender = event.sender;
+      const res = await terminalManager.create(id, opts || {},
+        (data) => { if (!sender.isDestroyed()) sender.send('terminal:data', { id, data }); },
+        (info) => { if (!sender.isDestroyed()) sender.send('terminal:exit', Object.assign({ id }, info)); });
+      return res;
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.on('terminal:input', (_e, { id, data } = {}) => { if (id) terminalManager.write(id, data); });
+  ipcMain.on('terminal:resize', (_e, { id, cols, rows } = {}) => { if (id) terminalManager.resize(id, cols, rows); });
+  ipcMain.on('terminal:kill', (_e, { id } = {}) => { if (id) terminalManager.kill(id); });
+  // Locked-down HTTP: loopback only, or an LLM API host the CSP already allows.
+  ipcMain.handle('ai:request', async (_e, opts) => {
+    try {
+      const o = opts || {};
+      if (typeof o.url !== 'string') return fail('url required');
+      const r = await aihost.request({ url: o.url, method: o.method, headers: o.headers, body: o.body, timeoutMs: o.timeoutMs, partialOnTimeout: !!o.partialOnTimeout });
+      return r;
+    } catch (e) { return fail(e); }
+  });
 }
 
 /* ------------------------------------------------------------ workspace open */
@@ -447,6 +752,8 @@ if (!app.requestSingleInstanceLock()) {
     rebuildMenu();
 
     if (SMOKE_OBSERVER) { runObserverSmoke(); return; }
+    if (ACCEPTANCE) { require('./acceptance').run(); return; }
+    if (ACCEPTANCE_BUILD) { require('./acceptance-build').run(); return; }
 
     createWindow();
 
@@ -458,7 +765,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { proc.killAll(); observer.stop(); });
+  app.on('before-quit', () => { proc.killAllSync(); observer.stop(); terminalManager.killAll(); });
 }
 
 /* -------- observer integration check: serve a fixture page, crawl it -------- */
@@ -470,6 +777,8 @@ async function runObserverSmoke() {
     <button id="real" onclick="fetch('/api').then(()=>{document.body.appendChild(document.createElement('p'))})">Load data</button>
     <a id="dead" href="#">Nowhere</a>
     <button id="boom" onclick="throw new Error('kaboom')">Break</button>
+    <button id="danger" onclick="window.__deleted=true">Delete account</button>
+    <img id="ext" src="https://evil.example.com/tracker.gif">
   </body></html>`;
   const server = http.createServer((req, res) => {
     if (req.url === '/api') { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"ok":1}'); return; }
@@ -494,19 +803,23 @@ async function runObserverSmoke() {
     const loaded = await observer.load(base);
     console.log('[obs-smoke] loaded:', JSON.stringify(loaded));
 
-    const trace = await observer.crawl({ max: 10 });
+    const trace = await observer.crawl({ max: 10, mode: 'observe' });
     const byId = {};
     (trace.trace || []).forEach((t) => { byId[t.control.name.toLowerCase()] = t.status; });
     console.log('[obs-smoke] byStatus:', JSON.stringify(trace.byStatus));
     console.log('[obs-smoke] per-control:', JSON.stringify(byId));
     console.log('[obs-smoke] console errors captured:', (trace.consoleErrors || []).length);
     console.log('[obs-smoke] network calls seen:', (trace.network || []).length);
+    console.log('[obs-smoke] blocked requests:', JSON.stringify((trace.blockedRequests || []).map((b) => b.kind)));
+    console.log('[obs-smoke] actionLog kinds:', JSON.stringify((trace.actionLog || []).map((a) => a.kind)));
 
     const pass =
       byId['load data'] === 'REAL' &&
       byId['nowhere'] === 'MOCK' &&
       byId['break'] === 'BROKEN' &&
-      (trace.network || []).some((n) => /\/api$/.test(n.url));
+      byId['delete account'] === 'SKIPPED' &&              // destructive control not activated
+      (trace.network || []).some((n) => /\/api$/.test(n.url)) &&
+      (trace.blockedRequests || []).some((b) => b.kind === 'blocked-request');  // the external <img> was blocked
     console.log('[obs-smoke] ' + (pass ? 'PASS' : 'FAIL'));
     if (!pass) exit = 1;
   } catch (e) {

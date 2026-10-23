@@ -182,6 +182,14 @@ below.
    remote-build worker contract. *(SDK packs + an actual remote worker are
    infrastructure beyond a client session.)*
 
+## End-to-end acceptance
+
+The eight engines are exercised **together** by `npm run acceptance`
+(`electron/acceptance.js`, CI job *Desktop → acceptance*): detect → classify →
+execute → observe → repair → retest → regenerate evidence → readiness gate,
+against the `test/fixtures/acceptance/` task board. 27 assertions; see
+[ACCEPTANCE.md](ACCEPTANCE.md).
+
 ## Still not built (smaller, lower priority)
 
 - Figma / screenshot / video **input connectors** for Mockup-to-Production.

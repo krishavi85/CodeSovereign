@@ -31,6 +31,11 @@ module.exports = async function (t) {
   const echoed = ((((call || {}).result || {}).content || [])[0] || {}).text || '';
   t.ok('tools/call echoes arguments', /"n":7/.test(echoed) && !(call && call.error));
   mcp.stop(started.id);
-  proc.killAll();
-  fs.rmSync(tmp, { recursive: true, force: true });
+  proc.killAllSync();
+  // killAll's taskkill is fire-and-forget (killAllSync waits for it), and Windows refuses to delete a directory
+  // that is still some process's cwd — the MCP child may still be exiting,
+  // which made this throw EPERM on every Windows run. rmSync's own retry
+  // options exist for exactly this.
+  // a leftover temp dir is not a failure of what this test checks
+  try { fs.rmSync(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 150 }); } catch (_) { /* best effort */ }
 };

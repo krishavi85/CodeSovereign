@@ -194,9 +194,6 @@ async function pluginHubAction(id, action){
     }
     if (typeof renderAll === 'function') {
       try { renderAll(); } catch(_){}
-    } else if (typeof S !== 'undefined' && S && S.activeTab === 'recovery') {
-      const main = document.getElementById('main');
-      if (main) main.innerHTML = renderRecovery();
     }
   } catch (e) {
     write('error: ' + (e.message || e));
@@ -215,9 +212,12 @@ function pluginHubInstallAll(){
   if (typeof renderAll === 'function') { try { renderAll(); } catch(_){} }
 }
 
-function pluginHubReset(){
+async function pluginHubReset(){
   if (!window.PluginHub) return;
-  if (!confirm('Reset all plugin install state and audit history?')) return;
+  const ok = window.showPromptModal
+    ? await window.showPromptModal({ title: 'Reset plugin hub?', message: 'Reset all plugin install state and audit history?', confirmLabel: 'Reset', showInput: false })
+    : confirm('Reset all plugin install state and audit history?');
+  if (!ok) return;
   window.PluginHub.reset();
   toast('Plugin hub state reset', '#f59e0b');
   if (typeof renderAll === 'function') { try { renderAll(); } catch(_){} }

@@ -18,7 +18,9 @@
   var CSDesktop = {
     info: null,
     project: null,          // { id, name, template, root, createdAt }
-    recents: []
+    recents: [],
+    booting: true,          // true until the automatic "reopen last project" settles
+    pendingBoot: []
   };
   window.CSDesktop = CSDesktop;
 
@@ -65,6 +67,8 @@
     window.S.screen = 'ide';
     try { window.syncBuildFromFS && window.syncBuildFromFS(); } catch (_) {}
     refreshRecents();
+    window.__csTrustChecked = false;       // re-check trust for the newly opened folder
+    if (window.csRefreshTrust) window.csRefreshTrust();
     rerender();
     if (res.truncated) toast('Large project — only the first files were loaded into the editor', '#f59e0b');
     return true;
@@ -273,8 +277,20 @@
       case 'save-all': saveAll(); break;
       case 'export-zip':
         D.workspace.exportZip().then(function (r) {
-          if (r && r.ok) toast('Exported ' + r.fileCount + ' files → ' + r.path, '#34d399');
-        });
+          if (!r) return; // save dialog cancelled
+          if (!r.ok) { toast('Export failed: ' + (r.error || 'unknown error'), '#ef4444'); return; }
+          if (r.truncated) toast('Exported only the first ' + r.fileCount + ' files → ' + r.path + ' (project is too large to export in full)', '#f59e0b');
+          else toast('Exported ' + r.fileCount + ' files → ' + r.path, '#34d399');
+        }, function (e) { toast('Export failed: ' + (e && e.message || e), '#ef4444'); });
+        break;
+      case 'export-delivery':
+        // The /delivery bundle (or the .sovereign evidence) as one archive —
+        // the IPC existed but nothing in the UI could reach it.
+        D.workspace.exportDelivery().then(function (r) {
+          if (!r) return; // save dialog cancelled
+          if (!r.ok) { toast('Delivery export failed: ' + (r.error || 'unknown error'), '#ef4444'); return; }
+          toast('Delivery archive: ' + r.fileCount + ' files' + (r.bundled === '/.sovereign/' ? ' (evidence only — no /delivery folder yet)' : '') + ' → ' + r.path + (r.truncated ? ' — incomplete, project too large' : ''), r.truncated ? '#f59e0b' : '#34d399');
+        }, function (e) { toast('Delivery export failed: ' + (e && e.message || e), '#ef4444'); });
         break;
       case 'reveal': D.workspace.reveal(window.S && window.S.ideFile); break;
       case 'open-terminal':
@@ -282,8 +298,16 @@
         break;
       case 'run-command': runCommandPrompt(); break;
       case 'validate':
-        window.S.screen = 'recovery'; rerender();
-        try { window.runValidatorScan && window.runValidatorScan(); } catch (_) {}
+        // There is no 'recovery' screen any more (renderAll fell back to
+        // Welcome) and window.runValidatorScan never existed, so this menu
+        // item did nothing. The IDE's Problems panel runs the real validators.
+        window.S.screen = 'ide'; window.S.idePanel = 'problems'; rerender();
+        try {
+          var issues = (window.Engine && window.Engine.Validator && window.Engine.Validator.runAll()) || [];
+          var errs = issues.filter(function (i) { return i && i.severity === 'error'; }).length;
+          toast(issues.length ? (issues.length + ' issue' + (issues.length === 1 ? '' : 's') + (errs ? ' (' + errs + ' error' + (errs === 1 ? '' : 's') + ')' : '') + ' — see Problems') : 'Validation passed — no problems found',
+            errs ? '#ef4444' : (issues.length ? '#f59e0b' : '#34d399'));
+        } catch (e) { toast('Validation failed: ' + (e && e.message || e), '#ef4444'); }
         break;
       case 'snapshot-now':
         D.snapshots.create('manual').then(function (r) {
@@ -344,19 +368,50 @@
   window.createProjectFromTemplate = function (name, templateId) { newProjectFlow({ name: name, templateId: templateId }); };
   window.openProject = function (id) { openFolder(id); };
 
+  // Guard genApp/runAgent against the boot-time race: the last project is
+  // reopened asynchronously (refreshRecents -> openFolder -> applyTree). If a
+  // prompt runs before that settles, Engine.Proj.current() sees no project,
+  // genApp/runAgent spin up a scratch project via Engine.Proj.create(), the
+  // Agent writes real files into memory-only FS._data (nothing disk-backed
+  // yet), and then the in-flight reopen finishes and FS.__loadFromDisk()
+  // wholesale-replaces FS._data with the old folder's contents — silently
+  // discarding everything the agent just built, with no error and no trace.
+  // Defer instead of racing: queue the call and run it once boot settles.
+  function guardAgentEntry(name) {
+    var orig = window[name];
+    window[name] = function () {
+      if (!CSDesktop.booting) return orig.apply(this, arguments);
+      var args = arguments;
+      var self = this;
+      toast('Loading your last project — running this as soon as it’s ready…', '#a78bfa');
+      CSDesktop.pendingBoot.push(function () { window[name].apply(self, args); });
+    };
+  }
+  guardAgentEntry('genApp');
+  guardAgentEntry('runAgent');
+
   function boot() {
     D.info().then(function (i) { CSDesktop.info = i; });
     migrateLlmKey();
     D.app.onMenu(handleMenu);
 
+    function finishBoot() {
+      if (!CSDesktop.booting) return;
+      CSDesktop.booting = false;
+      var q = CSDesktop.pendingBoot;
+      CSDesktop.pendingBoot = [];
+      q.forEach(function (fn) { try { fn(); } catch (_) {} });
+    }
+
     refreshRecents().then(function () {
       var last = CSDesktop.recents[0];
       if (last && last.path) {
-        openFolder(last.path).then(function () { ensureBanner(); });
+        openFolder(last.path).then(function () { ensureBanner(); finishBoot(); }).catch(finishBoot);
       } else {
         ensureBanner();
+        finishBoot();
       }
-    });
+    }, finishBoot);
 
     // Keep the banner in sync after every render.
     var _ra = window.renderAll;

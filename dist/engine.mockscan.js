@@ -34,7 +34,9 @@
     ['unimplemented', 'high', /\b(?:NotImplementedException|UnsupportedOperationException)\b|todo!\s*\(|unimplemented!\s*\(|fatalError\s*\(\s*["']TODO/i, 'unimplemented-exception placeholder'],
     ['throw-placeholder', 'high', /throw new Error\s*\(\s*["'](?:not implemented|todo|placeholder|unimplemented)/i, 'throw-placeholder in an active path'],
     ['dead-link', 'medium', /href\s*=\s*["'](?:#|javascript:void\(0\);?)["']/, 'dead link (# / javascript:void(0))'],
-    ['disabled-forever', 'low', /\bdisabled\s*(?:=\s*["']?(?:true|disabled)["']?)?[^>]*>(?![\s\S]{0,200}removeAttribute\(['"]disabled)/, 'control disabled with no path to enable it'],
+    // 'disabled-forever' is checked per element in disabledForever() below —
+    // the old regex matched CSS `:disabled { … }` rules and even the JS that
+    // ENABLES the control (`btn.disabled = !title`) as "disabled forever".
     ['fake-persistence', 'high', /\/\/\s*(?:no|fake|mock|todo).{0,20}(?:persist|save|store|api)|persist(?:ence)?\s*(?:is\s*)?(?:not|todo|fake)/i, 'comment admits persistence is fake/missing'],
     ['hardcoded-auth', 'high', /\b(?:hardcoded|test|demo|admin)(?:User|Token|Password|Secret|Key)\b|user\s*=\s*["'](?:admin|test|demo)["']|isAdmin\s*=\s*true/i, 'hard-coded credential / client-only auth flag'],
     ['stub-service', 'high', /(?:class|const)\s+\w*(?:Service|Repository|Client|Api|Adapter)\b[\s\S]{0,120}?return\s+(?:\[\s*\]|\{\s*\}|null|mock|fake|sample)/i, 'service/repository returns a static value'],
@@ -63,13 +65,50 @@
     return findings;
   }
 
+  // A form control written with a real `disabled` attribute that no script in
+  // the project can ever enable. Scripts anywhere count (inline or external):
+  // setting .disabled, removeAttribute('disabled') or toggleAttribute('disabled').
+  var CONTROL_DISABLED_RE = /<(button|input|select|textarea|fieldset|option)\b([^>]*?)\sdisabled(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?(?=[\s/>])[^>]*>/gi;
+  function canEnableDisabled(scripts, id) {
+    var anyToggle = /\.disabled\s*=(?!=)|removeAttribute\(\s*['"]disabled['"]|toggleAttribute\(\s*['"]disabled['"]|\.prop\(\s*['"]disabled['"]/;
+    if (!anyToggle.test(scripts)) return false;
+    // With an id, require the script to reference that control; without one we
+    // can't tell which element a toggle targets, so any toggle counts.
+    return !id || scripts.indexOf(id) >= 0;
+  }
+  function disabledForever(path, src, scripts) {
+    var out = [];
+    if (!/\.html?$/i.test(path)) return out;
+    var re = new RegExp(CONTROL_DISABLED_RE.source, 'gi'), m, count = 0;
+    while ((m = re.exec(src)) && count < 8) {
+      var idm = /\bid\s*=\s*["']([^"']+)["']/i.exec(m[0]);
+      if (canEnableDisabled(scripts, idm && idm[1])) continue;
+      count++;
+      out.push({
+        file: path, line: src.slice(0, m.index).split('\n').length, kind: 'disabled-forever', severity: 'low',
+        why: 'control disabled with no path to enable it', sample: String(m[0]).replace(/\s+/g, ' ').slice(0, 100)
+      });
+    }
+    return out;
+  }
+
   function run() {
     var signals = [];
+    var files = [];
     Object.keys(FS._data).forEach(function (p) {
       if (!FS.isFile(p) || !isProduct(p)) return;
       var src = FS.read(p) || '';
       if (src.length > 400000) return;
-      signals = signals.concat(scanFile(p, src));
+      files.push({ path: p, src: src });
+    });
+    // every script the page could run: .js files plus inline <script> bodies
+    var scripts = files.map(function (f) {
+      if (/\.(c|m)?js$|\.tsx?$|\.jsx$/i.test(f.path)) return f.src;
+      if (/\.html?$/i.test(f.path)) return (f.src.match(/<script\b[^>]*>[\s\S]*?<\/script>/gi) || []).join('\n');
+      return '';
+    }).join('\n');
+    files.forEach(function (f) {
+      signals = signals.concat(scanFile(f.path, f.src), disabledForever(f.path, f.src, scripts));
     });
     var byKind = {};
     signals.forEach(function (s) { byKind[s.kind] = (byKind[s.kind] || 0) + 1; });

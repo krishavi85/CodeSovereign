@@ -5,7 +5,7 @@ const store = require('./lib/store');
 /** Build the application menu. `send(action, payload)` posts to the focused renderer. */
 function buildMenu(send) {
   const isMac = process.platform === 'darwin';
-  const recents = (store.get('recents') || []).slice(0, 10);
+  const recents = store.pruneMissing().slice(0, 10); // never offer a deleted folder
 
   const recentItems = recents.length
     ? recents.map(r => ({ label: r.name + '  —  ' + r.path, click: () => send('open-recent', r.path) }))
@@ -38,6 +38,7 @@ function buildMenu(send) {
         { label: 'Save All', accelerator: 'CmdOrCtrl+Alt+S', click: () => send('save-all') },
         { type: 'separator' },
         { label: 'Export Project as ZIP…', accelerator: 'CmdOrCtrl+Shift+E', click: () => send('export-zip') },
+        { label: 'Export Delivery Archive…', click: () => send('export-delivery') },
         { label: 'Reveal in File Manager', click: () => send('reveal') },
         { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit' }

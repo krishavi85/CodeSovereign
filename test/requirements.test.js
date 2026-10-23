@@ -60,4 +60,28 @@ module.exports = async function (t) {
   const q = R.questions({ prompt: 'a collaborative editor', platforms: null });
   t.ok('asks about platforms', q.some((x) => x.key === 'platforms'));
   t.ok('progressive — caps at 6', q.length <= 6);
+
+  // ---- aiAssist: confirmed live, it re-asked the model on EVERY analyze()
+  // pass (~40s each on a local model, queued ahead of real generation), and
+  // with a stub README ("# todo") the model answered with every archetype
+  // offered — noise that then became tracked contract requirements. ----
+  let aiCalls = 0;
+  let reply = { archetypes: ['saas'], impliedRequirements: ['Users can reset their password'], topRisks: [] };
+  win.Engine.AI = { ready: () => true, json: async () => { aiCalls++; return reply; } };
+  const objective = 'A multi-tenant SaaS dashboard where teams track projects, due dates and comments, with role-based access.';
+  const a1 = await R.aiAssist({ prompt: objective });
+  const a2 = await R.aiAssist({ prompt: objective });
+  t.equal('the same objective is asked once, then served from cache', aiCalls, 1);
+  t.ok('the cached answer is the real one', a1 === a2 && a2.archetypes[0] === 'saas' && a2.added[0] === 'Users can reset their password');
+  const thin = await R.aiAssist({ prompt: '# todo' });
+  t.ok('a stub objective ("# todo") is skipped — the model has nothing to reason about', thin.skipped === 'objective-too-thin' && aiCalls === 1);
+  reply = { archetypes: Object.keys(R.PACKS), impliedRequirements: ['x'], topRisks: [] };
+  const noisy = await R.aiAssist({ prompt: objective + ' (variant two)' });
+  t.equal('naming most of the catalogue is treated as noise, not a classification', noisy.archetypes.length, 0);
+  reply = null;
+  const obj3 = objective + ' (variant three)';
+  await R.aiAssist({ prompt: obj3 });
+  const before = aiCalls;
+  await R.aiAssist({ prompt: obj3 });
+  t.equal('a failed/empty answer is not cached — the next pass may retry', aiCalls, before + 1);
 };

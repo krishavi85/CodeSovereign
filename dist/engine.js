@@ -582,42 +582,171 @@ footer{padding:24px;text-align:center;color:var(--mut);border-top:1px solid var(
 
   // ---------- Agent (real workflow) ----------
   // Mutates FS in deterministic steps
+  //
+  // This is the BASE implementation only — by the time the UI calls
+  // Engine.Agent.run(), it has been monkey-patched (each patch keeping a
+  // reference to the previous Agent.run as its fallback) in this order:
+  // engine.stack.js -> engine.llm.js (the real THINK/ACT/OBSERVE loop; when
+  // a provider is connected this handles the request entirely and never
+  // calls down to this base run()) -> engine.work.js (Evidence/AgentBus) ->
+  // engine.runtime.js (/goal routing to Engine.Goal, which delegates repair
+  // to Engine.Recovery). This base run() — the contract/scaffold path
+  // falling back to _plan()'s keyword generators, itself falling back to
+  // writeStarter() — is what actually executes only when no AI provider is
+  // configured. See dist/app.js's runAgentWith()/genApp() for the full chain.
   const Agent = {
     run(prompt, onStep){
       const steps = [];
+      const emit = (s) => { steps.push(s); onStep && onStep(s); };
       const proj = Proj.current();
-      if (!proj){ steps.push({ kind:'error', text:'No active project. Create one first.' }); onStep && onStep(steps[steps.length-1]); return Promise.resolve(steps); }
+      if (!proj){ emit({ kind:'error', text:'No active project. Create one first.' }); return Promise.resolve(steps); }
 
-      // Step 1 — Plan
-      steps.push({ kind:'plan', text:'Analyzing the prompt and project context…' });
-      onStep && onStep(steps[steps.length-1]);
-      const plan = this._plan(prompt, proj);
-      steps.push({ kind:'plan-result', text: 'Plan: ' + plan.summary, files: plan.targets });
-      onStep && onStep(steps[steps.length-1]);
+      emit({ kind:'plan', text:'Analyzing the prompt and project context…' });
 
-      // Step 2 — Apply each file change
-      return new Promise(resolve => {
-        let i = 0;
-        const apply = () => {
-          if (i >= plan.targets.length){
-            // Step 3 — Validate
-            steps.push({ kind:'validate', text:'Running validators…' });
-            onStep && onStep(steps[steps.length-1]);
-            const v = Validator.runAll();
-            steps.push({ kind:'validate-result', issues: v });
-            onStep && onStep(steps[steps.length-1]);
-            steps.push({ kind:'done', text:'Run complete.' });
-            onStep && onStep(steps[steps.length-1]);
-            resolve(steps);
-            return;
+      // ---- unified generator ----
+      // One code-generation path. Derive a machine-readable contract; when it's
+      // a real buildable web app (multi-entity, or auth / background jobs, or a
+      // substantial requirement set) scaffold the FULL repo via the same
+      // Engine.Contract → Engine.Scaffold path Ultra Mode uses. Only a genuinely
+      // trivial single-artifact request (a chart, a timer, a calculator — no
+      // entities, no backend) falls back to the flat-SPA templates in `_plan`.
+      const C = window.Engine && window.Engine.Contract;
+      const SC = window.Engine && window.Engine.Scaffold;
+      const contractP = (C && C.deriveFromPrompt)
+        ? Promise.resolve().then(() => C.deriveFromPrompt(prompt, { useLLM: false })).catch(() => null)
+        : Promise.resolve(null);
+
+      return contractP.then((contract) => {
+        let plan = null;
+        const st = (contract && contract.supportedStack) || {};
+        const ents = (contract && contract.entities) || [];
+        const reqs = (contract && contract.requirements) || [];
+        const substantial = ents.length >= 2 || !!st.auth || !!st.jobs || reqs.length >= 8;
+        const buildable = contract && contract.verdict === 'buildable'
+          && (contract.target || 'web') === 'web'
+          && ents.length >= 1 && substantial
+          && SC && SC.specFromContract && SC.generate;
+
+        // Route a substantial build through Engine.Orchestrator — the actual
+        // Build Graph -> Executor -> Observer -> Validator -> Repair system —
+        // instead of this file's own one-shot generate()-then-Validator-gate.
+        // Only inside the desktop app: Orchestrator's reproof() step needs a
+        // real npm test/build run and a real runtime observation to produce
+        // the evidence its per-task DoD-based checks read (T-integration /
+        // T-tests). That evidence can never exist in a plain browser tab or
+        // a unit-test VM, where this would just report every task FAILED
+        // despite fine generated code — so outside desktop, fall through
+        // unchanged to the existing SC.generate() + static-Validator gate
+        // below, exactly as before this change.
+        const OR = window.Engine && window.Engine.Orchestrator;
+        const desktopReady = !!(window.desktop && window.desktop.isDesktop && FS.__hasWorkspace && FS.__hasWorkspace());
+        if (buildable && desktopReady && OR && OR.tasksFromContract && OR.run) {
+          let tasks = null;
+          try { tasks = OR.tasksFromContract(contract); } catch (e) { tasks = null; }
+          if (tasks && tasks.length) {
+            emit({ kind:'contract', text:'Contract: ' + reqs.length + ' requirements · ' + ents.map(e => e.name).join(', '), requirements: reqs.length });
+            emit({ kind:'plan-result', text:'Plan: build via task graph (' + tasks.map(t => t.name).join(' → ') + ')', taskGraph: tasks.map(t => ({ id: t.id, name: t.name })) });
+            emit({ kind:'validate', text:'Running the task graph — generate, then build + test + observe…' });
+            // Live per-stage progress: emitted the moment each task starts and
+            // each time its outcome is known, not just once at the very end —
+            // this is what lets the UI show "Scaffold: running… / done",
+            // "Integration: waiting → verifying → complete/failed" in real time.
+            const writtenSoFar = {};
+            return OR.run({
+              tasks: tasks,
+              onTaskStart: (tr, task) => {
+                emit({ kind:'task-start', text: tr.name + ': generating…', taskId: tr.id, taskName: tr.name });
+              },
+              onTaskDone: (tr, task) => {
+                (tr.notes || []).forEach(n => {
+                  const m = /^wrote (.+)$/.exec(n || '');
+                  if (m && !writtenSoFar[m[1]]) { writtenSoFar[m[1]] = true; emit({ kind:'write', path: m[1], text:'Writing ' + m[1] }); }
+                });
+                const verb = tr.status === 'COMPLETE' || tr.status === 'ALREADY_MET' ? 'verified'
+                  : tr.status === 'GENERATED' ? 'generated — verifying next'
+                  : tr.status === 'FAILED' ? 'did not verify'
+                  : 'blocked';
+                emit({ kind:'task-done', text: tr.name + ': ' + verb, taskId: tr.id, taskName: tr.name, status: tr.status });
+              }
+            }).then((record) => {
+              emit({ kind:'validate-result', issues: [], dod: record.dodAfter });
+              // BLOCKED (no generator could be resolved for a task) is just
+              // as much "never actually verified" as FAILED — treating only
+              // FAILED as failure would let a run report done while some
+              // task silently never even ran.
+              const failed = (record.tasks || []).filter(t => t.status === 'FAILED' || t.status === 'BLOCKED');
+              if (failed.length) {
+                emit({ kind:'warn', text:'Built via task graph (' + record.summary + '), but ' +
+                  failed.map(t => t.name).join(', ') + ' did not verify — see .sovereign/orchestrator-run.json.' });
+              } else {
+                emit({ kind:'done', text:'Run complete (' + record.summary + ').' });
+              }
+              return steps;
+            }).catch((e) => {
+              emit({ kind:'error', text:'Task-graph build failed: ' + String((e && e.message) || e) });
+              return steps;
+            });
           }
-          const t = plan.targets[i++];
-          steps.push({ kind:'write', path:t.path, text:'Writing ' + t.path });
-          onStep && onStep(steps[steps.length-1]);
-          FS.write(t.path, t.content);
-          setTimeout(apply, 120);
-        };
-        apply();
+        }
+
+        if (buildable) {
+          try {
+            emit({ kind:'contract', text:'Contract: ' + reqs.length + ' requirements · ' + ents.map(e => e.name).join(', '), requirements: reqs.length });
+            const spec = SC.specFromContract(contract);
+            const files = SC.generate(spec);
+            plan = {
+              summary: 'full-stack repo from the contract (' + files.length + ' files: backend + data layer + '
+                + (st.auth ? 'auth + ' : '') + (st.jobs ? 'jobs + ' : '') + 'tests + CI)',
+              targets: files.map(f => ({ path: f.path, content: f.content })),
+              viaContract: true
+            };
+          } catch (e) { plan = null; }
+        }
+        if (!plan) plan = this._plan(prompt, proj);
+
+        if (plan.offlineFallback) {
+          emit({ kind:'warn', text:'No AI connected and no built-in template matched — generated a generic starter scaffold, not the app you described. See SPEC.md.' });
+        }
+
+        if (plan.reasoning) {
+          emit({ kind:'thinking', text: plan.reasoning });
+        }
+
+        emit({ kind:'plan-result', text:'Plan: ' + plan.summary, files: plan.targets, suggestions: plan.suggestions });
+
+        return new Promise(resolve => {
+          let i = 0;
+          const gap = plan.viaContract ? 20 : 120;
+          const apply = () => {
+            if (i >= plan.targets.length){
+              emit({ kind:'validate', text:'Running validators…' });
+              const v = Validator.runAll();
+              emit({ kind:'validate-result', issues: v });
+              // "Files were written" is not "it works" — only report success
+              // when nothing blocking was found. A generator that produced
+              // broken JS (syntax errors, banned eval) must say so, not
+              // silently emit 'done' the same way a clean run would.
+              const blocking = (v || []).filter(function (i2) { return i2.severity === 'error'; });
+              if (blocking.length) {
+                emit({ kind:'warn', text:'Wrote ' + plan.targets.length + ' file(s), but ' + blocking.length + ' blocking issue(s) remain: ' +
+                  blocking.slice(0, 3).map(function (i2) { return (i2.file || '') + ': ' + i2.message; }).join('; ') +
+                  (blocking.length > 3 ? '…' : '') });
+              } else {
+                emit({ kind:'done', text:'Run complete.' });
+                if (plan.suggestions && plan.suggestions.length) {
+                  emit({ kind:'suggestions', text:'What next?', items: plan.suggestions });
+                }
+              }
+              resolve(steps);
+              return;
+            }
+            const t = plan.targets[i++];
+            emit({ kind:'write', path:t.path, text:'Writing ' + t.path });
+            FS.write(t.path, t.content);
+            setTimeout(apply, gap);
+          };
+          apply();
+        });
       });
     },
     _plan(prompt, proj){
@@ -636,13 +765,18 @@ footer{padding:24px;text-align:center;color:var(--mut);border-top:1px solid var(
       const p = p_raw.toLowerCase();
       const words = p.replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/).filter(Boolean);
 
-      // Project name: derive from the prompt's first 4 meaningful words
-      const titleRaw = p_raw
-        .split(/[.\n!?]/)[0]
-        .replace(/^(build|create|make|i want|please|give me|design|implement|add|write|develop|generate|craft|ship|launch|design and build|let me have|can you|we need|need to|should be)\s+/i, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      const projectName = (titleRaw || 'My App').split(' ').slice(0, 6).join(' ');
+      // Project name: the prompt's first meaningful words, as a title. Only one
+      // leading verb used to be stripped, so apps shipped titled "me a chatbot",
+      // "I need something to compute numbers" or "I need a post engine for".
+      // Strip leading filler repeatedly, drop a dangling word left by the
+      // 6-word cut, title-case, and keep "<"/">" out of the HTML it lands in.
+      const TITLE_FILLER = /^(please|kindly|(can|could|would) you|i('d| would) like( to)?|i want( to)?|i need( to)?|we need( to)?|we want( to)?|need to|help me( with| to)?|let me have|give me|show me|build|create|make|design and build|design|implement|add|write|develop|generate|craft|ship|launch|me|us|for me|something( that| to| for)?|some|a|an|the|to|should be)\s+/i;
+      const TITLE_ACRONYMS = { api: 'API', kpi: 'KPI', ui: 'UI', ux: 'UX', qr: 'QR', rss: 'RSS', pwa: 'PWA', md: 'MD', http: 'HTTP', ai: 'AI', crm: 'CRM', saas: 'SaaS', css: 'CSS', html: 'HTML', json: 'JSON', sql: 'SQL', url: 'URL', seo: 'SEO', faq: 'FAQ' };
+      let titleRaw = p_raw.split(/[.\n!?]/)[0].replace(/[<>]/g, '').replace(/\s+/g, ' ').trim();
+      for (let i = 0; i < 10; i++) { const next = titleRaw.replace(TITLE_FILLER, ''); if (next === titleRaw) break; titleRaw = next; }
+      const titleWords = titleRaw.split(' ').filter(Boolean).slice(0, 6);
+      while (titleWords.length > 1 && /^(for|to|with|and|or|of|a|an|the|in|on|that|which)$/i.test(titleWords[titleWords.length - 1])) titleWords.pop();
+      const projectName = titleWords.map((w) => TITLE_ACRONYMS[w.toLowerCase()] || (w.charAt(0).toUpperCase() + w.slice(1))).join(' ') || 'My App';
       const slug = projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'app';
 
       // -------- helpers --------
@@ -652,6 +786,10 @@ footer{padding:24px;text-align:center;color:var(--mut);border-top:1px solid var(
 
       // -------- intent detection --------
       const has = (...kws) => kws.some(kw => p.includes(kw));
+      // Word-boundary variant, for short bare keywords ('pwa') that would
+      // otherwise false-match as a raw substring of an unrelated word
+      // (e.g. 'pwa' inside "stopwatch").
+      const hasWord = (...kws) => kws.some(kw => new RegExp('\\b' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(p));
       const intents = {
         chart:       has('chart', 'graph', 'plot'),
         todo:        has('todo', 'task', 'checklist', 'to-do', 'to do'),
@@ -661,7 +799,7 @@ footer{padding:24px;text-align:center;color:var(--mut);border-top:1px solid var(
         dashboard:   has('dashboard', 'kpi', 'metrics', 'analytics', 'admin panel', 'overview'),
         rest:        has('rest api', 'rest console', 'api console', 'http api', 'endpoint'),
         ecommerce:   has('ecommerce', 'e-commerce', 'shop', 'store', 'storefront', 'product grid', 'cart', 'checkout'),
-        mobile:      has('mobile app', 'ios app', 'android app', 'phone app', 'pwa'),
+        mobile:      has('mobile app', 'ios app', 'android app', 'phone app') || hasWord('pwa'),
         portfolio:   has('portfolio', 'personal site', 'landing page', 'landing'),
         blog:        has('blog', 'journal', 'publishing'),
         login:       has('login', 'sign in', 'signin', 'auth form', 'authentication form', 'auth ui'),
@@ -686,7 +824,8 @@ footer{padding:24px;text-align:center;color:var(--mut);border-top:1px solid var(
         calendar:    has('calendar', 'event', 'schedule'),
         password:    has('password', 'password manager', 'vault'),
         qr:          has('qr code', 'qr generator', 'qr'),
-        form:        has('form', 'survey', 'questionnaire')
+        form:        has('form', 'survey', 'questionnaire'),
+        social:      has('facebook', 'social network', 'social media', 'social feed', 'newsfeed', 'news feed', 'timeline', 'friends list', 'instagram', 'twitter feed')
       };
       const matched = Object.keys(intents).filter(k => intents[k]);
       const primary = matched[0] || 'starter';
@@ -1060,7 +1199,7 @@ button.span2{grid-column:span 2}`);
   let expr = '';
   const safe = (s) => {
     // Only digits, operators, parens, dot, and percent allowed
-    if (!/^[0-9+\-*/(). %]*$/.test(s)) return null;
+    if (!/^[0-9+\\-*/(). %]*$/.test(s)) return null;
     try { return Function('"use strict";return (' + s.replace(/×/g,'*').replace(/÷/g,'/') + ')')(); }
     catch (_) { return null; }
   };
@@ -1085,7 +1224,7 @@ button.span2{grid-column:span 2}`);
   // Keyboard support
   document.addEventListener('keydown', e => {
     const k = e.key;
-    if (/[0-9+\-*/().]/.test(k)) { expr += k; exprEl.textContent = expr; }
+    if (/[0-9+\\-*/().]/.test(k)) { expr += k; exprEl.textContent = expr; }
     else if (k === 'Enter' || k === '=') { document.querySelector('.eq').click(); }
     else if (k === 'Backspace') { expr = expr.slice(0, -1); exprEl.textContent = expr; }
     else if (k === 'Escape' || k.toLowerCase() === 'c') { document.querySelector('[data-k="C"]').click(); }
@@ -1626,6 +1765,7 @@ canvas{background:#0f1218;border:1px solid var(--line);border-radius:10px;displa
   <h1>${projectName}</h1>
   <input id="q" placeholder="Type to search…" autofocus>
   <ul id="results"></ul>
+  <pre id="detail" hidden></pre>
 </main>
 <script src="/scripts/app.js"></script>
 \n</body>
@@ -1640,40 +1780,50 @@ input:focus{outline:none;border-color:var(--acc)}
 ul{list-style:none;margin:14px 0 0 0;padding:0}
 li{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-bottom:6px;cursor:pointer}
 li:hover{border-color:var(--acc)}
-li small{color:var(--mut);display:block;margin-top:2px;font:11px ui-monospace,Menlo,monospace}`);
-        push('/scripts/app.js', `// ${projectName} — real, debounced typeahead search over the workspace
+li small{color:var(--mut);display:block;margin-top:2px;font:11px ui-monospace,Menlo,monospace}
+pre{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px;margin:10px 0 0 0;white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,monospace;max-height:240px;overflow:auto}`);
+        // The generated app used to read Engine.FS at runtime — the builder's
+        // in-memory FS, which does not exist in the app itself (nor in the
+        // sandboxed preview iframe): "Engine is not defined" on load. Embed a
+        // snapshot of the workspace's text files at generation time instead.
+        const searchIndex = {};
+        let searchBytes = 0;
+        Object.keys(FS._data || {}).sort().forEach(p => {
+          if (!FS.isFile(p)) return;
+          const c = String(FS.read(p) || '');
+          if (searchBytes + c.length > 400000) return;
+          searchIndex[p] = c; searchBytes += c.length;
+        });
+        push('/scripts/app.js', `// ${projectName} — real, debounced typeahead search over the files that were
+// in the workspace when this app was generated (snapshot embedded below).
 (function(){
-  const files = {};
-  Object.keys(Engine.FS._data || {}).forEach(p => {
-    if (Engine.FS.isFile(p)) files[p] = Engine.FS.read(p) || '';
-  });
+  const files = ${JSON.stringify(searchIndex)};
   const q = document.getElementById('q');
   const list = document.getElementById('results');
+  const detail = document.getElementById('detail');
+  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
   let timer = null;
   const render = (term) => {
     list.innerHTML = '';
+    detail.hidden = true;
     const t = (term || '').toLowerCase();
     if (!t) { list.innerHTML = '<li style="color:var(--mut);cursor:default">Start typing to search ' + Object.keys(files).length + ' file(s)…</li>'; return; }
     let hits = 0;
-    Object.keys(files).forEach(p => {
+    for (const p of Object.keys(files)) {
       const content = (files[p] || '').toLowerCase();
       const idx = content.indexOf(t);
-      if (idx === -1) return;
+      if (idx === -1) continue;
       const line = content.slice(0, idx).split('\\n').length;
       const li = document.createElement('li');
-      li.innerHTML = '<b>' + p + '</b><small>match on line ' + line + '</small>';
+      li.innerHTML = '<b>' + esc(p) + '</b><small>match on line ' + line + '</small>';
       li.onclick = () => {
-        const snippet = files[p].split('\\n').slice(Math.max(0,line-2), line+3).join('\\n');
-        if (window.csToast) {
-          window.csToast(p + '  -  ' + snippet.replace(/\\n/g, ' | ').slice(0, 200), '#7c6ff5', 6000);
-        } else {
-          console.log(p, snippet);
-        }
+        const snippet = files[p].split('\\n').slice(Math.max(0, line - 3), line + 2).join('\\n');
+        detail.textContent = p + ':' + line + '\\n\\n' + snippet;
+        detail.hidden = false;
       };
       list.appendChild(li);
-      hits++;
-      if (hits >= 30) return;
-    });
+      if (++hits >= 30) break;
+    }
     if (hits === 0) list.innerHTML = '<li style="color:var(--mut);cursor:default">No matches.</li>';
   };
   q.oninput = () => { clearTimeout(timer); timer = setTimeout(() => render(q.value), 120); };
@@ -2049,8 +2199,1525 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
 })();`);
       };
 
+      const writeSocial = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">${projectName}</div>
+  <nav><a class="active" href="#feed">Home</a><a href="#profile">Profile</a></nav>
+</header>
+<main class="layout">
+  <aside class="side">
+    <div class="card profile">
+      <div class="avatar" id="meAvatar"></div>
+      <div class="name" id="meName">You</div>
+      <div class="bio">Building ${projectName} with CodeSovereign.</div>
+      <div class="stat"><span id="friendCount">0</span> friends</div>
+    </div>
+    <div class="card">
+      <h2>Friends</h2>
+      <ul id="friends" class="friends"></ul>
+    </div>
+  </aside>
+  <section class="feed">
+    <form id="composer" class="card composer">
+      <textarea id="postText" placeholder="What's on your mind?" required></textarea>
+      <div class="composerRow"><button type="submit">Post</button></div>
+    </form>
+    <div id="posts" class="posts"></div>
+  </section>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#7c5cff;--ok:#28c76f;--bad:#ea5455}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.top{display:flex;align-items:center;justify-content:space-between;padding:14px 28px;background:#0f1218;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}
+.brand{font-weight:700;font-size:18px;color:var(--acc)}
+nav a{color:var(--mut);text-decoration:none;margin-left:18px;font-size:13.5px;padding-bottom:4px;border-bottom:2px solid transparent}
+nav a:hover,nav a.active{color:var(--fg);border-color:var(--acc)}
+.layout{max-width:920px;margin:0 auto;padding:24px 16px;display:grid;grid-template-columns:240px 1fr;gap:20px;align-items:start}
+@media (max-width:680px){.layout{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+.card h2{margin:0 0 10px 0;font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.5px}
+.profile{text-align:center}
+.avatar{width:64px;height:64px;border-radius:50%;margin:0 auto 10px;background:linear-gradient(135deg,var(--acc),#5b3df0);display:flex;align-items:center;justify-content:center;font:700 22px system-ui;color:#fff}
+.name{font-weight:700;font-size:15px}
+.bio{color:var(--mut);font-size:12.5px;margin-top:4px}
+.stat{margin-top:10px;font-size:12.5px;color:var(--mut)}
+.stat span{color:var(--fg);font-weight:700}
+.friends{list-style:none;margin:0;padding:0}
+.friends li{display:flex;align-items:center;gap:10px;padding:7px 0;font-size:13px}
+.friends .favatar{width:28px;height:28px;border-radius:50%;background:#1a1f2c;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font:700 11px system-ui;color:var(--acc);flex:none}
+.composer textarea{width:100%;min-height:64px;background:#0f1218;border:1px solid var(--line);color:var(--fg);padding:12px;border-radius:8px;font:14px system-ui;resize:vertical;box-sizing:border-box}
+.composerRow{display:flex;justify-content:flex-end;margin-top:10px}
+.composerRow button{background:var(--acc);color:#fff;border:0;padding:9px 20px;border-radius:8px;cursor:pointer;font-weight:600}
+.post{margin-bottom:14px}
+.postHead{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.postHead .favatar{width:36px;height:36px;border-radius:50%;background:#1a1f2c;border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font:700 13px system-ui;color:var(--acc);flex:none}
+.postAuthor{font-weight:600;font-size:13.5px}
+.postTime{color:var(--mut);font-size:11.5px}
+.postText{white-space:pre-wrap;word-wrap:break-word;margin:0 0 10px 0}
+.postActions{display:flex;gap:14px;border-top:1px solid var(--line);padding-top:10px}
+.likeBtn{background:none;border:0;color:var(--mut);cursor:pointer;font-size:13px;display:flex;align-items:center;gap:6px}
+.likeBtn:hover{color:var(--acc)}
+.likeBtn.liked{color:var(--acc);font-weight:600}
+.empty{color:var(--mut);text-align:center;padding:20px;font-size:13px}`);
+        push('/scripts/app.js', `// ${projectName} — a real, working social feed (posts, likes, friends), all persisted in localStorage
+(function(){
+  const base = (location.pathname || 'app').replace(/\\W+/g, '_');
+  const K = { posts: 'cs.social.posts.' + base, friends: 'cs.social.friends.' + base };
+  const initials = (name) => (name || '?').split(/\\s+/).filter(Boolean).slice(0,2).map(w => w[0].toUpperCase()).join('');
+
+  document.getElementById('meAvatar').textContent = initials('You');
+
+  const FRIEND_NAMES = ['Alex Rivera', 'Sam Chen', 'Jordan Lee', 'Priya Patel'];
+  let friends = [];
+  try { friends = JSON.parse(localStorage.getItem(K.friends) || 'null'); } catch (_) { friends = null; }
+  if (!friends) { friends = FRIEND_NAMES.map(name => ({ name })); localStorage.setItem(K.friends, JSON.stringify(friends)); }
+  document.getElementById('friendCount').textContent = friends.length;
+  const friendsEl = document.getElementById('friends');
+  friends.forEach(f => {
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="favatar"></span><span class="fname"></span>';
+    li.querySelector('.favatar').textContent = initials(f.name);
+    li.querySelector('.fname').textContent = f.name;
+    friendsEl.appendChild(li);
+  });
+
+  let posts = [];
+  try { posts = JSON.parse(localStorage.getItem(K.posts) || 'null'); } catch (_) { posts = null; }
+  if (!posts) {
+    posts = [
+      { author: 'Sam Chen', text: 'Just shipped the first version of ' + ${JSON.stringify(projectName)} + ' — feels great to have something real running.', at: Date.now() - 3600000, likes: 3, liked: false },
+      { author: 'Alex Rivera', text: 'Welcome to the feed! Post something below to see it appear here instantly.', at: Date.now() - 7200000, likes: 1, liked: false }
+    ];
+    localStorage.setItem(K.posts, JSON.stringify(posts));
+  }
+  const save = () => localStorage.setItem(K.posts, JSON.stringify(posts));
+
+  const fmtTime = (ts) => {
+    const mins = Math.round((Date.now() - ts) / 60000);
+    if (mins < 1) return 'just now';
+    if (mins < 60) return mins + 'm ago';
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return hrs + 'h ago';
+    return Math.round(hrs / 24) + 'd ago';
+  };
+
+  const postsEl = document.getElementById('posts');
+  const render = () => {
+    postsEl.innerHTML = '';
+    if (!posts.length) {
+      const e = document.createElement('div');
+      e.className = 'empty';
+      e.textContent = 'No posts yet — write the first one above.';
+      postsEl.appendChild(e);
+      return;
+    }
+    posts.forEach((p, i) => {
+      const el = document.createElement('div');
+      el.className = 'card post';
+      el.innerHTML =
+        '<div class="postHead"><span class="favatar"></span>' +
+        '<div><div class="postAuthor"></div><div class="postTime"></div></div></div>' +
+        '<p class="postText"></p>' +
+        '<div class="postActions"><button class="likeBtn" type="button"><span class="likeIcon">&#9825;</span><span class="likeCount"></span></button></div>';
+      el.querySelector('.favatar').textContent = initials(p.author);
+      el.querySelector('.postAuthor').textContent = p.author;
+      el.querySelector('.postTime').textContent = fmtTime(p.at);
+      el.querySelector('.postText').textContent = p.text;
+      const likeBtn = el.querySelector('.likeBtn');
+      const likeCount = el.querySelector('.likeCount');
+      const paintLike = () => {
+        likeCount.textContent = p.likes;
+        likeBtn.classList.toggle('liked', !!p.liked);
+        likeBtn.querySelector('.likeIcon').innerHTML = p.liked ? '&#9829;' : '&#9825;';
+      };
+      paintLike();
+      likeBtn.onclick = () => {
+        p.liked = !p.liked;
+        p.likes += p.liked ? 1 : -1;
+        save();
+        paintLike();
+      };
+      postsEl.appendChild(el);
+    });
+  };
+  render();
+
+  const composer = document.getElementById('composer');
+  const postText = document.getElementById('postText');
+  composer.onsubmit = (e) => {
+    e.preventDefault();
+    const text = (postText.value || '').trim();
+    if (!text) return;
+    posts.unshift({ author: 'You', text, at: Date.now(), likes: 0, liked: false });
+    postText.value = '';
+    save();
+    render();
+  };
+})();`);
+      };
+
+      const writeWeather = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="wx">
+  <h1>${projectName}</h1>
+  <form id="searchForm"><input id="city" placeholder="Search a city…" required autocomplete="off"><button>Search</button></form>
+  <div id="status" class="status"></div>
+  <section id="result" class="result" hidden>
+    <div class="place" id="place"></div>
+    <div class="now">
+      <div class="temp" id="temp"></div>
+      <div class="cond" id="cond"></div>
+    </div>
+    <div class="grid" id="details"></div>
+    <div class="forecast" id="forecast"></div>
+  </section>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#3aa0ff;--ok:#28c76f;--warn:#e0a020}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.wx{max-width:520px;margin:0 auto;padding:32px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 18px}
+#searchForm{display:flex;gap:8px}
+#searchForm input{flex:1;background:#1a1f2c;border:1px solid var(--line);border-radius:8px;padding:10px 12px;color:var(--fg);font-size:14px}
+#searchForm button{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer}
+.status{color:var(--mut);margin-top:12px;font-size:13px;min-height:18px}
+.result{margin-top:20px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px}
+.place{color:var(--mut);font-size:13px;text-transform:uppercase;letter-spacing:.05em}
+.now{display:flex;align-items:baseline;gap:14px;margin:8px 0 18px}
+.temp{font:700 56px ui-monospace,Menlo,monospace;color:var(--acc)}
+.cond{font-size:16px;color:var(--fg)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px}
+.grid div{background:#1a1f2c;border-radius:8px;padding:10px;font-size:12.5px;color:var(--mut)}
+.grid b{display:block;color:var(--fg);font-size:15px;margin-top:2px}
+.forecast{display:flex;gap:8px;overflow-x:auto}
+.day{flex:1;min-width:64px;text-align:center;background:#1a1f2c;border-radius:8px;padding:10px 6px;font-size:12px;color:var(--mut)}
+.day b{display:block;color:var(--fg);margin:4px 0}`);
+        push('/scripts/app.js', `// ${projectName} — real weather, via Open-Meteo (free, no key required)
+(function(){
+  const CODE = {0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Depositing rime fog',
+    51:'Light drizzle',53:'Drizzle',55:'Dense drizzle',61:'Light rain',63:'Rain',65:'Heavy rain',
+    71:'Light snow',73:'Snow',75:'Heavy snow',80:'Rain showers',81:'Rain showers',82:'Violent showers',
+    95:'Thunderstorm',96:'Thunderstorm w/ hail',99:'Thunderstorm w/ heavy hail'};
+  const statusEl = document.getElementById('status');
+  const resultEl = document.getElementById('result');
+  async function search(city) {
+    statusEl.textContent = 'Searching…';
+    resultEl.hidden = true;
+    try {
+      const geo = await fetch('https://geocoding-api.open-meteo.com/v1/search?count=1&name=' + encodeURIComponent(city)).then(r => r.json());
+      const hit = geo.results && geo.results[0];
+      if (!hit) { statusEl.textContent = 'No city found for "' + city + '".'; return; }
+      const wx = await fetch('https://api.open-meteo.com/v1/forecast?latitude=' + hit.latitude + '&longitude=' + hit.longitude +
+        '&current=temperature_2m,weather_code,wind_speed_10m,relative_humidity_2m&daily=temperature_2m_max,temperature_2m_min,weather_code&timezone=auto').then(r => r.json());
+      document.getElementById('place').textContent = [hit.name, hit.admin1, hit.country].filter(Boolean).join(', ');
+      document.getElementById('temp').textContent = Math.round(wx.current.temperature_2m) + '°C';
+      document.getElementById('cond').textContent = CODE[wx.current.weather_code] || 'Unknown';
+      document.getElementById('details').innerHTML =
+        '<div>Humidity<b>' + wx.current.relative_humidity_2m + '%</b></div>' +
+        '<div>Wind<b>' + Math.round(wx.current.wind_speed_10m) + ' km/h</b></div>';
+      const days = wx.daily.time.slice(0, 5).map((d, i) => {
+        const label = new Date(d).toLocaleDateString(undefined, { weekday: 'short' });
+        return '<div class="day">' + label + '<b>' + Math.round(wx.daily.temperature_2m_max[i]) + '°</b>' + Math.round(wx.daily.temperature_2m_min[i]) + '°</div>';
+      }).join('');
+      document.getElementById('forecast').innerHTML = days;
+      resultEl.hidden = false;
+      statusEl.textContent = '';
+      try { localStorage.setItem('cs.weather.lastCity', city); } catch(_){}
+    } catch (e) {
+      statusEl.textContent = 'Could not load weather — check your connection (needs internet for real data).';
+    }
+  }
+  document.getElementById('searchForm').onsubmit = (e) => {
+    e.preventDefault();
+    const city = document.getElementById('city').value.trim();
+    if (city) search(city);
+  };
+  try {
+    const last = localStorage.getItem('cs.weather.lastCity');
+    if (last) { document.getElementById('city').value = last; search(last); }
+  } catch(_){}
+})();`);
+      };
+
+      const writeQuiz = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="quiz">
+  <h1>${projectName}</h1>
+  <div id="progress" class="progress"></div>
+  <div id="card" class="card"></div>
+  <div id="finalScore" class="final" hidden></div>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#7c5cff;--ok:#28c76f;--bad:#ff5c5c}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.quiz{width:420px;padding:24px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 8px;text-align:center}
+.progress{color:var(--mut);font-size:12.5px;text-align:center;margin-bottom:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px}
+.q{font-size:16px;margin-bottom:16px;font-weight:600}
+.opt{display:block;width:100%;text-align:left;background:#1a1f2c;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:12px 14px;margin-bottom:8px;cursor:pointer;font-size:13.5px}
+.opt:hover{border-color:var(--acc)}
+.opt.correct{background:rgba(40,199,111,.18);border-color:var(--ok)}
+.opt.wrong{background:rgba(255,92,92,.18);border-color:var(--bad)}
+.next{margin-top:12px;background:var(--acc);color:#fff;border:none;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer}
+.final{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:32px;text-align:center}
+.final .big{font:700 42px ui-monospace,Menlo,monospace;color:var(--acc);margin:10px 0}
+.final .best{color:var(--mut);font-size:13px}`);
+        push('/scripts/app.js', `// ${projectName} — real quiz with scoring
+(function(){
+  const QUESTIONS = [
+    { q: 'What does HTML stand for?', opts: ['Hyper Text Markup Language','High Tech Modern Language','Home Tool Markup Language','Hyperlink and Text Markup Language'], a: 0 },
+    { q: 'Which company created JavaScript?', opts: ['Microsoft','Netscape','Apple','Sun Microsystems'], a: 1 },
+    { q: 'What is the capital of Japan?', opts: ['Seoul','Beijing','Tokyo','Bangkok'], a: 2 },
+    { q: 'What is 7 × 8?', opts: ['54','56','58','64'], a: 1 },
+    { q: 'Which planet is known as the Red Planet?', opts: ['Venus','Mars','Jupiter','Saturn'], a: 1 },
+    { q: 'What does CSS stand for?', opts: ['Creative Style Sheets','Cascading Style Sheets','Computer Style Sheets','Colorful Style Sheets'], a: 1 },
+    { q: 'Who wrote "Romeo and Juliet"?', opts: ['Charles Dickens','Mark Twain','William Shakespeare','Jane Austen'], a: 2 },
+    { q: 'What is the largest ocean on Earth?', opts: ['Atlantic','Indian','Arctic','Pacific'], a: 3 }
+  ];
+  let order = QUESTIONS.map((_, i) => i).sort(() => Math.random() - 0.5);
+  let idx = 0, score = 0, answered = false;
+  const card = document.getElementById('card');
+  const progress = document.getElementById('progress');
+  const finalEl = document.getElementById('finalScore');
+  function render() {
+    if (idx >= order.length) return finish();
+    const item = QUESTIONS[order[idx]];
+    answered = false;
+    progress.textContent = 'Question ' + (idx + 1) + ' of ' + order.length + ' · Score ' + score;
+    card.innerHTML = '<div class="q">' + item.q + '</div>' +
+      item.opts.map((o, i) => '<button class="opt" data-i="' + i + '">' + o + '</button>').join('');
+    card.querySelectorAll('.opt').forEach(btn => btn.onclick = () => choose(btn, item));
+  }
+  function choose(btn, item) {
+    if (answered) return;
+    answered = true;
+    const i = parseInt(btn.dataset.i, 10);
+    card.querySelectorAll('.opt').forEach((b, bi) => {
+      if (bi === item.a) b.classList.add('correct');
+      else if (bi === i) b.classList.add('wrong');
+    });
+    if (i === item.a) score++;
+    const next = document.createElement('button');
+    next.className = 'next'; next.textContent = idx + 1 < order.length ? 'Next question' : 'See results';
+    next.onclick = () => { idx++; render(); };
+    card.appendChild(next);
+  }
+  function finish() {
+    card.remove(); progress.remove();
+    let best = 0;
+    try { best = parseInt(localStorage.getItem('cs.quiz.best') || '0', 10); } catch(_){}
+    if (score > best) { best = score; try { localStorage.setItem('cs.quiz.best', String(best)); } catch(_){} }
+    finalEl.hidden = false;
+    finalEl.innerHTML = '<div>Quiz complete!</div><div class="big">' + score + ' / ' + order.length + '</div>' +
+      '<div class="best">Best score: ' + best + ' / ' + order.length + '</div>' +
+      '<button class="next" id="retry" style="margin-top:14px">Play again</button>';
+    document.getElementById('retry').onclick = () => location.reload();
+  }
+  render();
+})();`);
+      };
+
+      const writeClock = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="clock">
+  <h1>${projectName}</h1>
+  <form id="addForm"><select id="tzSelect"></select><button>Add clock</button></form>
+  <div id="clocks" class="clocks"></div>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#3aa0ff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.clock{max-width:640px;margin:0 auto;padding:32px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 18px}
+#addForm{display:flex;gap:8px;margin-bottom:20px}
+#addForm select{flex:1;background:#1a1f2c;border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--fg)}
+#addForm button{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer}
+.clocks{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;position:relative}
+.tile .name{color:var(--mut);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+.tile .time{font:700 30px ui-monospace,Menlo,monospace;color:var(--acc);margin:8px 0 2px}
+.tile .date{color:var(--mut);font-size:12px}
+.tile .rm{position:absolute;top:10px;right:10px;background:none;border:none;color:var(--mut);cursor:pointer;font-size:14px}`);
+        push('/scripts/app.js', `// ${projectName} — real, live-updating world clock
+(function(){
+  const ZONES = ['America/New_York','America/Los_Angeles','America/Chicago','Europe/London','Europe/Paris','Europe/Berlin',
+    'Asia/Tokyo','Asia/Shanghai','Asia/Kolkata','Asia/Dubai','Australia/Sydney','Pacific/Auckland','UTC'];
+  const select = document.getElementById('tzSelect');
+  select.innerHTML = ZONES.map(z => '<option value="' + z + '">' + z.replace(/_/g,' ') + '</option>').join('');
+  const K = 'cs.clock.zones';
+  const load = () => { try { return JSON.parse(localStorage.getItem(K) || '[]'); } catch(_) { return []; } };
+  const save = (list) => { try { localStorage.setItem(K, JSON.stringify(list)); } catch(_){} };
+  let zones = load();
+  if (!zones.length) zones = [Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC', 'Europe/London', 'Asia/Tokyo'];
+  const clocksEl = document.getElementById('clocks');
+  function render() {
+    clocksEl.innerHTML = zones.map((z, i) => {
+      const now = new Date();
+      const time = new Intl.DateTimeFormat('en-US', { timeZone: z, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(now);
+      const date = new Intl.DateTimeFormat('en-US', { timeZone: z, weekday: 'short', month: 'short', day: 'numeric' }).format(now);
+      return '<div class="tile"><button class="rm" data-i="' + i + '">✕</button><div class="name">' + z.replace(/_/g,' ') + '</div>' +
+        '<div class="time">' + time + '</div><div class="date">' + date + '</div></div>';
+    }).join('');
+    clocksEl.querySelectorAll('.rm').forEach(b => b.onclick = () => {
+      zones.splice(parseInt(b.dataset.i, 10), 1); save(zones); render();
+    });
+  }
+  document.getElementById('addForm').onsubmit = (e) => {
+    e.preventDefault();
+    const z = select.value;
+    if (!zones.includes(z)) { zones.push(z); save(zones); render(); }
+  };
+  render();
+  setInterval(render, 1000);
+})();`);
+      };
+
+      const writeMusic = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="board">
+  <h1>${projectName}</h1>
+  <p class="hint">Click a pad, or press keys 1–9 / Q–I.</p>
+  <div id="pads" class="pads"></div>
+  <div class="ctrls">
+    <label>Tempo <input id="bpm" type="range" min="60" max="200" value="120"></label>
+    <button id="playSeq">▶ Play sequence</button>
+    <button id="clearSeq">Clear</button>
+  </div>
+  <div id="seqView" class="seq"></div>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#7c5cff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.board{max-width:560px;margin:0 auto;padding:32px 20px;text-align:center}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 4px}
+.hint{color:var(--mut);font-size:12.5px;margin:0 0 20px}
+.pads{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.pad{aspect-ratio:1;border-radius:14px;border:1px solid var(--line);background:var(--card);color:var(--fg);font:700 16px ui-monospace,Menlo,monospace;cursor:pointer;transition:transform .05s}
+.pad:active,.pad.hit{transform:scale(.94);background:var(--acc);color:#fff}
+.ctrls{display:flex;align-items:center;gap:10px;justify-content:center;margin-top:22px;flex-wrap:wrap}
+.ctrls label{color:var(--mut);font-size:12.5px;display:flex;align-items:center;gap:6px}
+.ctrls button{background:#1a1f2c;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px}
+.seq{color:var(--mut);font-size:12px;margin-top:14px;min-height:18px}`);
+        push('/scripts/app.js', `// ${projectName} — real soundboard, synthesized via the Web Audio API (no audio files needed)
+(function(){
+  const NOTES = [261.63,293.66,329.63,349.23,392.00,440.00,493.88,523.25,587.33];
+  const KEYS = ['1','2','3','4','5','6','7','8','9'];
+  let ctx = null;
+  const ensureCtx = () => { if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)(); return ctx; };
+  function beep(freq, dur) {
+    const ac = ensureCtx();
+    const osc = ac.createOscillator();
+    const gain = ac.createGain();
+    osc.type = 'sine'; osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.25, ac.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + (dur || 0.3));
+    osc.connect(gain); gain.connect(ac.destination);
+    osc.start(); osc.stop(ac.currentTime + (dur || 0.3));
+  }
+  const padsEl = document.getElementById('pads');
+  padsEl.innerHTML = NOTES.map((f, i) => '<button class="pad" data-i="' + i + '">' + KEYS[i] + '</button>').join('');
+  let sequence = [];
+  const seqView = document.getElementById('seqView');
+  function hit(i, record) {
+    beep(NOTES[i]);
+    const el = padsEl.children[i];
+    el.classList.add('hit'); setTimeout(() => el.classList.remove('hit'), 120);
+    if (record) { sequence.push(i); seqView.textContent = 'Recorded ' + sequence.length + ' note(s)'; }
+  }
+  padsEl.querySelectorAll('.pad').forEach((b, i) => b.onclick = () => hit(i, true));
+  window.addEventListener('keydown', (e) => {
+    const i = KEYS.indexOf(e.key);
+    if (i >= 0) hit(i, true);
+  });
+  document.getElementById('playSeq').onclick = () => {
+    const bpm = parseInt(document.getElementById('bpm').value, 10);
+    const gap = 60000 / bpm;
+    sequence.forEach((i, idx) => setTimeout(() => hit(i, false), idx * gap));
+  };
+  document.getElementById('clearSeq').onclick = () => { sequence = []; seqView.textContent = ''; };
+})();`);
+      };
+
+      const writeDrawing = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="draw">
+  <h1>${projectName}</h1>
+  <div class="tools">
+    <input type="color" id="color" value="#3aa0ff">
+    <input type="range" id="size" min="1" max="40" value="6">
+    <button id="clear">Clear</button>
+    <button id="save">Download PNG</button>
+  </div>
+  <canvas id="canvas" width="800" height="520"></canvas>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#3aa0ff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.draw{max-width:840px;margin:0 auto;padding:24px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
+.tools{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.tools button{background:#1a1f2c;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px}
+.tools input[type=color]{width:40px;height:32px;border:none;border-radius:6px;background:none;cursor:pointer}
+#canvas{width:100%;background:#fff;border-radius:14px;border:1px solid var(--line);touch-action:none;cursor:crosshair}`);
+        push('/scripts/app.js', `// ${projectName} — real canvas drawing app
+(function(){
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const colorEl = document.getElementById('color');
+  const sizeEl = document.getElementById('size');
+  let drawing = false, lastX = 0, lastY = 0;
+  function pos(e) {
+    const r = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / r.width, scaleY = canvas.height / r.height;
+    const p = e.touches ? e.touches[0] : e;
+    return { x: (p.clientX - r.left) * scaleX, y: (p.clientY - r.top) * scaleY };
+  }
+  function start(e) { drawing = true; const p = pos(e); lastX = p.x; lastY = p.y; }
+  function move(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    const p = pos(e);
+    ctx.strokeStyle = colorEl.value;
+    ctx.lineWidth = parseInt(sizeEl.value, 10);
+    ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    ctx.beginPath(); ctx.moveTo(lastX, lastY); ctx.lineTo(p.x, p.y); ctx.stroke();
+    lastX = p.x; lastY = p.y;
+  }
+  function end() { drawing = false; }
+  canvas.addEventListener('mousedown', start);
+  canvas.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', end);
+  canvas.addEventListener('touchstart', start);
+  canvas.addEventListener('touchmove', move);
+  canvas.addEventListener('touchend', end);
+  document.getElementById('clear').onclick = () => ctx.clearRect(0, 0, canvas.width, canvas.height);
+  document.getElementById('save').onclick = () => {
+    const a = document.createElement('a');
+    a.download = 'drawing.png';
+    a.href = canvas.toDataURL('image/png');
+    document.body.appendChild(a); a.click(); a.remove();
+  };
+})();`);
+      };
+
+      const writeGallery = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="gal">
+  <h1>${projectName}</h1>
+  <label class="add"><input type="file" id="fileInput" accept="image/*" multiple hidden>+ Add photos</label>
+  <div id="grid" class="grid"></div>
+  <div id="empty" class="empty" hidden>No photos yet — add some above.</div>
+</main>
+<div id="lightbox" class="lightbox" hidden><img id="lightboxImg"><button id="lbClose">✕</button></div>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#3aa0ff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.gal{max-width:900px;margin:0 auto;padding:32px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
+.add{display:inline-block;background:var(--acc);color:#fff;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;margin-bottom:18px;font-size:13.5px}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.thumb{position:relative;aspect-ratio:1;border-radius:10px;overflow:hidden;border:1px solid var(--line);cursor:pointer}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.thumb .rm{position:absolute;top:6px;right:6px;background:rgba(0,0,0,.6);color:#fff;border:none;border-radius:6px;width:24px;height:24px;cursor:pointer}
+.empty{color:var(--mut);font-size:13px;margin-top:20px}
+.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.9);display:flex;align-items:center;justify-content:center;z-index:10}
+.lightbox img{max-width:90%;max-height:85%;border-radius:8px}
+.lightbox button{position:absolute;top:20px;right:24px;background:none;border:none;color:#fff;font-size:22px;cursor:pointer}`);
+        push('/scripts/app.js', `// ${projectName} — real photo gallery (uploads stored locally as data URLs)
+(function(){
+  const K = 'cs.gallery.photos';
+  const load = () => { try { return JSON.parse(localStorage.getItem(K) || '[]'); } catch(_) { return []; } };
+  const save = (list) => { try { localStorage.setItem(K, JSON.stringify(list)); } catch(_){} };
+  let photos = load();
+  const grid = document.getElementById('grid');
+  const empty = document.getElementById('empty');
+  function render() {
+    empty.hidden = photos.length > 0;
+    grid.innerHTML = photos.map((src, i) =>
+      '<div class="thumb" data-i="' + i + '"><img src="' + src + '"><button class="rm" data-i="' + i + '">✕</button></div>'
+    ).join('');
+    grid.querySelectorAll('.thumb img').forEach(img => img.onclick = () => openLightbox(img.src));
+    grid.querySelectorAll('.rm').forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      photos.splice(parseInt(b.dataset.i, 10), 1); save(photos); render();
+    });
+  }
+  function openLightbox(src) {
+    document.getElementById('lightboxImg').src = src;
+    document.getElementById('lightbox').hidden = false;
+  }
+  document.getElementById('lbClose').onclick = () => { document.getElementById('lightbox').hidden = true; };
+  document.getElementById('fileInput').addEventListener('change', (e) => {
+    const files = Array.from(e.target.files || []);
+    let pending = files.length;
+    if (!pending) return;
+    files.forEach(f => {
+      const reader = new FileReader();
+      reader.onload = () => { photos.push(reader.result); if (--pending === 0) { save(photos); render(); } };
+      reader.readAsDataURL(f);
+    });
+  });
+  render();
+})();`);
+      };
+
+      const writeCalendar = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="cal">
+  <h1>${projectName}</h1>
+  <div class="nav"><button id="prev">‹</button><div id="label" class="label"></div><button id="next">›</button></div>
+  <div class="dow"><div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div></div>
+  <div id="grid" class="grid"></div>
+</main>
+<div id="dayModal" class="modal" hidden>
+  <div class="box">
+    <div class="mhead"><span id="mdate"></span><button id="mclose">✕</button></div>
+    <div id="events" class="events"></div>
+    <form id="addEvent"><input id="etext" placeholder="Add an event…" required><button>Add</button></form>
+  </div>
+</div>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#3aa0ff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.cal{max-width:640px;margin:0 auto;padding:28px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
+.nav{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.nav button{background:#1a1f2c;color:var(--fg);border:1px solid var(--line);border-radius:8px;width:32px;height:32px;cursor:pointer;font-size:16px}
+.label{font-weight:600;font-size:15px}
+.dow{display:grid;grid-template-columns:repeat(7,1fr);text-align:center;color:var(--mut);font-size:11.5px;margin-bottom:6px}
+.grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.day{aspect-ratio:1;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:6px;font-size:12px;cursor:pointer;position:relative}
+.day.other{opacity:.3}
+.day.today{border-color:var(--acc)}
+.day .dot{position:absolute;bottom:6px;left:6px;width:6px;height:6px;border-radius:50%;background:var(--acc)}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:10}
+.box{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;width:320px}
+.mhead{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;font-weight:600}
+.mhead button{background:none;border:none;color:var(--mut);cursor:pointer;font-size:14px}
+.events{margin-bottom:12px;max-height:160px;overflow:auto}
+.events div{background:#1a1f2c;border-radius:6px;padding:8px 10px;margin-bottom:6px;font-size:13px;display:flex;justify-content:space-between}
+.events button{background:none;border:none;color:var(--mut);cursor:pointer}
+#addEvent{display:flex;gap:6px}
+#addEvent input{flex:1;background:#1a1f2c;border:1px solid var(--line);border-radius:6px;padding:8px;color:var(--fg)}
+#addEvent button{background:var(--acc);color:#fff;border:none;border-radius:6px;padding:8px 12px;cursor:pointer}`);
+        push('/scripts/app.js', `// ${projectName} — real month calendar with persistent events
+(function(){
+  const K = 'cs.calendar.events';
+  const load = () => { try { return JSON.parse(localStorage.getItem(K) || '{}'); } catch(_) { return {}; } };
+  const save = (m) => { try { localStorage.setItem(K, JSON.stringify(m)); } catch(_){} };
+  let events = load();
+  let view = new Date(); view.setDate(1);
+  const grid = document.getElementById('grid');
+  const label = document.getElementById('label');
+  const key = (d) => d.getFullYear() + '-' + (d.getMonth()+1) + '-' + d.getDate();
+  function render() {
+    label.textContent = view.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    const first = new Date(view.getFullYear(), view.getMonth(), 1);
+    const startDow = first.getDay();
+    const daysInMonth = new Date(view.getFullYear(), view.getMonth() + 1, 0).getDate();
+    const today = new Date();
+    let cells = [];
+    for (let i = 0; i < startDow; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(new Date(view.getFullYear(), view.getMonth(), d));
+    grid.innerHTML = cells.map(d => {
+      if (!d) return '<div class="day other"></div>';
+      const k = key(d);
+      const isToday = d.toDateString() === today.toDateString();
+      const hasEvents = events[k] && events[k].length;
+      return '<div class="day' + (isToday ? ' today' : '') + '" data-k="' + k + '">' + d.getDate() +
+        (hasEvents ? '<span class="dot"></span>' : '') + '</div>';
+    }).join('');
+    grid.querySelectorAll('.day[data-k]').forEach(el => el.onclick = () => openDay(el.dataset.k));
+  }
+  let activeKey = null;
+  function openDay(k) {
+    activeKey = k;
+    document.getElementById('mdate').textContent = k;
+    renderEvents();
+    document.getElementById('dayModal').hidden = false;
+  }
+  function renderEvents() {
+    const list = events[activeKey] || [];
+    document.getElementById('events').innerHTML = list.map((t, i) =>
+      '<div>' + t + '<button data-i="' + i + '">✕</button></div>'
+    ).join('') || '<div style="color:var(--mut)">No events.</div>';
+    document.querySelectorAll('#events button').forEach(b => b.onclick = () => {
+      list.splice(parseInt(b.dataset.i, 10), 1);
+      events[activeKey] = list; save(events); renderEvents(); render();
+    });
+  }
+  document.getElementById('mclose').onclick = () => { document.getElementById('dayModal').hidden = true; };
+  document.getElementById('addEvent').onsubmit = (e) => {
+    e.preventDefault();
+    const input = document.getElementById('etext');
+    if (!events[activeKey]) events[activeKey] = [];
+    events[activeKey].push(input.value.trim());
+    input.value = '';
+    save(events); renderEvents(); render();
+  };
+  document.getElementById('prev').onclick = () => { view.setMonth(view.getMonth() - 1); render(); };
+  document.getElementById('next').onclick = () => { view.setMonth(view.getMonth() + 1); render(); };
+  render();
+})();`);
+      };
+
+      const writePassword = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="pw">
+  <h1>${projectName}</h1>
+  <section class="card">
+    <div class="out"><span id="genOut">Click Generate</span><button id="copyGen">Copy</button></div>
+    <label>Length <span id="lenVal">16</span><input type="range" id="len" min="6" max="48" value="16"></label>
+    <div class="opts">
+      <label><input type="checkbox" id="upper" checked> Uppercase</label>
+      <label><input type="checkbox" id="lower" checked> Lowercase</label>
+      <label><input type="checkbox" id="nums" checked> Numbers</label>
+      <label><input type="checkbox" id="syms" checked> Symbols</label>
+    </div>
+    <button id="gen" class="primary">Generate password</button>
+  </section>
+  <section class="card">
+    <h2>Saved entries <span class="warn">(stored locally, unencrypted — for convenience only)</span></h2>
+    <form id="vaultForm"><input id="vSite" placeholder="Site" required><input id="vUser" placeholder="Username"><input id="vPass" placeholder="Password" required><button>Save</button></form>
+    <div id="vaultList"></div>
+  </section>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#3aa0ff;--warn:#e0a020}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.pw{max-width:520px;margin:0 auto;padding:32px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
+.out{display:flex;justify-content:space-between;align-items:center;background:#1a1f2c;border-radius:8px;padding:12px 14px;font:14px ui-monospace,Menlo,monospace;margin-bottom:14px;word-break:break-all}
+.out button{background:var(--acc);color:#fff;border:none;border-radius:6px;padding:6px 10px;cursor:pointer;font-size:12px;flex-shrink:0;margin-left:10px}
+.pw label{display:block;color:var(--mut);font-size:12.5px;margin-bottom:10px}
+.pw input[type=range]{width:100%}
+.opts{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:14px;font-size:13px}
+.opts label{display:flex;align-items:center;gap:6px}
+.primary{width:100%;background:var(--acc);color:#fff;border:none;border-radius:8px;padding:11px;font-weight:600;cursor:pointer}
+h2{font-size:14px;margin:0 0 10px}
+.warn{color:var(--warn);font-weight:400;font-size:11px}
+#vaultForm{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+#vaultForm input{flex:1;min-width:80px;background:#1a1f2c;border:1px solid var(--line);border-radius:6px;padding:8px;color:var(--fg);font-size:12.5px}
+#vaultForm button{background:#1a1f2c;border:1px solid var(--line);color:var(--fg);border-radius:6px;padding:8px 12px;cursor:pointer}
+.entry{display:flex;justify-content:space-between;align-items:center;background:#1a1f2c;border-radius:8px;padding:10px 12px;margin-bottom:6px;font-size:13px}
+.entry .meta{color:var(--mut);font-size:11.5px}
+.entry button{background:none;border:none;color:var(--mut);cursor:pointer}`);
+        push('/scripts/app.js', `// ${projectName} — real crypto-random password generator + local vault
+(function(){
+  const SETS = { upper: 'ABCDEFGHJKLMNPQRSTUVWXYZ', lower: 'abcdefghijkmnpqrstuvwxyz', nums: '23456789', syms: '!@#$%^&*_-+=?' };
+  const lenEl = document.getElementById('len');
+  document.getElementById('lenVal').textContent = lenEl.value;
+  lenEl.oninput = () => { document.getElementById('lenVal').textContent = lenEl.value; };
+  function generate() {
+    let pool = '';
+    ['upper','lower','nums','syms'].forEach(k => { if (document.getElementById(k).checked) pool += SETS[k]; });
+    if (!pool) pool = SETS.lower;
+    const len = parseInt(lenEl.value, 10);
+    const bytes = new Uint32Array(len);
+    crypto.getRandomValues(bytes);
+    let out = '';
+    for (let i = 0; i < len; i++) out += pool[bytes[i] % pool.length];
+    return out;
+  }
+  document.getElementById('gen').onclick = () => { document.getElementById('genOut').textContent = generate(); };
+  document.getElementById('copyGen').onclick = () => {
+    const txt = document.getElementById('genOut').textContent;
+    if (txt && txt !== 'Click Generate') navigator.clipboard && navigator.clipboard.writeText(txt).catch(()=>{});
+  };
+  const K = 'cs.password.vault';
+  const load = () => { try { return JSON.parse(localStorage.getItem(K) || '[]'); } catch(_) { return []; } };
+  const save = (list) => { try { localStorage.setItem(K, JSON.stringify(list)); } catch(_){} };
+  let vault = load();
+  function renderVault() {
+    document.getElementById('vaultList').innerHTML = vault.map((e, i) =>
+      '<div class="entry"><div><div>' + e.site + '</div><div class="meta">' + (e.user || '') + ' · ' + e.pass + '</div></div><button data-i="' + i + '">✕</button></div>'
+    ).join('') || '<div style="color:var(--mut);font-size:13px">No saved entries.</div>';
+    document.querySelectorAll('#vaultList button').forEach(b => b.onclick = () => {
+      vault.splice(parseInt(b.dataset.i, 10), 1); save(vault); renderVault();
+    });
+  }
+  document.getElementById('vaultForm').onsubmit = (e) => {
+    e.preventDefault();
+    vault.push({ site: document.getElementById('vSite').value.trim(), user: document.getElementById('vUser').value.trim(), pass: document.getElementById('vPass').value.trim() });
+    save(vault); renderVault();
+    e.target.reset();
+  };
+  renderVault();
+})();`);
+      };
+
+      const writeQr = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="qr">
+  <h1>${projectName}</h1>
+  <form id="form">
+    <textarea id="text" placeholder="Enter text or a URL…" required>https://example.com</textarea>
+    <label>Size <select id="size"><option value="200">Small</option><option value="300" selected>Medium</option><option value="400">Large</option></select></label>
+    <button>Generate</button>
+  </form>
+  <div id="out" class="out" hidden>
+    <img id="qrImg" alt="QR code">
+    <a id="dl" download="qrcode.png">Download PNG</a>
+  </div>
+  <p class="hint">Generated via the free api.qrserver.com QR rendering service — needs an internet connection.</p>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#3aa0ff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.qr{max-width:420px;margin:0 auto;padding:32px 20px;text-align:center}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 18px}
+#form{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;text-align:left}
+textarea{width:100%;min-height:70px;background:#1a1f2c;border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--fg);font-family:inherit;resize:vertical;margin-bottom:12px}
+#form label{display:block;color:var(--mut);font-size:12.5px;margin-bottom:12px}
+#form select{background:#1a1f2c;border:1px solid var(--line);border-radius:6px;padding:6px 8px;color:var(--fg);margin-left:8px}
+#form button{width:100%;background:var(--acc);color:#fff;border:none;border-radius:8px;padding:11px;font-weight:600;cursor:pointer}
+.out{margin-top:20px}
+.out img{border-radius:12px;background:#fff;padding:12px}
+.out a{display:block;margin-top:10px;color:var(--acc);font-size:13px;text-decoration:none}
+.hint{color:var(--mut);font-size:11.5px;margin-top:16px}`);
+        push('/scripts/app.js', `// ${projectName} — real QR code generator via api.qrserver.com (free, keyless)
+(function(){
+  document.getElementById('form').onsubmit = (e) => {
+    e.preventDefault();
+    const text = document.getElementById('text').value.trim();
+    const size = document.getElementById('size').value;
+    if (!text) return;
+    const url = 'https://api.qrserver.com/v1/create-qr-code/?size=' + size + 'x' + size + '&data=' + encodeURIComponent(text);
+    document.getElementById('qrImg').src = url;
+    document.getElementById('dl').href = url;
+    document.getElementById('out').hidden = false;
+    try { localStorage.setItem('cs.qr.lastText', text); } catch(_){}
+  };
+  try {
+    const last = localStorage.getItem('cs.qr.lastText');
+    if (last) document.getElementById('text').value = last;
+  } catch(_){}
+})();`);
+      };
+
+      const writeMobile = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>${projectName}</title>
+<link rel="manifest" href="/manifest.json">
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="app">
+  <header><h1>${projectName}</h1><button id="installBtn" hidden>Install app</button></header>
+  <p class="status" id="status">Loading…</p>
+  <form id="addForm"><input id="text" placeholder="Quick note…" required><button>Add</button></form>
+  <ul id="list" class="list"></ul>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/manifest.json', JSON.stringify({
+          name: projectName, short_name: projectName, start_url: '/', display: 'standalone',
+          background_color: '#0b0d12', theme_color: '#0b0d12',
+          icons: [{ src: '/icon.svg', sizes: 'any', type: 'image/svg+xml' }]
+        }, null, 2));
+        push('/icon.svg', `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="20" fill="#3aa0ff"/><text x="50" y="62" font-size="46" text-anchor="middle" fill="#fff" font-family="sans-serif">${(projectName || 'A')[0].toUpperCase()}</text></svg>`);
+        push('/sw.js', `// ${projectName} — real service worker, caches the app shell for offline use
+const CACHE = 'cs-app-v1';
+const ASSETS = ['/', '/index.html', '/styles/main.css', '/scripts/app.js', '/manifest.json'];
+self.addEventListener('install', (e) => {
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)));
+  self.skipWaiting();
+});
+self.addEventListener('activate', (e) => { self.clients.claim(); });
+self.addEventListener('fetch', (e) => {
+  e.respondWith(caches.match(e.request).then((hit) => hit || fetch(e.request).catch(() => hit)));
+});`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#3aa0ff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.app{max-width:480px;margin:0 auto;padding:20px 16px calc(20px + env(safe-area-inset-bottom))}
+header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+h1{font-size:18px;font-weight:600;margin:0}
+header button{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:8px 12px;font-size:12.5px;cursor:pointer}
+.status{color:var(--mut);font-size:12px;margin:0 0 16px}
+#addForm{display:flex;gap:8px;margin-bottom:14px}
+#addForm input{flex:1;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;color:var(--fg);font-size:15px}
+#addForm button{background:var(--acc);color:#fff;border:none;border-radius:10px;padding:0 18px;font-weight:600;cursor:pointer}
+.list{list-style:none;margin:0;padding:0}
+.list li{display:flex;justify-content:space-between;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:8px}
+.list button{background:none;border:none;color:var(--mut);cursor:pointer;font-size:15px}`);
+        push('/scripts/app.js', `// ${projectName} — a real installable PWA (offline-capable via service worker)
+(function(){
+  const statusEl = document.getElementById('status');
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js').then(() => { statusEl.textContent = 'Ready — works offline once installed.'; })
+      .catch(() => { statusEl.textContent = 'Ready (offline caching unavailable in this context).'; });
+  } else {
+    statusEl.textContent = 'Ready.';
+  }
+  let deferredPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    document.getElementById('installBtn').hidden = false;
+  });
+  document.getElementById('installBtn').onclick = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    await deferredPrompt.userChoice;
+    deferredPrompt = null;
+    document.getElementById('installBtn').hidden = true;
+  };
+  const K = 'cs.mobile.notes';
+  const load = () => { try { return JSON.parse(localStorage.getItem(K) || '[]'); } catch(_) { return []; } };
+  const save = (list) => { try { localStorage.setItem(K, JSON.stringify(list)); } catch(_){} };
+  let notes = load();
+  const list = document.getElementById('list');
+  function render() {
+    list.innerHTML = notes.map((n, i) => '<li>' + n + '<button data-i="' + i + '">✕</button></li>').join('');
+    list.querySelectorAll('button').forEach(b => b.onclick = () => { notes.splice(parseInt(b.dataset.i,10),1); save(notes); render(); });
+  }
+  document.getElementById('addForm').onsubmit = (e) => {
+    e.preventDefault();
+    const input = document.getElementById('text');
+    if (input.value.trim()) { notes.unshift(input.value.trim()); save(notes); input.value=''; render(); }
+  };
+  render();
+})();`);
+      };
+
+      const writeRss = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="rss">
+  <h1>${projectName}</h1>
+  <div class="tabs"><button class="tab active" data-tab="url">Fetch by URL</button><button class="tab" data-tab="paste">Paste feed XML</button></div>
+  <form id="urlForm" class="panel"><input id="feedUrl" type="url" placeholder="https://example.com/feed.xml" required><button>Load</button>
+    <p class="hint">Works for feeds that allow cross-origin requests. If it fails, paste the feed's XML instead.</p></form>
+  <form id="pasteForm" class="panel" hidden><textarea id="feedXml" placeholder="Paste RSS/Atom XML here…" required></textarea><button>Parse</button></form>
+  <div id="status" class="status"></div>
+  <div id="items" class="items"></div>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#3aa0ff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.rss{max-width:640px;margin:0 auto;padding:32px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
+.tabs{display:flex;gap:8px;margin-bottom:14px}
+.tab{background:#1a1f2c;color:var(--mut);border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px}
+.tab.active{color:var(--fg);border-color:var(--acc)}
+.panel{display:flex;flex-direction:column;gap:8px}
+.panel input,.panel textarea{background:#1a1f2c;border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--fg);font-family:inherit}
+.panel textarea{min-height:100px;resize:vertical}
+.panel button{align-self:flex-start;background:var(--acc);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-weight:600;cursor:pointer}
+.hint{color:var(--mut);font-size:11.5px;margin:0}
+.status{color:var(--mut);font-size:13px;margin:10px 0}
+.items{display:flex;flex-direction:column;gap:10px}
+.item{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.item a{color:var(--fg);font-weight:600;text-decoration:none;font-size:14.5px}
+.item a:hover{color:var(--acc)}
+.item .date{color:var(--mut);font-size:11.5px;margin:4px 0}
+.item .desc{color:var(--mut);font-size:13px}`);
+        push('/scripts/app.js', `// ${projectName} — real feed reader: fetch a CORS-enabled feed, or paste raw XML (always works, no CORS needed)
+(function(){
+  document.querySelectorAll('.tab').forEach(tab => tab.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('urlForm').hidden = tab.dataset.tab !== 'url';
+    document.getElementById('pasteForm').hidden = tab.dataset.tab !== 'paste';
+  });
+  function parseFeed(xmlText) {
+    const doc = new DOMParser().parseFromString(xmlText, 'text/xml');
+    if (doc.querySelector('parsererror')) throw new Error('Invalid feed XML');
+    const isAtom = !!doc.querySelector('feed');
+    const nodes = isAtom ? Array.from(doc.querySelectorAll('entry')) : Array.from(doc.querySelectorAll('item'));
+    return nodes.map(n => {
+      const get = (sel) => { const el = n.querySelector(sel); return el ? el.textContent.trim() : ''; };
+      const link = isAtom ? (n.querySelector('link') && n.querySelector('link').getAttribute('href')) || '' : get('link');
+      return {
+        title: get('title') || '(untitled)',
+        link,
+        date: get('pubDate') || get('published') || get('updated'),
+        desc: (get('description') || get('summary') || '').replace(/<[^>]+>/g, '').slice(0, 220)
+      };
+    });
+  }
+  function render(items) {
+    document.getElementById('items').innerHTML = items.map(it =>
+      '<div class="item"><a href="' + (it.link || '#') + '" target="_blank" rel="noopener">' + it.title + '</a>' +
+      (it.date ? '<div class="date">' + it.date + '</div>' : '') +
+      (it.desc ? '<div class="desc">' + it.desc + '…</div>' : '') + '</div>'
+    ).join('') || '<div style="color:var(--mut)">No items found.</div>';
+  }
+  const statusEl = document.getElementById('status');
+  document.getElementById('urlForm').onsubmit = async (e) => {
+    e.preventDefault();
+    statusEl.textContent = 'Fetching…';
+    const url = document.getElementById('feedUrl').value.trim();
+    if (!/^https?:[/][/]/i.test(url)) { statusEl.textContent = 'Enter the full feed address, starting with http:// or https://'; return; }
+    let text;
+    try {
+      const res = await fetch(url);
+      if (!res.ok) { statusEl.textContent = 'The server answered ' + res.status + ' for that address — check the feed URL.'; return; }
+      text = await res.text();
+    } catch (err) {
+      statusEl.textContent = 'Could not fetch that feed directly (likely blocked by CORS) — paste its XML instead using the tab above.';
+      return;
+    }
+    try {
+      render(parseFeed(text));
+      statusEl.textContent = '';
+    } catch (err) {
+      statusEl.textContent = 'That address did not return an RSS or Atom feed: ' + (err && err.message || err);
+    }
+  };
+  document.getElementById('pasteForm').onsubmit = (e) => {
+    e.preventDefault();
+    try {
+      render(parseFeed(document.getElementById('feedXml').value));
+      statusEl.textContent = '';
+    } catch (err) {
+      statusEl.textContent = 'Could not parse that XML: ' + err.message;
+    }
+  };
+})();`);
+      };
+
+      const writeBookmark = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="bk">
+  <h1>${projectName}</h1>
+  <form id="addForm">
+    <input id="url" placeholder="https://…" required>
+    <input id="title" placeholder="Title (optional)">
+    <input id="tags" placeholder="tags, comma, separated">
+    <button>Save</button>
+  </form>
+  <input id="search" class="search" placeholder="Search bookmarks…">
+  <div id="list" class="list"></div>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#3aa0ff}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.bk{max-width:640px;margin:0 auto;padding:32px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
+#addForm{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+#addForm input{flex:1;min-width:120px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--fg)}
+#addForm button{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer}
+.search{width:100%;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--fg);margin-bottom:16px}
+.list{display:flex;flex-direction:column;gap:8px}
+.bmark{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.bmark a{color:var(--fg);font-weight:600;text-decoration:none;font-size:14px}
+.bmark a:hover{color:var(--acc)}
+.bmark .url{color:var(--mut);font-size:11.5px;word-break:break-all}
+.bmark .tags{margin-top:6px}
+.bmark .tag{display:inline-block;background:#1a1f2c;color:var(--mut);border-radius:999px;padding:2px 9px;font-size:11px;margin:2px 4px 0 0}
+.bmark button{background:none;border:none;color:var(--mut);cursor:pointer;flex-shrink:0}`);
+        push('/scripts/app.js', `// ${projectName} — real bookmark manager with tags and search
+(function(){
+  const K = 'cs.bookmarks';
+  const load = () => { try { return JSON.parse(localStorage.getItem(K) || '[]'); } catch(_) { return []; } };
+  const save = (list) => { try { localStorage.setItem(K, JSON.stringify(list)); } catch(_){} };
+  let items = load();
+  const listEl = document.getElementById('list');
+  function render(filter) {
+    const q = (filter || '').toLowerCase();
+    const filtered = items.filter(b => !q || (b.title + ' ' + b.url + ' ' + b.tags.join(' ')).toLowerCase().includes(q));
+    listEl.innerHTML = filtered.map((b, i) =>
+      '<div class="bmark"><div><a href="' + b.url + '" target="_blank" rel="noopener">' + (b.title || b.url) + '</a>' +
+      '<div class="url">' + b.url + '</div>' +
+      (b.tags.length ? '<div class="tags">' + b.tags.map(t => '<span class="tag">' + t + '</span>').join('') + '</div>' : '') +
+      '</div><button data-i="' + items.indexOf(b) + '">✕</button></div>'
+    ).join('') || '<div style="color:var(--mut)">No bookmarks yet.</div>';
+    listEl.querySelectorAll('button').forEach(b => b.onclick = () => {
+      items.splice(parseInt(b.dataset.i, 10), 1); save(items); render(document.getElementById('search').value);
+    });
+  }
+  document.getElementById('addForm').onsubmit = (e) => {
+    e.preventDefault();
+    let url = document.getElementById('url').value.trim();
+    if (!/^https?:\\/\\//i.test(url)) url = 'https://' + url;
+    const title = document.getElementById('title').value.trim();
+    const tags = document.getElementById('tags').value.split(',').map(t => t.trim()).filter(Boolean);
+    items.unshift({ url, title, tags });
+    save(items);
+    e.target.reset();
+    render(document.getElementById('search').value);
+  };
+  document.getElementById('search').oninput = (e) => render(e.target.value);
+  render();
+})();`);
+      };
+
+      const writeRecipe = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="rec">
+  <h1>${projectName}</h1>
+  <div id="listView">
+    <input id="search" class="search" placeholder="Search recipes…">
+    <button id="newBtn" class="primary">+ New recipe</button>
+    <div id="cards" class="cards"></div>
+  </div>
+  <div id="formView" hidden>
+    <form id="recipeForm">
+      <input id="rName" placeholder="Recipe name" required>
+      <textarea id="rIngredients" placeholder="Ingredients, one per line" required></textarea>
+      <textarea id="rSteps" placeholder="Steps, one per line" required></textarea>
+      <div class="row"><button type="submit">Save</button><button type="button" id="cancelBtn">Cancel</button></div>
+    </form>
+  </div>
+  <div id="detailView" hidden>
+    <button id="backBtn">‹ Back</button>
+    <h2 id="dName"></h2>
+    <h3>Ingredients</h3>
+    <ul id="dIngredients"></ul>
+    <h3>Steps</h3>
+    <ol id="dSteps"></ol>
+    <button id="deleteBtn" class="danger">Delete recipe</button>
+  </div>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#e0783a;--bad:#ff5c5c}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.rec{max-width:640px;margin:0 auto;padding:32px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
+.search{width:100%;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--fg);margin-bottom:10px}
+.primary{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-weight:600;cursor:pointer;margin-bottom:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;cursor:pointer}
+.card:hover{border-color:var(--acc)}
+.card h3{margin:0 0 4px;font-size:14.5px}
+.card p{margin:0;color:var(--mut);font-size:12px}
+#recipeForm{display:flex;flex-direction:column;gap:10px}
+#recipeForm input,#recipeForm textarea{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--fg);font-family:inherit}
+#recipeForm textarea{min-height:100px;resize:vertical}
+.row{display:flex;gap:8px}
+.row button{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:9px 16px;cursor:pointer;font-weight:600}
+.row button#cancelBtn{background:#1a1f2c;color:var(--fg)}
+#backBtn{background:none;border:none;color:var(--mut);cursor:pointer;margin-bottom:10px;font-size:13px}
+#dIngredients label,#dSteps li{margin-bottom:4px}
+.danger{margin-top:16px;background:none;border:1px solid var(--bad);color:var(--bad);border-radius:8px;padding:8px 14px;cursor:pointer}`);
+        push('/scripts/app.js', `// ${projectName} — real recipe manager with a cook-along checklist
+(function(){
+  const K = 'cs.recipes';
+  const load = () => { try { return JSON.parse(localStorage.getItem(K) || '[]'); } catch(_) { return []; } };
+  const save = (list) => { try { localStorage.setItem(K, JSON.stringify(list)); } catch(_){} };
+  let recipes = load();
+  let activeId = null;
+  const views = { list: document.getElementById('listView'), form: document.getElementById('formView'), detail: document.getElementById('detailView') };
+  function show(name) { Object.keys(views).forEach(k => views[k].hidden = k !== name); }
+  function renderCards(filter) {
+    const q = (filter || '').toLowerCase();
+    document.getElementById('cards').innerHTML = recipes
+      .filter(r => !q || r.name.toLowerCase().includes(q))
+      .map(r => '<div class="card" data-id="' + r.id + '"><h3>' + r.name + '</h3><p>' + r.ingredients.length + ' ingredients</p></div>')
+      .join('') || '<p style="color:var(--mut)">No recipes yet — add one above.</p>';
+    document.querySelectorAll('.card').forEach(c => c.onclick = () => openDetail(c.dataset.id));
+  }
+  function openDetail(id) {
+    activeId = id;
+    const r = recipes.find(x => x.id === id);
+    document.getElementById('dName').textContent = r.name;
+    document.getElementById('dIngredients').innerHTML = r.ingredients.map(i => '<li><label><input type="checkbox"> ' + i + '</label></li>').join('');
+    document.getElementById('dSteps').innerHTML = r.steps.map(s => '<li>' + s + '</li>').join('');
+    show('detail');
+  }
+  document.getElementById('newBtn').onclick = () => { document.getElementById('recipeForm').reset(); show('form'); };
+  document.getElementById('cancelBtn').onclick = () => show('list');
+  document.getElementById('backBtn').onclick = () => { renderCards(document.getElementById('search').value); show('list'); };
+  document.getElementById('deleteBtn').onclick = () => {
+    recipes = recipes.filter(r => r.id !== activeId); save(recipes); renderCards(); show('list');
+  };
+  document.getElementById('recipeForm').onsubmit = (e) => {
+    e.preventDefault();
+    recipes.push({
+      id: 'r' + Date.now(),
+      name: document.getElementById('rName').value.trim(),
+      ingredients: document.getElementById('rIngredients').value.split('\\n').map(s => s.trim()).filter(Boolean),
+      steps: document.getElementById('rSteps').value.split('\\n').map(s => s.trim()).filter(Boolean)
+    });
+    save(recipes); renderCards(); show('list');
+  };
+  document.getElementById('search').oninput = (e) => renderCards(e.target.value);
+  renderCards();
+})();`);
+      };
+
+      const writeExpense = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="exp">
+  <h1>${projectName}</h1>
+  <div class="summary"><div>Total spent<b id="total">$0.00</b></div></div>
+  <form id="addForm">
+    <input id="desc" placeholder="Description" required>
+    <input id="amount" type="number" step="0.01" min="0" placeholder="Amount" required>
+    <select id="category"><option>Food</option><option>Transport</option><option>Housing</option><option>Entertainment</option><option>Other</option></select>
+    <button>Add</button>
+  </form>
+  <div id="breakdown" class="breakdown"></div>
+  <div id="list" class="list"></div>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#28c76f}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,Inter,sans-serif;min-height:100vh}
+.exp{max-width:560px;margin:0 auto;padding:32px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
+.summary{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px;margin-bottom:16px}
+.summary div{color:var(--mut);font-size:12.5px}
+.summary b{display:block;font:700 30px ui-monospace,Menlo,monospace;color:var(--acc);margin-top:4px}
+#addForm{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+#addForm input,#addForm select{flex:1;min-width:100px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--fg)}
+#addForm button{background:var(--acc);color:#032;border:none;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer}
+.breakdown{display:flex;flex-direction:column;gap:6px;margin-bottom:18px}
+.bar{display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--mut)}
+.bar .track{flex:1;height:8px;background:#1a1f2c;border-radius:4px;overflow:hidden}
+.bar .fill{height:100%;background:var(--acc)}
+.list{display:flex;flex-direction:column;gap:6px}
+.row{display:flex;justify-content:space-between;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;font-size:13px}
+.row .meta{color:var(--mut);font-size:11.5px}
+.row button{background:none;border:none;color:var(--mut);cursor:pointer}`);
+        push('/scripts/app.js', `// ${projectName} — real expense tracker with category breakdown
+(function(){
+  const K = 'cs.expenses';
+  const load = () => { try { return JSON.parse(localStorage.getItem(K) || '[]'); } catch(_) { return []; } };
+  const save = (list) => { try { localStorage.setItem(K, JSON.stringify(list)); } catch(_){} };
+  let items = load();
+  function render() {
+    const total = items.reduce((s, e) => s + e.amount, 0);
+    document.getElementById('total').textContent = '$' + total.toFixed(2);
+    const byCat = {};
+    items.forEach(e => { byCat[e.category] = (byCat[e.category] || 0) + e.amount; });
+    document.getElementById('breakdown').innerHTML = Object.keys(byCat).map(cat => {
+      const pct = total ? Math.round((byCat[cat] / total) * 100) : 0;
+      return '<div class="bar"><span style="width:70px">' + cat + '</span><div class="track"><div class="fill" style="width:' + pct + '%"></div></div><span>$' + byCat[cat].toFixed(2) + '</span></div>';
+    }).join('');
+    document.getElementById('list').innerHTML = items.slice().reverse().map((e) =>
+      '<div class="row"><div>' + e.desc + '<div class="meta">' + e.category + ' · ' + new Date(e.ts).toLocaleDateString() + '</div></div>' +
+      '<div>$' + e.amount.toFixed(2) + ' <button data-id="' + e.id + '">✕</button></div></div>'
+    ).join('') || '<div style="color:var(--mut)">No expenses logged yet.</div>';
+    document.querySelectorAll('.row button').forEach(b => b.onclick = () => {
+      items = items.filter(e => e.id !== b.dataset.id); save(items); render();
+    });
+  }
+  document.getElementById('addForm').onsubmit = (e) => {
+    e.preventDefault();
+    items.push({
+      id: 'e' + Date.now(),
+      desc: document.getElementById('desc').value.trim(),
+      amount: parseFloat(document.getElementById('amount').value) || 0,
+      category: document.getElementById('category').value,
+      ts: Date.now()
+    });
+    save(items);
+    e.target.reset();
+    render();
+  };
+  render();
+})();`);
+      };
+
+      const writeBlog = () => {
+        push('/index.html', `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${projectName}</title>
+<link rel="stylesheet" href="/styles/main.css">
+</head>
+<body>
+<main class="blog">
+  <h1>${projectName}</h1>
+  <div id="listView">
+    <button id="newBtn" class="primary">+ New post</button>
+    <div id="posts" class="posts"></div>
+  </div>
+  <div id="editView" hidden>
+    <input id="pTitle" placeholder="Post title" class="title-input">
+    <textarea id="pBody" placeholder="Write in markdown… **bold**, *italic*, # Heading, - list item, [link](url)"></textarea>
+    <div class="row"><button id="saveBtn">Save</button><button id="cancelBtn">Cancel</button></div>
+    <h3>Preview</h3>
+    <div id="preview" class="preview"></div>
+  </div>
+  <div id="readView" hidden>
+    <button id="backBtn">‹ Back</button>
+    <article id="article" class="preview"></article>
+    <button id="editExisting">Edit</button>
+    <button id="deleteBtn" class="danger">Delete</button>
+  </div>
+</main>
+<script src="/scripts/app.js"></script>
+\n</body>
+</html>`);
+        push('/styles/main.css', `:root{--bg:#0b0d12;--card:#141821;--line:#1f2433;--fg:#e8ecf4;--mut:#8a93a6;--acc:#7c5cff;--bad:#ff5c5c}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 system-ui,Inter,sans-serif;min-height:100vh}
+.blog{max-width:640px;margin:0 auto;padding:32px 20px}
+h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
+.primary{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:9px 16px;font-weight:600;cursor:pointer;margin-bottom:16px}
+.posts{display:flex;flex-direction:column;gap:8px}
+.post-item{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;cursor:pointer}
+.post-item:hover{border-color:var(--acc)}
+.post-item h3{margin:0 0 4px;font-size:15px}
+.post-item .date{color:var(--mut);font-size:11.5px}
+.title-input{width:100%;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--fg);font-size:16px;font-weight:600;margin-bottom:8px}
+#pBody{width:100%;min-height:180px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px;color:var(--fg);font-family:ui-monospace,Menlo,monospace;font-size:13px;resize:vertical;margin-bottom:10px}
+.row{display:flex;gap:8px;margin-bottom:20px}
+.row button{background:var(--acc);color:#fff;border:none;border-radius:8px;padding:9px 16px;cursor:pointer;font-weight:600}
+.row button#cancelBtn{background:#1a1f2c;color:var(--fg)}
+.preview{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px}
+.preview h1,.preview h2,.preview h3{margin-top:0}
+.preview a{color:var(--acc)}
+#backBtn{background:none;border:none;color:var(--mut);cursor:pointer;margin-bottom:10px;font-size:13px}
+.danger{margin-top:12px;background:none;border:1px solid var(--bad);color:var(--bad);border-radius:8px;padding:8px 14px;cursor:pointer}
+#editExisting{margin-top:12px;background:#1a1f2c;color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer}`);
+        push('/scripts/app.js', `// ${projectName} — real local-first blog/CMS with a from-scratch markdown renderer
+(function(){
+  function renderMarkdown(md) {
+    const esc = (s) => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const lines = esc(md).split('\\n');
+    let html = '', inList = false;
+    lines.forEach(line => {
+      let l = line;
+      if (/^###\\s+/.test(l)) { closeList(); html += '<h3>' + l.replace(/^###\\s+/, '') + '</h3>'; return; }
+      if (/^##\\s+/.test(l)) { closeList(); html += '<h2>' + l.replace(/^##\\s+/, '') + '</h2>'; return; }
+      if (/^#\\s+/.test(l)) { closeList(); html += '<h1>' + l.replace(/^#\\s+/, '') + '</h1>'; return; }
+      if (/^[-*]\\s+/.test(l)) {
+        if (!inList) { html += '<ul>'; inList = true; }
+        html += '<li>' + inline(l.replace(/^[-*]\\s+/, '')) + '</li>';
+        return;
+      }
+      closeList();
+      if (l.trim() === '') return;
+      html += '<p>' + inline(l) + '</p>';
+    });
+    closeList();
+    function closeList() { if (inList) { html += '</ul>'; inList = false; } }
+    function inline(s) {
+      return s
+        .replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+        .replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')
+        .replace(/\\*([^*]+)\\*/g, '<em>$1</em>');
+    }
+    return html;
+  }
+  const K = 'cs.blog.posts';
+  const load = () => { try { return JSON.parse(localStorage.getItem(K) || '[]'); } catch(_) { return []; } };
+  const save = (list) => { try { localStorage.setItem(K, JSON.stringify(list)); } catch(_){} };
+  let posts = load();
+  let activeId = null, editingId = null;
+  const views = { list: document.getElementById('listView'), edit: document.getElementById('editView'), read: document.getElementById('readView') };
+  function show(name) { Object.keys(views).forEach(k => views[k].hidden = k !== name); }
+  function renderList() {
+    document.getElementById('posts').innerHTML = posts.slice().reverse().map(p =>
+      '<div class="post-item" data-id="' + p.id + '"><h3>' + (p.title || 'Untitled') + '</h3><div class="date">' + new Date(p.ts).toLocaleDateString() + '</div></div>'
+    ).join('') || '<p style="color:var(--mut)">No posts yet — write your first one.</p>';
+    document.querySelectorAll('.post-item').forEach(el => el.onclick = () => openRead(el.dataset.id));
+  }
+  function openRead(id) {
+    activeId = id;
+    const p = posts.find(x => x.id === id);
+    document.getElementById('article').innerHTML = '<h1>' + p.title + '</h1>' + renderMarkdown(p.body);
+    show('read');
+  }
+  document.getElementById('backBtn').onclick = () => { renderList(); show('list'); };
+  document.getElementById('newBtn').onclick = () => {
+    editingId = null;
+    document.getElementById('pTitle').value = ''; document.getElementById('pBody').value = '';
+    document.getElementById('preview').innerHTML = '';
+    show('edit');
+  };
+  document.getElementById('editExisting').onclick = () => {
+    const p = posts.find(x => x.id === activeId);
+    editingId = p.id;
+    document.getElementById('pTitle').value = p.title; document.getElementById('pBody').value = p.body;
+    document.getElementById('preview').innerHTML = renderMarkdown(p.body);
+    show('edit');
+  };
+  document.getElementById('pBody').oninput = (e) => { document.getElementById('preview').innerHTML = renderMarkdown(e.target.value); };
+  document.getElementById('saveBtn').onclick = () => {
+    const title = document.getElementById('pTitle').value.trim() || 'Untitled';
+    const body = document.getElementById('pBody').value;
+    if (editingId) {
+      const p = posts.find(x => x.id === editingId); p.title = title; p.body = body;
+    } else {
+      posts.push({ id: 'p' + Date.now(), title, body, ts: Date.now() });
+    }
+    save(posts); renderList(); show('list');
+  };
+  document.getElementById('cancelBtn').onclick = () => { renderList(); show('list'); };
+  document.getElementById('deleteBtn').onclick = () => {
+    posts = posts.filter(p => p.id !== activeId); save(posts); renderList(); show('list');
+  };
+  renderList();
+})();`);
+      };
+
       // -------- dispatch --------
       let summary = '';
+      // True whenever we actually fall through to the generic starter
+      // scaffold below — whether because nothing matched, or because a
+      // matched intent (e.g. weather/quiz/recipe/...) has no dedicated
+      // generator yet. Used to honestly flag this as an offline fallback
+      // rather than silently pretending it's the requested app.
+      let usedStarterFallback = false;
       switch (primary) {
         case 'todo':       writeTodo();       summary = 'Built a real, persistent todo list app.'; break;
         case 'notes':
@@ -2070,16 +3737,92 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
         case 'rest':       writeRest();       summary = 'Built a real REST API console with sample endpoints.'; break;
         case 'ecommerce':  writeShop();       summary = 'Built a real, working storefront with cart.'; break;
         case 'chart':      writeChart();      summary = 'Added a real analytics chart to the existing project.'; break;
+        case 'social':     writeSocial();     summary = 'Built a real social feed with posts, likes, and friends.'; break;
+        case 'markdown':
+        case 'blog':       writeBlog();       summary = 'Built a real local-first blog/CMS with a markdown editor and preview.'; break;
+        case 'mobile':     writeMobile();     summary = 'Built a real, installable PWA with offline support.'; break;
+        case 'clock':      writeClock();      summary = 'Built a real, live-updating world clock.'; break;
+        case 'weather':    writeWeather();    summary = 'Built a real weather app backed by live forecast data.'; break;
+        case 'quiz':       writeQuiz();       summary = 'Built a real multiple-choice quiz with scoring.'; break;
+        case 'drawing':
+        case 'paint':      writeDrawing();    summary = 'Built a real canvas drawing app with save-as-PNG.'; break;
+        case 'music':      writeMusic();      summary = 'Built a real soundboard synthesizing tones via the Web Audio API.'; break;
+        case 'expense':    writeExpense();    summary = 'Built a real expense tracker with category breakdown.'; break;
+        case 'recipe':     writeRecipe();     summary = 'Built a real recipe manager with a cook-along checklist.'; break;
+        case 'bookmark':   writeBookmark();   summary = 'Built a real bookmark manager with tags and search.'; break;
+        case 'rss':        writeRss();        summary = 'Built a real feed reader that parses RSS/Atom XML.'; break;
+        case 'gallery':    writeGallery();    summary = 'Built a real photo gallery with local uploads.'; break;
+        case 'calendar':   writeCalendar();   summary = 'Built a real month-view calendar with persistent events.'; break;
+        case 'password':   writePassword();   summary = 'Built a real password generator with a local vault.'; break;
+        case 'qr':         writeQr();         summary = 'Built a real QR code generator.'; break;
         case 'starter':
-        default:           writeStarter();    summary = 'Scaffolded a real, working starter app from your prompt.'; break;
+        default:           writeStarter();    summary = 'Scaffolded a real, working starter app from your prompt.'; usedStarterFallback = true; break;
       }
 
       // Always create a real SPEC.md and README.md so the project is
       // self-documenting, no matter what the prompt was.
-      push('/SPEC.md', `# ${projectName}\n\n> Generated by CodeSovereign synthesizer\n\n## Source prompt\n\n\`\`\`\n${p_raw}\n\`\`\`\n\n## Detected intent\n\nPrimary intent: **${primary}**\n\nMatched signals: ${matched.length ? matched.join(', ') : '(none — using starter scaffold)'}\n\n## Files\n\n- \`index.html\` — page markup\n- \`styles/main.css\` — theme and layout\n- \`scripts/app.js\` — interactive logic\n\n## How to run\n\nOpen \`index.html\` in a browser, or use the **Preview** button in the IDE.\n`);
+      const fallbackBanner = usedStarterFallback
+        ? `> ⚠️ **OFFLINE EMERGENCY FALLBACK** — no AI provider is connected` +
+          (matched.length ? `, and the detected intent (**${primary}**) has no dedicated generator yet` : ' and this prompt matched none of the built-in templates') +
+          `. What follows is a minimal generic starter scaffold, **not** the specific app you asked for. Connect a model in Settings for a real build.\n\n`
+        : '';
+      push('/SPEC.md', `# ${projectName}\n\n${fallbackBanner}> Generated by CodeSovereign synthesizer\n\n## Source prompt\n\n\`\`\`\n${p_raw}\n\`\`\`\n\n## Detected intent\n\nPrimary intent: **${primary}**\n\nMatched signals: ${matched.length ? matched.join(', ') : '(none — using starter scaffold)'}\n\n## Files\n\n- \`index.html\` — page markup\n- \`styles/main.css\` — theme and layout\n- \`scripts/app.js\` — interactive logic\n\n## How to run\n\nOpen \`index.html\` in a browser, or use the **Preview** button in the IDE.\n`);
       push('/README.md', `# ${projectName}\n\nReal working code generated from your prompt. Open the files in the IDE to edit.\n\n- \`SPEC.md\` — what was generated and why\n- \`index.html\` — the page\n- \`styles/main.css\` — styles\n- \`scripts/app.js\` — JavaScript\n`);
 
-      return { summary, targets };
+      // Curated, per-intent follow-up ideas — genuinely relevant next steps for
+      // this specific kind of app, not fabricated "AI thinking". The offline
+      // path has no model to ask, so these are hand-picked rather than
+      // pretending a reasoning process produced them.
+      const SUGGESTIONS = {
+        todo: ['Add due dates and sort by them', 'Add categories or tags', 'Add priority levels (low/med/high)'],
+        notes: ['Add tags and a tag filter', 'Add full-text search across notes', 'Add note pinning'],
+        markdown_md: ['Add tags and a tag filter', 'Add full-text search across notes', 'Add note pinning'],
+        dashboard: ['Add a date-range filter', 'Add a second chart type', 'Add CSV export for the data'],
+        calculator: ['Add a calculation history log', 'Add keyboard-only scientific functions', 'Add unit conversion mode'],
+        chat: ['Add multiple chat threads', 'Add message search', 'Add typing indicators'],
+        portfolio: ['Add a contact form', 'Add a projects filter by tag', 'Add a dark/light theme toggle'],
+        blog: ['Add tags and a tag filter', 'Add a comments section', 'Add a search box for posts'],
+        markdown: ['Add tags and a tag filter', 'Add a comments section', 'Add a search box for posts'],
+        timer: ['Add custom session lengths', 'Add a sound on session end', 'Add a daily session history log'],
+        kanban: ['Add due dates to cards', 'Add labels/colors to cards', 'Add a card search/filter'],
+        form: ['Add field validation messages', 'Add multi-step form pages', 'Add submission export to CSV'],
+        game: ['Add a high-score leaderboard', 'Add difficulty levels', 'Add sound effects'],
+        dark: ['Add a system-theme-follows-OS option', 'Add per-section theme overrides'],
+        search: ['Add filters by file type', 'Add recent-searches history', 'Add fuzzy matching'],
+        login: ['Add a "forgot password" flow', 'Add social login buttons', 'Add remember-me persistence'],
+        rest: ['Add request history', 'Add saved request collections', 'Add response time charting'],
+        ecommerce: ['Add product filtering/sorting', 'Add a wishlist', 'Add order history'],
+        chart: ['Add a date-range filter', 'Add a second chart type', 'Add CSV export for the data'],
+        social: ['Add comments on posts', 'Add a notifications feed', 'Add user profiles'],
+        mobile: ['Add push notification support', 'Add offline data sync indicators', 'Add a splash screen'],
+        clock: ['Add alarms', 'Add a stopwatch mode', 'Add custom timezone labels'],
+        weather: ['Add a 7-day extended forecast', 'Add saved favorite cities', 'Add weather alerts'],
+        quiz: ['Add a timer per question', 'Add categories/difficulty levels', 'Add a leaderboard'],
+        drawing: ['Add layers', 'Add shape tools (rectangle/circle)', 'Add undo/redo'],
+        paint: ['Add layers', 'Add shape tools (rectangle/circle)', 'Add undo/redo'],
+        music: ['Add recording playback', 'Add more instrument sounds', 'Add tempo/key controls'],
+        expense: ['Add monthly budget limits', 'Add a spending chart by category', 'Add CSV export'],
+        recipe: ['Add a shopping-list generator', 'Add serving-size scaling', 'Add cook-time filters'],
+        bookmark: ['Add folders/collections', 'Add duplicate-link detection', 'Add import from browser bookmarks'],
+        rss: ['Add saved/starred articles', 'Add multiple feed subscriptions', 'Add unread-count badges'],
+        gallery: ['Add albums/collections', 'Add drag-to-reorder', 'Add image captions'],
+        calendar: ['Add recurring events', 'Add event reminders', 'Add a week-view mode'],
+        password: ['Add password strength meter', 'Add auto-lock after inactivity', 'Add export/import of the vault'],
+        qr: ['Add batch QR generation', 'Add QR scanning (camera)', 'Add saved QR history']
+      };
+      const suggestions = usedStarterFallback ? [] : (SUGGESTIONS[primary] || []);
+
+      // Honest account of the actual decision made — this is rule-based
+      // keyword matching, not a model reasoning about the request, so say
+      // exactly that rather than dressing it up as "thinking".
+      const reasoning = usedStarterFallback
+        ? (matched.length
+          ? `Detected "${primary}" but there's no dedicated template for it yet — falling back to a generic scaffold.`
+          : `No built-in template matched this request — falling back to a generic scaffold. Connect a model in Settings for a real build of anything.`)
+        : `Matched "${primary}" (offline, deterministic template — no AI call needed)` +
+          (matched.length > 1 ? `; also matched: ${matched.slice(1).join(', ')}` : '') + '.';
+
+      return { summary, targets, offlineFallback: usedStarterFallback, suggestions, reasoning };
     }
   };
 
@@ -2146,8 +3889,29 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
           if (!syn.ok) issues.push({ severity:'error', faultClass:'js.syntax', file:p, message:'JS syntax error: ' + syn.error });
           const code = stripJsComments(content);
           const logs = (code.match(/console\.log\(/g) || []).length;
-          if (logs > 0) issues.push({ severity:'info', faultClass:'js.console', file:p, message: logs + ' console.log statement(s) (consider removing for production)' });
+          // Only browser code: tests, CLI scripts and Node servers log on
+          // purpose (the generated scripts/release.js, server startup lines and
+          // test traces all showed up in Problems as "remove for production").
+          // (Not by a /scripts/ path: the offline generators put BROWSER code at /scripts/app.js.)
+          const nodeSide = /(^|\/)(test|tests|__tests__|bin)\//.test(p) || /\.(test|spec)\.m?js$/.test(p) ||
+            /^#!/.test(content) || /\brequire\s*\(|\bmodule\.exports\b|\bprocess\.(env|argv|exit)\b|from\s+['"]node:/.test(code);
+          if (logs > 0 && !nodeSide) issues.push({ severity:'info', faultClass:'js.console', file:p, message: logs + ' console.log statement(s) (consider removing for production)' });
           if (/\beval\s*\(/.test(code)) issues.push({ severity:'error', faultClass:'js.eval', file:p, message:'Use of eval() detected' });
+          // A local require() whose file doesn't exist crashes the app on start
+          // ("Cannot find module './app'") — the real defect in a generated
+          // todo app, while Problems showed only console.log hints.
+          {
+            const dir = p.slice(0, p.lastIndexOf('/') + 1) || '/';
+            const reqRe = /\brequire\s*\(\s*['"](\.{1,2}\/[^'"]+)['"]\s*\)/g;
+            let rm;
+            while ((rm = reqRe.exec(code))) {
+              const segs = []; (dir + rm[1]).split('/').forEach(s => { if (s === '..') segs.pop(); else if (s && s !== '.') segs.push(s); });
+              const base = '/' + segs.join('/');
+              if (![base, base + '.js', base + '.json', base + '.cjs', base + '/index.js'].some(c => FS.isFile(c))) {
+                issues.push({ severity:'error', faultClass:'js.missing-module', file:p, message:"require('" + rm[1] + "') — no such file in the project; the app will crash with \"Cannot find module\"" });
+              }
+            }
+          }
         }
         if (p.endsWith('.css')){
           // broken reference: url(...)
@@ -2162,7 +3926,9 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
         // empty file
         if (content.trim().length === 0) issues.push({ severity:'warning', faultClass:'file.empty', file:p, message:'File is empty' });
         // TODO marker
-        if (/TODO|FIXME/.test(content)) issues.push({ severity:'info', faultClass:'file.todo', file:p, message:'Contains TODO/FIXME marker' });
+        // A marker is TODO/FIXME at the start of a comment — not the letters
+        // inside a name: a todo app is full of TODOS_FILE / TODO_KEY identifiers.
+        if (/(\/\/|\/\*+|^\s*\*|#|<!--)\s*(TODO|FIXME)\b/m.test(content)) issues.push({ severity:'info', faultClass:'file.todo', file:p, message:'Contains TODO/FIXME marker' });
       });
       // broken script/link references in HTML
       Object.keys(FS._data).forEach(p => {
@@ -2172,11 +3938,34 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
         refs.forEach(r => {
           const m = r.match(/(?:src|href)\s*=\s*"([^"]+)"/);
           if (!m) return;
-          const url = m[1];
-          if (url.startsWith('http') || url.startsWith('data:') || url.startsWith('#') || url.startsWith('mailto:')) return;
-          if (!FS.exists(url)) issues.push({ severity:'warning', faultClass:'html.ref', file:p, message:'Broken reference: ' + url });
+          const url = (m[1] || '').split(/[?#]/)[0];
+          if (!url || url.startsWith('http') || url.startsWith('data:') || url.startsWith('#') || url.startsWith('mailto:')) return;
+          // resolve relative to the referring file's directory
+          const dir = p.slice(0, p.lastIndexOf('/'));
+          let abs = url.startsWith('/') ? url : (dir + '/' + url.replace(/^\.\//, ''));
+          let prev; do { prev = abs; abs = abs.replace(/\/\.\//g, '/').replace(/\/[^/]+\/\.\.\//g, '/'); } while (abs !== prev);
+          abs = abs.replace(/\/{2,}/g, '/');
+          if (!FS.exists(url) && !FS.exists(abs)) issues.push({ severity:'warning', faultClass:'html.ref', file:p, message:'Broken reference: ' + url });
         });
       });
+      // Interactivity/fakeness signals (empty handlers, fake-async, mock
+      // data, hard-coded auth, stub services, "coming soon" placeholders,
+      // ...) — Engine.MockScan already detects all of this but, until now,
+      // was never actually consulted by anything that gates success. A
+      // generator that writes a button with an empty onclick must fail the
+      // same "no success without evidence" check a JS syntax error does,
+      // not silently pass because the file happened to parse. high/medium/
+      // low map onto Validator's own error/warning/info taxonomy so this
+      // flows through the SAME gate (A2, and Engine.Orchestrator's
+      // per-task checks) rather than being a second, disconnected check.
+      if (window.Engine.MockScan && window.Engine.MockScan.run) {
+        try {
+          const sevMap = { high: 'error', medium: 'warning', low: 'info' };
+          window.Engine.MockScan.run().signals.forEach(sig => {
+            issues.push({ severity: sevMap[sig.severity] || 'warning', faultClass: 'mock.' + sig.kind, file: sig.file, message: sig.why + (sig.sample ? ' (' + sig.sample + ')' : '') });
+          });
+        } catch (_) {}
+      }
       return issues;
     }
   };
@@ -2379,11 +4168,18 @@ footer{text-align:center;padding:24px;color:var(--mut);border-top:1px solid var(
   }
   seedIfEmpty();
 
-  // ---------- Agent catalog (real, shared source of truth) ----------
+  // ---------- Execution backend catalog (real, shared source of truth) ----
+  // id matches Engine.LLM's cfg.executionBackend values exactly — this is
+  // read by the Settings "Agents" card, and selecting a row calls
+  // Engine.LLM.setConfig({ executionBackend: id }), which complete()
+  // (engine.llm.js) branches on for every actual model call. `available`
+  // here is catalog-level (the backend concept exists); the Settings card
+  // merges in live readiness (OpenClaw installed/gateway up, Hermes key set)
+  // via Engine.AIRouter.OpenClaw.status() at render time.
   const AGENTS = [
-    { id: 'Sovereign-1.5',      role: 'Coder',     tone: 'Precise',    ctx: '128K', available: true,  desc: 'General-purpose coding agent. Strong on web, refactor, and migration.' },
-    { id: 'Sovereign-1.5-Fast', role: 'Coder',     tone: 'Fast',       ctx: '64K',  available: true,  desc: 'Low-latency variant for short, well-scoped coding tasks.' },
-    { id: 'Sovereign-Architect',role: 'Architect', tone: 'Analytical', ctx: '256K', available: true,  desc: 'Deep reasoning for system design, debugging, and complex analysis.' }
+    { id: 'direct',   role: 'Direct model',  tone: 'HTTP',        ctx: 'model-dependent', available: true, desc: 'Calls whatever AI Provider is configured in Settings (OpenAI, MiniMax, a local model, ...) directly. Default.' },
+    { id: 'openclaw', role: 'Agent runtime', tone: 'Sessions',    ctx: 'session-based',   available: true, desc: 'Routes generation through your local OpenClaw agent instead of a direct API call — its own session memory, tools, and channels.' },
+    { id: 'hermes',   role: 'Model override',tone: 'Open-weight', ctx: '131K',            available: true, desc: 'Forces Nous Research’s Hermes models (via OpenRouter) for this generation, regardless of what Direct is set to.' }
   ];
 
   // ---------- Public API ----------

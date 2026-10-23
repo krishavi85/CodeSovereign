@@ -342,8 +342,8 @@
       ping: function (p) { return { ok: true, action: 'ping', echo: p }; },
       snapshot: projectSnapshot,
       getStarted: function () {
-        try { if (typeof S !== 'undefined') S.screen = 'universal'; if (typeof renderAll === 'function') renderAll(); } catch (_) {}
-        return { ok: true, navigated: 'universal' };
+        try { if (typeof S !== 'undefined') { S.screen = 'welcome'; S.showUniversal = true; } if (typeof renderAll === 'function') renderAll(); } catch (_) {}
+        return { ok: true, navigated: 'welcome' };
       }
     });
     // Universal

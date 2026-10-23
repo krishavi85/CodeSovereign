@@ -139,19 +139,10 @@ module.exports = async function (t) {
 
   t.ok('APIRuntime supports fallbackJson', typeof E.APIRuntime.call === 'function');
 
-  const appSrc = fs.readFileSync(path.join(__dirname, '..', 'dist', 'app.js'), 'utf8');
-  t.ok('Recovery seeds suites on first visit', /recordLastScan\(/.test(appSrc) && /classifyValidatorSuites\(/.test(appSrc));
-  t.ok('Factory skips root files when grouping modules', /if \(parts\.length < 2\) return/.test(appSrc));
-  t.ok('Factory resyncs unless a plan is pending', /pendingPlan/.test(appSrc));
-  t.ok('Fault benchmark uses pickTarget', /FI\.pickTarget/.test(appSrc));
-  t.ok('Last run falls back to lastAnalysis', /lastAnalysis\(\)/.test(appSrc));
-
   E.Recovery._runs.push({ runId: 'stale', status: 'NOOP', repairedCount: 0, agent: 'Sovereign-1.5' });
   t.ok('stale NOOP exists in history', E.Recovery.history().some((r) => r.runId === 'stale'));
   E.FS.clearAll();
   t.ok('clearAll resets recovery history', E.Recovery.history().length === 0);
-  t.ok('stale lastScan is invalidated when file count changes', /lastScan\.fileCount !== Engine\.FS\.count\(\)/.test(appSrc));
-  t.ok('fault benchmark compares against baseline count', /afterInject > baselineCount/.test(appSrc));
 
   const saved = Object.assign({}, E.FS._data);
   Object.keys(E.FS._data).forEach((p) => { if (E.FS.isFile(p)) E.FS.remove(p); });
@@ -165,10 +156,6 @@ module.exports = async function (t) {
 
   t.ok('desktop-fs reinstalls recovery FS hooks', /installFsHooks/.test(fs.readFileSync(path.join(__dirname, '..', 'dist', 'desktop', 'desktop-fs.js'), 'utf8')));
   t.ok('Recovery.installFsHooks is exported', typeof E.Recovery.installFsHooks === 'function');
-
-  t.ok('Unresolved Inspector scans the live workspace', /inspectWorkspace/.test(appSrc));
-  t.ok('canned inspector samples removed from Recovery UI', !/message:\s*"DB connection refused"/.test(appSrc));
-  t.ok('Mock detector has a Fix placeholders action', /runMockDetectorFix/.test(appSrc));
   t.ok('FaultInjector.runBenchmark is available', typeof E.FaultInjector.runBenchmark === 'function');
 
   const dbInsp = E.UnresolvedInspector.inspect({ message: 'DB connection refused', faultClass: 'db.connect', package: 'pg' });

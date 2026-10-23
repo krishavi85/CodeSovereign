@@ -65,8 +65,8 @@ const Normalizer = {
     "embedded_system": ["embedded", "microcontroller", "arduino", "raspberry pi"],
     "cross_platform_application": ["cross-platform", "react native", "flutter", "expo"]
   },
-  ACTOR_HINTS: ["customer", "user", "admin", "administrator", "driver", "dj", "seller", "buyer", "guest", "operator", "moderator", "manager"],
-  CAPABILITY_HINTS: ["register", "login", "upload", "download", "search", "pay", "checkout", "book", "review", "rate", "subscribe", "notify", "export", "share", "comment", "like", "follow", "track", "monitor"],
+  ACTOR_HINTS: ["customer", "user", "admin", "administrator", "driver", "dj", "seller", "buyer", "vendor", "guest", "operator", "moderator", "manager", "owner", "member", "student", "teacher", "instructor", "patient", "doctor", "client", "staff", "employee", "organizer", "attendee", "host", "reviewer", "editor", "author", "subscriber"],
+  CAPABILITY_HINTS: ["register", "sign up", "login", "log in", "sign in", "upload", "download", "import", "export", "search", "filter", "sort", "pay", "checkout", "refund", "book", "reserve", "schedule", "review", "rate", "subscribe", "notify", "remind", "share", "invite", "comment", "like", "follow", "track", "monitor", "assign", "approve", "archive", "tag", "message", "chat", "print", "sync", "backup"],
   PLATFORM_HINTS: {
     "web": ["web", "browser", "site"],
     "android": ["android", "play store", "google play"],
@@ -78,29 +78,52 @@ const Normalizer = {
     "cli": ["cli", "command line", "terminal"],
     "extension": ["extension", "add-on", "plugin for browser"]
 },
-  // Spell correction / normalization (lightweight)
+  // Spell correction / normalization (lightweight, deterministic)
   SPELLFIX: [
-    [/\brecieve\b/gi, "receive"],
-    [/\boccured\b/gi, "occurred"],
-    [/\bseperate\b/gi, "separate"],
-    [/\bteh\b/gi, "the"],
-    [/\bandoid\b/gi, "android"],
-    [/\bios app\b/gi, "iOS app"]
+    [/\brecieve\b/gi, "receive"], [/\boccured\b/gi, "occurred"], [/\bseperate\b/gi, "separate"],
+    [/\bteh\b/gi, "the"], [/\bandoid\b/gi, "android"], [/\bios app\b/gi, "iOS app"],
+    [/\bwebsit\b/gi, "website"], [/\bwebiste\b/gi, "website"], [/\bweb app\b/gi, "webapp"],
+    [/\bdashbaord\b/gi, "dashboard"], [/\bdatabse\b/gi, "database"], [/\bdatabas\b/gi, "database"],
+    [/\bauthetication\b/gi, "authentication"], [/\bauthencation\b/gi, "authentication"],
+    [/\baccout\b/gi, "account"], [/\baccounts\b/gi, "accounts"], [/\bregisteration\b/gi, "registration"],
+    [/\bmangement\b/gi, "management"], [/\bmanagment\b/gi, "management"], [/\bmanagable\b/gi, "manageable"],
+    [/\bnotifcation\b/gi, "notification"], [/\bnotifcations\b/gi, "notifications"],
+    [/\bappliction\b/gi, "application"], [/\bapplicaiton\b/gi, "application"],
+    [/\bfuntion\b/gi, "function"], [/\bfucntion\b/gi, "function"], [/\brequirments\b/gi, "requirements"],
+    [/\bcalender\b/gi, "calendar"], [/\bsubcription\b/gi, "subscription"], [/\becomerce\b/gi, "ecommerce"],
+    [/\bpermisions\b/gi, "permissions"], [/\brole based\b/gi, "role-based"], [/\bmulti tenant\b/gi, "multi-tenant"],
+    [/\breal time\b/gi, "real-time"], [/\bback end\b/gi, "backend"], [/\bfront end\b/gi, "frontend"],
+    [/\bpostgress?\b/gi, "postgres"], [/\bmongo db\b/gi, "mongodb"], [/\bp2p\b/gi, "peer-to-peer"]
+  ],
+  // filler phrases that carry no requirement — stripped before classification
+  FILLERS: [
+    /\b(please|kindly|could you|can you|i(?:'| a)?m looking to|i want to|i(?:'| wou)ld like (?:you )?to|i need|we need|help me|build me|create me|make me|for me|asap|thanks?(?: you)?)\b/gi
   ],
   normalize(input){
     const prompt = (input.prompt || "").toString();
-    let fixed = prompt;
+    let fixed = prompt
+      .replace(/[‘’]/g, "'").replace(/[“”]/g, '"')
+      .replace(/\bwon't\b/gi, "will not").replace(/\bcan't\b/gi, "cannot")
+      .replace(/\b(\w+)'ll\b/gi, "$1 will").replace(/\b(\w+)'re\b/gi, "$1 are")
+      .replace(/\b(do|does|did|is|are|was|were|have|has|had|would|should|could)n't\b/gi, "$1 not");
     this.SPELLFIX.forEach(([re, rep]) => { fixed = fixed.replace(re, rep); });
+    let stripped = fixed;
+    this.FILLERS.forEach((re) => { stripped = stripped.replace(re, " "); });
+    stripped = stripped.replace(/\s{2,}/g, " ").trim();
     const lc = fixed.toLowerCase();
-    // applicationCategory
+    // applicationCategory — weighted: a multi-word phrase counts double, and we
+    // fall back to web_application when the prose clearly describes an app.
     let applicationCategory = "unknown";
     let bestScore = 0;
     Object.keys(this.KEYWORDS_TO_TYPE).forEach(k => {
       const kws = this.KEYWORDS_TO_TYPE[k];
       let score = 0;
-      kws.forEach(w => { if (lc.indexOf(w) >= 0) score += 1; });
+      kws.forEach(w => { if (lc.indexOf(w) >= 0) score += (w.indexOf(" ") >= 0 ? 2 : 1); });
       if (score > bestScore){ bestScore = score; applicationCategory = k; }
     });
+    if (applicationCategory === "unknown" && /\b(app|application|platform|tool|system|portal|tracker|manager|build|website|service)\b/i.test(fixed)) {
+      applicationCategory = /\b(api|endpoint|microservice)\b/i.test(fixed) ? "api_service" : "web_application";
+    }
     // targetPlatforms
     const targetPlatforms = Object.keys(this.PLATFORM_HINTS).filter(p =>
       this.PLATFORM_HINTS[p].some(w => lc.indexOf(w) >= 0)
@@ -111,8 +134,8 @@ const Normalizer = {
     if (primaryActors.length === 0) primaryActors.push("user");
     // coreCapabilities
     const coreCapabilities = this.CAPABILITY_HINTS.filter(c => new RegExp("\\b" + c + "\\b", "i").test(fixed));
-    // projectGoal
-    const projectGoal = fixed.split(/[.!?]/)[0].trim().slice(0, 240) || "Build a software application";
+    // projectGoal — from the filler-stripped text so it reads as a spec line
+    const projectGoal = (stripped.split(/[.!?]/)[0].trim() || fixed.split(/[.!?]/)[0].trim()).slice(0, 240) || "Build a software application";
     // unknownRequirements
     const unknownRequirements = [];
     if (/(pay|checkout|subscription)/i.test(fixed) && !/stripe|paypal|razorpay|squarespace/i.test(fixed)) unknownRequirements.push("payment provider");
@@ -125,6 +148,7 @@ const Normalizer = {
     const referenceImages = (input.referenceImages || []).slice();
     return {
       projectGoal,
+      normalizedPrompt: stripped,
       applicationCategory,
       targetPlatforms,
       primaryActors,
@@ -146,7 +170,8 @@ const Normalizer = {
    ============================================================ */
 const Classifier = {
   classify(normalized){
-    const primary = normalized.applicationCategory;
+    const primary = (!normalized.applicationCategory || normalized.applicationCategory === "unknown")
+      ? "web_application" : normalized.applicationCategory;
     // secondary types (heuristic from keywords)
     const secondary = [];
     if (normalized.coreCapabilities.some(c => ["pay", "checkout", "subscribe"].includes(c))) secondary.push("ecommerce");
@@ -740,10 +765,49 @@ const Universal = {
   ProjectMemory,
   CompletionScorer,
 
+  __aiAssist: true,
+
+  // Model-assisted normalize: same shape as Normalizer.normalize, but the model
+  // reads the objective. Falls back to the rule-based normalizer on any failure.
+  aiNormalize(input){
+    const AI = window.Engine && window.Engine.AI;
+    const composed = PromptComposer.collect(input);
+    const fallback = () => Normalizer.normalize(composed);
+    if (!AI || !AI.ready || !AI.ready() || !AI.json) return Promise.resolve(fallback());
+    const ask = 'Analyse this software objective and return ONLY JSON:\n' +
+      '{"projectGoal":"one sentence","applicationCategory":"static_website|web_application|saas_platform|ecommerce|marketplace|social_platform|mobile_application|desktop_application|browser_extension|api_service|ai_application|data_platform|game|automation_system|developer_tool|iot_application|cross_platform_application",' +
+      '"targetPlatforms":["web"|"android"|"ios"|"windows"|"macos"|"linux"|"cli"],' +
+      '"primaryActors":["role", ...],"coreCapabilities":["verb-noun", ...],' +
+      '"unknownRequirements":["decision the user must still make that changes cost/security/architecture", ...]}\n\n' +
+      'Objective: ' + (composed.prompt || '');
+    return AI.json(ask, { maxTokens: 900 }).then((j) => {
+      if (!j || !j.applicationCategory) return fallback();
+      const base = fallback();
+      return Object.assign(base, {
+        projectGoal: String(j.projectGoal || base.projectGoal).slice(0, 240),
+        applicationCategory: j.applicationCategory || base.applicationCategory,
+        targetPlatforms: (Array.isArray(j.targetPlatforms) && j.targetPlatforms.length ? j.targetPlatforms : base.targetPlatforms).slice(0, 8),
+        primaryActors: (Array.isArray(j.primaryActors) && j.primaryActors.length ? j.primaryActors : base.primaryActors).slice(0, 8),
+        coreCapabilities: Array.from(new Set((j.coreCapabilities || []).concat(base.coreCapabilities))).slice(0, 24),
+        unknownRequirements: Array.from(new Set((j.unknownRequirements || []).concat(base.unknownRequirements))).slice(0, 12),
+        selectedPlatforms: input.selectedPlatforms && input.selectedPlatforms.length ? input.selectedPlatforms : (j.targetPlatforms || base.targetPlatforms),
+        _source: 'ai'
+      });
+    }).catch(fallback);
+  },
+
+  buildStateAsync(input){
+    return this.aiNormalize(input).then((normalized) => this._assemble(PromptComposer.collect(input), normalized));
+  },
+
   // High-level flow: takes a composer input and produces a complete BuildState
   buildState(input){
     const composed = PromptComposer.collect(input);
     const normalized = Normalizer.normalize(composed);
+    return this._assemble(composed, normalized);
+  },
+
+  _assemble(composed, normalized){
     const classification = Classifier.classify(normalized);
     const requirements = RequirementsEngine.expand(normalized, classification);
     const feasibility = FeasibilityEngine.analyze(requirements, classification, composed);
@@ -774,6 +838,125 @@ const Universal = {
       projectState,
       taskGraph,
       wiring
+    };
+  },
+
+  /* ============================================================
+     BUILD PLAN — the typed, executable output of stages 5-12.
+     Turns a Product Contract (Engine.Contract.deriveFromPrompt) into an
+     ordered list of generation steps the Ultra Mode coordinator runs against
+     the real engines (Scaffold / TestGen / Security / Deploy), plus the
+     requirement -> artifact traceability map the Evidence Ledger needs.
+     Deterministic + offline.
+     ============================================================ */
+  buildPlan(contract){
+    if (!contract || !Array.isArray(contract.requirements)) return null;
+    const st = contract.supportedStack || {};
+    const ents = (contract.entities || []).filter(e => ['user','session','job'].indexOf(e.name) < 0);
+    const isPy = st.backend === 'python';
+    const fe = st.frontend && st.frontend !== 'vanilla' ? st.frontend : 'vanilla';
+    const feKind = fe === 'svelte' || fe === 'angular' ? 'react' : fe;   // compiled frameworks map to the vendored VDOM runtime
+    const wantsGraphql = st.api === 'graphql';
+    const wantsWs = !!st.websocket;
+    const wantsMicro = st.architecture === 'multi-service';
+    const dbFiles = st.database === 'postgres' && !isPy
+      ? ['/src/db.js','/src/db.json.js','/src/db.pg.js']
+      : isPy ? ['/app/db.py'] : ['/src/db.js'];
+    const feFiles = fe === 'vanilla'
+      ? ['/public/index.html','/public/app.js','/public/app.css']
+      : ['/public/index.html','/public/app.js','/public/app.css','/public/vendor/' + (feKind === 'vue' ? 'vue-lite.js' : 'vdom.js'),'/test/frontend.test.js'];
+    const scaffoldFiles = (isPy
+      ? ['/app/main.py','/app/auth.py','/app/__init__.py','/tests/test_api.py','/requirements.txt']
+      : ['/server.js','/src/schema.js','/scripts/build.js','/scripts/lint.js','/test/db.test.js','/test/api.test.js']
+    ).concat([
+      '/package.json','/db/migrations/001_init.sql','/scripts/migrate.js',
+      '/Dockerfile','/.github/workflows/ci.yml','/README.md','/.env.example'
+    ]).concat(dbFiles).concat(feFiles)
+     .concat(st.auth ? (isPy ? ['/app/auth.py'] : ['/src/auth.js','/test/auth.test.js']) : [])
+     .concat(st.jobs && !isPy ? ['/src/queue.js','/src/worker.js','/src/events.js','/src/jobs/welcome.js','/test/worker.test.js'] : [])
+     .concat(wantsGraphql ? ['/src/graphql/schema.graphql','/src/graphql/resolvers.js','/src/graphql/execute.js','/src/graphql/handler.js','/test/graphql.test.js'] : [])
+     .concat(wantsWs ? ['/src/ws.js','/public/ws-client.js','/test/ws.test.js'] : [])
+     .concat(wantsMicro ? ['/gateway/server.js','/gateway/registry.js','/docker-compose.prod.yml','/test/microservices.test.js'].concat(ents.map(e => '/services/' + e.name + '/server.js')) : [])
+     .concat(ents.map(e => isPy ? '/app/services/' + e.name + '.py' : '/src/services/' + e.name + '.js'));
+
+    let step = 0;
+    const mkStep = (kind, agent, produces, why, requirementIds) => ({
+      id: 'STEP-' + String(++step).padStart(3,'0'),
+      kind, agent, produces: produces || [], why,
+      requirementIds: requirementIds || [], status: 'PENDING'
+    });
+
+    const reqBy = (re) => contract.requirements.filter(r => re.test(r.statement)).map(r => r.id);
+
+    const steps = [
+      mkStep('scaffold','scaffold', scaffoldFiles,
+        'generate the runnable repo: schema + migrations + data layer' +
+        (st.auth ? ' + auth' : '') + (st.jobs && !isPy ? ' + async queue/worker' : '') +
+        ' + ' + (isPy ? 'pure-stdlib Python HTTP backend' : 'Node REST backend') +
+        (wantsGraphql ? ' + zero-dep GraphQL layer' : '') +
+        (wantsWs ? ' + RFC 6455 WebSocket endpoint' : '') +
+        ' + ' + (feKind === 'vanilla' ? 'vanilla' : feKind + ' component') + ' frontend' +
+        (wantsMicro ? ' + API gateway + per-domain services + compose' : '') + ' + unit tests',
+        contract.requirements.filter(r => /tests pass|builds|schema|account|records through a REST API|Background jobs|REST API surface|GraphQL|WebSocket|component app|independently-runnable services/i.test(r.statement)).map(r => r.id)),
+      mkStep('testgen','test',
+        ['/test/generated-api.test.js','/test/chaos.test.js'].concat(st.database ? [] : []).concat(['/test/a11y.test.js']),
+        'generate API contract tests + an adversarial chaos suite' + (contract.requirements.some(r => /accessibility/i.test(r.statement)) ? ' + an accessibility suite' : ''),
+        reqBy(/tests pass|accessibility|simulated, mocked/i)),
+      mkStep('security-scan','security', [],
+        'scan the generated source for injection / XSS / secrets / unauthenticated mutations; feeds the DoD security gate',
+        reqBy(/secret|password hash|role-based|simulated, mocked/i)),
+      mkStep('architecture-scan','security', [],
+        'check layering: no frontend->DB imports, no inverted dependencies, no cross-service filesystem reach; feeds the DoD architecture gate',
+        reqBy(/independently-runnable services|component app/i)),
+      mkStep('privacy-scan','security', [],
+        'scan for PII in logs / URLs, credentials in responses, third-party data egress; feeds the DoD privacy gate',
+        reqBy(/secret|password hash|account/i))
+    ];
+    if (st.deploy || (contract.deployment && (contract.deployment.targets || []).length)) {
+      steps.push(mkStep('deploy-iac','deploy',
+        ['/Dockerfile','/docker-compose.prod.yml','/.dockerignore','/deploy/compose.sh'],
+        'generate Docker + Compose infrastructure-as-code (never pushed — that needs the user\'s credentials)',
+        reqBy(/Docker|deployment-ready infrastructure/i)));
+    }
+
+    // requirement -> predicted artifact map (the Ledger verifies the real result)
+    const traceability = {};
+    contract.requirements.forEach(r => {
+      const arts = [];
+      (r.acceptanceCriteria || []).forEach(c => {
+        if (c.kind === 'file' && c.path) arts.push(c.path);
+        if (c.kind === 'execution') arts.push('execution-evidence.json#' + c.gate);
+        if (c.kind === 'control') arts.push('runtime-trace.json#' + c.name);
+        if (c.kind === 'no-mock') arts.push('runtime-trace.json (no MOCK/BROKEN)');
+        if (c.kind === 'ci') arts.push('/.github/workflows/ci.yml');
+      });
+      traceability[r.id] = { statement: r.statement, priority: r.priority, artifacts: arts, acIds: r.traceIds || [] };
+    });
+
+    return {
+      schemaVersion: 1,
+      generatedAt: Date.now(),
+      contractGeneratedAt: contract.generatedAt,
+      product: contract.product,
+      stack: {
+        frontend: feKind === 'vanilla' ? 'vanilla HTML/CSS/JS' : feKind + ' (vendored runtime, no build)',
+        backend: isPy ? 'Python 3 (pure stdlib: http.server + sqlite3)' : 'Node.js (zero-dep HTTP)',
+        database: st.database,
+        api: (wantsGraphql ? 'GraphQL + REST' : 'REST') + (st.jobs && !isPy ? ' + SSE' : '') + (wantsWs ? ' + WebSocket' : ''),
+        architecture: wantsMicro ? 'gateway + per-domain services (compose)' : 'monolith',
+        auth: !!st.auth, rbac: !!st.rbac, jobs: !!st.jobs && !isPy
+      },
+      steps,
+      files: Array.from(new Set(scaffoldFiles)).sort(),
+      buildCommands: ['npm run migrate','npm test','npm run build','npm run lint'],
+      observationTargets: [{
+        url: 'http://localhost:4319/',
+        controls: (st.auth ? ['need an account?'] : []).concat(ents.map(e => 'add ' + e.name)),
+        routes: (contract.apiRequirements || []).map(a => a.method + ' ' + a.path)
+          .concat(wantsGraphql ? ['POST /graphql'] : []).concat(wantsWs ? ['GET /ws (upgrade)'] : [])
+      }],
+      deployment: contract.deployment || { expectation: 'compose', targets: ['compose'] },
+      traceability
     };
   },
 

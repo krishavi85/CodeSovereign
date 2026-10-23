@@ -30,6 +30,12 @@
   function available() {
     return !!(FS && FS.__hasWorkspace && FS.__hasWorkspace());
   }
+  // resolves true only if the open folder has been explicitly trusted — used to
+  // suppress AUTOMATIC runs (repair verification). Explicit button clicks still
+  // go through and will surface the trust prompt in main.
+  function trusted() {
+    return D.trust ? D.trust.status().then(function (s) { return !!(s && s.trusted); }) : Promise.resolve(false);
+  }
 
   function pkg() {
     try {
@@ -154,6 +160,14 @@
     return a && a.commands && a.commands[step] ? a.commands[step] : null;
   }
   function runCmdString(cmd, label) {
+    // Adapters spell "nothing to do here" as `echo "no build step"` etc.
+    // echo isn't (and shouldn't be) on the proc allowlist, so spawning it
+    // came back code -1 and a static site's "nothing to build" was recorded
+    // as a hard FAIL. It's a no-op by intent — report it as skipped.
+    if (/^echo(\s|$)/.test(String(cmd).trim())) {
+      var note = String(cmd).trim().replace(/^echo\s*/, '').replace(/^["']|["']$/g, '');
+      return Promise.resolve({ code: -3, output: note || 'nothing to run', ms: 0, skipped: true });
+    }
     var parts = cmd.split(/\s+/);
     return run(parts[0], parts.slice(1), { label: label || cmd });
   }
@@ -217,7 +231,7 @@
   function stop() { if (running) running.kill(); }
 
   window.CSExec = {
-    available: available, detect: detect, run: run, adapter: adapter,
+    available: available, trusted: trusted, detect: detect, run: run, adapter: adapter,
     install: install, test: test, build: build, lint: lint, typecheck: typecheck, package: pkg2,
     checkpoint: checkpoint, restore: restore, stop: stop
   };
