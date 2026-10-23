@@ -23,19 +23,22 @@
 
   // Past this many lines (after trimming the common head and tail) Myers'
   // trace gets large; one hunk for the whole middle is the honest fallback.
-  const MAX_MIDDLE = 6000;
+  const MAX_MIDDLE = 4000;
+  // ... and past this edit distance the trace (O(D^2) memory) is not worth it either.
+  const MAX_D = 1000;
 
   function lines(text) { return String(text == null ? '' : text).split('\n'); }
 
   function myers(a, b) {
     const n = a.length, m = b.length, max = n + m;
     if (!max) return [];
-    const off = max;
-    let v = new Int32Array(2 * max + 2);
-    const trace = [];
+    const off = max + 1;
+    const v = new Int32Array(2 * max + 4);
+    const trace = [];   // trace[d] = v restricted to k in [-d-1, d+1]; index = k + d + 1
     let found = false;
     for (let d = 0; d <= max && !found; d++) {
-      trace.push(v.slice());
+      if (d > MAX_D) return null;
+      trace.push(v.slice(off - d - 1, off + d + 2));
       for (let k = -d; k <= d; k += 2) {
         let x;
         if (k === -d || (k !== d && v[off + k - 1] < v[off + k + 1])) x = v[off + k + 1];
@@ -49,11 +52,11 @@
     const ops = [];
     let x = n, y = m;
     for (let d = trace.length - 1; d >= 0 && (x > 0 || y > 0); d--) {
-      const vv = trace[d];
+      const vv = trace[d], at = function (kk) { return vv[kk + d + 1]; };
       const k = x - y;
       let pk;
-      if (k === -d || (k !== d && vv[off + k - 1] < vv[off + k + 1])) pk = k + 1; else pk = k - 1;
-      const px = vv[off + pk], py = px - pk;
+      if (k === -d || (k !== d && at(k - 1) < at(k + 1))) pk = k + 1; else pk = k - 1;
+      const px = at(pk), py = px - pk;
       while (x > px && y > py) { ops.push({ t: 'eq', line: a[x - 1] }); x--; y--; }
       if (d > 0) {
         if (x === px) { ops.push({ t: 'add', line: b[y - 1] }); y--; }
@@ -72,11 +75,12 @@
     const ma = a.slice(head, a.length - tail), mb = b.slice(head, b.length - tail);
     const ops = [];
     for (let i = 0; i < head; i++) ops.push({ t: 'eq', line: a[i] });
-    if (ma.length + mb.length > MAX_MIDDLE) {
+    const mid = ma.length + mb.length > MAX_MIDDLE ? null : myers(ma, mb);
+    if (!mid) {
       ma.forEach(function (l) { ops.push({ t: 'del', line: l }); });
       mb.forEach(function (l) { ops.push({ t: 'add', line: l }); });
     } else {
-      myers(ma, mb).forEach(function (o) { ops.push(o); });
+      mid.forEach(function (o) { ops.push(o); });
     }
     for (let i = a.length - tail; i < a.length; i++) ops.push({ t: 'eq', line: a[i] });
     return ops;

@@ -80,6 +80,19 @@ module.exports = async function (t) {
   const hb = R.hunks(big1, big2);
   t.ok('a huge rewrite is a single hunk', hb.length === 1 && R.apply(big1, big2, [0]) === big2 && R.apply(big1, big2, []) === big1);
 
+  // deletion at the very end of the file (the editor needs an after-last-line anchor for this)
+  const hEof = R.hunks('a\nb\nc', 'a\nb');
+  t.ok('an end-of-file deletion starts past the last new line', hEof.length === 1 && hEof[0].newStart === 2 && hEof[0].newLines.length === 0 && hEof[0].oldLines.join() === 'c');
+  t.equal('rejecting an end-of-file deletion restores it', R.apply('a\nb\nc', 'a\nb', []), 'a\nb\nc');
+
+  // a big rewrite must stay cheap in time and memory (falls back to one hunk past the edit-distance budget)
+  const r1 = Array.from({ length: 1800 }, (_, i) => 'p' + i).join('\n');
+  const r2 = Array.from({ length: 1800 }, (_, i) => 'q' + i).join('\n');
+  const t0 = Date.now();
+  const hr = R.hunks(r1, r2);
+  t.ok('a 1800-line rewrite diffs in well under a second', Date.now() - t0 < 1500);
+  t.ok('and still round-trips', R.apply(r1, r2, hr.map((h) => h.id)) === r2 && R.apply(r1, r2, []) === r1);
+
   t.deepEqual('stats counts added / removed lines', R.stats(A, C), { hunks: 2, added: 3, removed: 2 });
 
   // collect / reject against an FS-shaped object

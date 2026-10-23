@@ -545,6 +545,8 @@ function runAgentWith(prompt, specCtx) {
   const restart = promptIsRestart(prompt);
   const followUp = !restart && !!(S.agentBuilt || (S.agentRuns || []).some(p => p && p !== prompt));
   S.lastPrompt = prompt;
+  // A review left open in the (detached) editor would later write its stale text over this run's output.
+  try { if (window.CSEditor && window.CSEditor.reviewing()) window.CSEditor.endReview('left'); } catch (_) {}
   const reviewBase = Engine.Review ? Engine.Review.snapshot(Engine.FS) : null;   // for accept/reject afterwards
   S.agentChat = [...(S.agentChat || []), { role: 'user', text: prompt, at: Date.now() }];
   S.agentRunning = true;
@@ -1895,6 +1897,7 @@ async function runInlineEdit(editor) {
   const instruction = ((input && input.value) || S.inlineInstruction || '').trim();
   if (!Inline || !editor || !instruction) { toast('Type what to change, then Enter', '#f59e0b'); return; }
   S.inlineInstruction = instruction;
+  const reviewPath = S.ideFile;     // the file this edit belongs to, even if the user switches files mid-review
   const sel = S._inlineSel || inlineSelection(editor);
   toast('Editing selection…', '#a78bfa');
   let result;
@@ -1919,7 +1922,7 @@ async function runInlineEdit(editor) {
   paintInlineEdit(editor, false);
   // Monaco: show the edit as hunks to accept / reject (Esc undoes it all).
   if (editor.review && next.content !== before) {
-    const rv = editor.review({ original: before, onEnd: function (r) { onReviewEnd(S.ideFile, r); } });
+    const rv = editor.review({ original: before, onEnd: function (r) { onReviewEnd(reviewPath, r); } });
     if (rv) { try { editor.focus(); } catch (_) {} toast('Review the change — Ctrl+Enter accepts, Esc rejects', '#a78bfa'); return; }
   }
   toast('Selection updated', '#34d399');
@@ -1942,13 +1945,19 @@ function beginAgentReview(before) {
   if (!R || !before) return;
   if (!Object.keys(before).length) return;      // a first build has nothing to compare with
   const keep = S.rv && S.rv.before ? S.rv.before : before;
-  S.rv = { before: keep, done: new Set() };
+  // path -> the content it had when kept; a kept file the run changed again shows up again
+  S.rv = { before: keep, done: S.rv && S.rv.done ? S.rv.done : new Map() };
   if (!R.collect(keep, Engine.FS).length) { S.rv = null; }
   renderReviewDock();
 }
 function rvChanges() {
   if (!S.rv) return [];
-  return Engine.Review.collect(S.rv.before, Engine.FS).filter(c => !S.rv.done.has(c.path));
+  return Engine.Review.collect(S.rv.before, Engine.FS).filter(c => !(S.rv.done.has(c.path) && S.rv.done.get(c.path) === c.after));
+}
+function rvMarkDone(path) {
+  if (!S.rv) return;
+  const c = Engine.Review.collect(S.rv.before, Engine.FS).find(x => x.path === path);
+  S.rv.done.set(path, c ? c.after : null);
 }
 function rvRefreshOpenFile(path) {
   if (S.ideFile === path) { S.ideBuffer = Engine.FS.read(path) || ''; S.ideDirty = false; }
@@ -1966,7 +1975,7 @@ function rvUndo(path) {
 function rvKeep(path) {
   if (!S.rv) return;
   if (window.CSEditor && window.CSEditor.reviewing() && S.ideFile === path) window.CSEditor.endReview('kept');
-  S.rv.done.add(path);
+  rvMarkDone(path);
   renderReviewDock();
 }
 function rvOpen(path) {
@@ -1987,7 +1996,7 @@ function rvOpen(path) {
       onEnd: function (r) {
         if (c.status === 'added' && r.reason === 'rejected') { Engine.FS.remove(path); if (S.ideFile === path) { S.ideFile = null; S.ideBuffer = ''; } }
         else { Engine.FS.write(path, r.text); rvRefreshOpenFile(path); }
-        if (r.reason === 'done' || r.reason === 'rejected' || r.reason === 'kept') { if (S.rv) S.rv.done.add(path); }
+        if (r.reason === 'done' || r.reason === 'rejected' || r.reason === 'kept') rvMarkDone(path);
         renderReviewDock();
         if (r.reason === 'done' || r.reason === 'rejected') renderAll();
       }

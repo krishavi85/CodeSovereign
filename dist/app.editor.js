@@ -245,7 +245,7 @@
           if (s.resolved) return;
           const r = model.getDecorationRange(s.deco);
           if (!r) return;
-          const after = s.empty ? Math.max(0, r.startLineNumber - 1) : r.startLineNumber - 1;
+          const after = s.eof ? r.startLineNumber : s.empty ? Math.max(0, r.startLineNumber - 1) : r.startLineNumber - 1;
           if (s.zone.afterLineNumber !== after) { s.zone.afterLineNumber = after; acc.layoutZone(s.zoneId); }
         });
       });
@@ -289,7 +289,8 @@
         else edit = { range: new monaco.Range(1, 1, b, maxCol(b)), text: '' };
       } else {
         const a = r.startLineNumber;
-        if (a <= lines) edit = { range: new monaco.Range(a, 1, a, 1), text: h.oldLines.join('\n') + '\n' };
+        if (s.eof) edit = { range: new monaco.Range(lines, maxCol(lines), lines, maxCol(lines)), text: '\n' + h.oldLines.join('\n') };
+        else if (a <= lines) edit = { range: new monaco.Range(a, 1, a, 1), text: h.oldLines.join('\n') + '\n' };
         else edit = { range: new monaco.Range(lines, maxCol(lines), lines, maxCol(lines)), text: '\n' + h.oldLines.join('\n') };
       }
       drop(s);
@@ -337,13 +338,18 @@
     // decorations + zones, one per hunk
     const decos = model.deltaDecorations([], hs.map(function (h) {
       const a = h.newStart + 1, b = h.newStart + h.newLines.length;
+      // a deletion at the very end has no line to anchor on: pin it to the end of the last line
+      if (!h.newLines.length && a > model.getLineCount()) {
+        const last = model.getLineCount();
+        return { range: new monaco.Range(last, maxCol(last), last, maxCol(last)), options: { stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges } };
+      }
       return h.newLines.length
         ? { range: new monaco.Range(a, 1, b, maxCol(b)), options: { isWholeLine: true, className: 'cs-rv-add', linesDecorationsClassName: 'cs-rv-gutter-add', stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges } }
         : { range: new monaco.Range(a, 1, a, 1), options: { stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges } };
     }));
     editor.changeViewZones(function (acc) {
       hs.forEach(function (h, i) {
-        const s = { h: h, deco: decos[i], empty: !h.newLines.length, resolved: false };
+        const s = { h: h, deco: decos[i], empty: !h.newLines.length, resolved: false, eof: !h.newLines.length && h.newStart >= model.getLineCount() };
         const dom = document.createElement('div');
         dom.className = 'cs-rv-zone';
         const tools = document.createElement('div');
