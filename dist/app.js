@@ -545,6 +545,7 @@ function runAgentWith(prompt, specCtx) {
   const restart = promptIsRestart(prompt);
   const followUp = !restart && !!(S.agentBuilt || (S.agentRuns || []).some(p => p && p !== prompt));
   S.lastPrompt = prompt;
+  const reviewBase = Engine.Review ? Engine.Review.snapshot(Engine.FS) : null;   // for accept/reject afterwards
   S.agentChat = [...(S.agentChat || []), { role: 'user', text: prompt, at: Date.now() }];
   S.agentRunning = true;
   // Stopping a run can't truly cancel the in-flight request (no abort
@@ -591,6 +592,7 @@ function runAgentWith(prompt, specCtx) {
     renderAll();
   }).then(() => {
     if (S.agentRunToken !== myRunToken) return; // this run was stopped/superseded
+    try { beginAgentReview(reviewBase); } catch (e) { console.warn('[review]', e); }
     // Final sync so the Build tab reflects exactly what the run produced
     try { syncBuildFromFS(); } catch (_) {}
     S.agentRunning = false;
@@ -1647,7 +1649,9 @@ function renderIDE() {
       </div>
       <div style="display:flex;align-items:center;gap:7px;padding:6px 16px;font-size:11.5px;color:#7b859c;flex:none;border-bottom:1px solid rgba(255,255,255,.04)"><span>${S.ideFile ? esc(S.ideFile) : 'no file'}</span>${S.ideDirty?'<span style="color:#f59e0b">· unsaved</span>':''}<span class="tab-hint" id="tabHint">Tab · Agent Tab · Ctrl+K edit</span></div>
       <div style="flex:1;display:flex;min-height:0;position:relative;overflow:hidden;background:#0a0e17">
-        <textarea id="ideEditor" spellcheck="false" style="flex:1;background:#0a0e17;color:#c9d1e0;border:0;outline:0;padding:8px 16px;font:400 13px/1.62 'JetBrains Mono',monospace;resize:none;width:100%;height:100%;position:relative;z-index:1">${esc(S.ideBuffer || '')}</textarea>
+        ${window.CSEditor && window.CSEditor.ready
+          ? '<div id="ideEditor" data-monaco="1" style="flex:1;position:relative;min-width:0;min-height:0"></div>'
+          : `<textarea id="ideEditor" spellcheck="false" style="flex:1;background:#0a0e17;color:#c9d1e0;border:0;outline:0;padding:8px 16px;font:400 13px/1.62 'JetBrains Mono',monospace;resize:none;width:100%;height:100%;position:relative;z-index:1">${esc(S.ideBuffer || '')}</textarea>`}
         <div id="tabGhost" class="tab-ghost" hidden></div>
         <div id="tabPortal" class="tab-portal" hidden></div>
         <div id="inlineEdit" class="inline-edit" hidden>
@@ -1740,6 +1744,7 @@ function renderTreeRows(node, depth) {
 }
 
 function tabCaretPixel(editor, pos) {
+  if (editor && editor.caretPixel) return editor.caretPixel(pos);
   const div = document.createElement('div');
   const st = window.getComputedStyle(editor);
   ['font', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'padding', 'border', 'boxSizing', 'whiteSpace', 'wordWrap', 'width'].forEach(function (p) {
@@ -1766,6 +1771,7 @@ function paintAgentTab(editor, sug) {
   const portal = document.getElementById('tabPortal');
   const hint = document.getElementById('tabHint');
   S._tabSug = sug || null;
+  if (editor && editor.setTabActive) editor.setTabActive(!!(sug && (sug.text || (window.Engine.Tab && window.Engine.Tab.isPortal(sug)))));
   const preview = sug && sug.text ? String(sug.text).split('\n')[0].slice(0, 64) : '';
   if (hint) {
     hint.textContent = sug
@@ -1862,6 +1868,7 @@ function paintInlineEdit(editor, show) {
   const box = document.getElementById('inlineEdit');
   const input = document.getElementById('inlineEditInput');
   if (!box) return;
+  if (editor && editor.setInlineOpen) editor.setInlineOpen(!!show);
   if (!show) {
     box.hidden = true;
     S._inlineOpen = false;
@@ -1903,29 +1910,147 @@ async function runInlineEdit(editor) {
     toast('Inline edit failed: ' + (e && e.message || e), '#ef4444');
     return;
   }
-  const next = Inline.apply(result, editor.value);
+  const before = editor.value;
+  const next = Inline.apply(result, before);
   editor.value = next.content;
   S.ideBuffer = next.content;
   S.ideDirty = true;
   editor.selectionStart = editor.selectionEnd = next.cursor;
   paintInlineEdit(editor, false);
+  // Monaco: show the edit as hunks to accept / reject (Esc undoes it all).
+  if (editor.review && next.content !== before) {
+    const rv = editor.review({ original: before, onEnd: function (r) { onReviewEnd(S.ideFile, r); } });
+    if (rv) { try { editor.focus(); } catch (_) {} toast('Review the change — Ctrl+Enter accepts, Esc rejects', '#a78bfa'); return; }
+  }
   toast('Selection updated', '#34d399');
 }
 
-function bindInlineEdit(editor) {
-  if (!editor || editor.dataset.inlineBound === '1') return;
-  editor.dataset.inlineBound = '1';
-  editor.addEventListener('keydown', function (e) {
-    if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
-      e.preventDefault();
-      paintInlineEdit(editor, true);
-      return;
-    }
-    if (e.key === 'Escape' && S._inlineOpen) {
-      e.preventDefault();
-      paintInlineEdit(editor, false);
-    }
+/* ---- review of AI edits (Ctrl+K and agent runs) ------------------------ */
+// Ctrl+K: the review ended (accepted / rejected / replaced) — keep the buffer in sync.
+function onReviewEnd(path, r) {
+  if (!path || path !== S.ideFile) return;
+  S.ideBuffer = r.text;
+  S.ideDirty = r.text !== (Engine.FS.read(path) || '');
+  toast(r.reason === 'rejected' ? 'Edit rejected' : r.rejected ? 'Edit reviewed — ' + r.accepted + ' kept, ' + r.rejected + ' rejected' : 'Edit accepted', r.reason === 'rejected' ? '#f59e0b' : '#34d399');
+  renderAll();
+}
+
+// Agent runs: remember what the files looked like before the run so each
+// changed file can be reviewed hunk by hunk, kept, or undone.
+function beginAgentReview(before) {
+  const R = Engine.Review;
+  if (!R || !before) return;
+  if (!Object.keys(before).length) return;      // a first build has nothing to compare with
+  const keep = S.rv && S.rv.before ? S.rv.before : before;
+  S.rv = { before: keep, done: new Set() };
+  if (!R.collect(keep, Engine.FS).length) { S.rv = null; }
+  renderReviewDock();
+}
+function rvChanges() {
+  if (!S.rv) return [];
+  return Engine.Review.collect(S.rv.before, Engine.FS).filter(c => !S.rv.done.has(c.path));
+}
+function rvRefreshOpenFile(path) {
+  if (S.ideFile === path) { S.ideBuffer = Engine.FS.read(path) || ''; S.ideDirty = false; }
+}
+function rvUndo(path) {
+  const c = rvChanges().find(x => x.path === path);
+  if (!c) return;
+  if (window.CSEditor && window.CSEditor.reviewing()) window.CSEditor.endReview('replaced');
+  Engine.Review.reject(Engine.FS, c);
+  if (S.ideFile === path && c.status === 'added') { S.ideFile = null; S.ideBuffer = ''; }
+  rvRefreshOpenFile(path);
+  renderAll();
+  renderReviewDock();
+}
+function rvKeep(path) {
+  if (!S.rv) return;
+  if (window.CSEditor && window.CSEditor.reviewing() && S.ideFile === path) window.CSEditor.endReview('kept');
+  S.rv.done.add(path);
+  renderReviewDock();
+}
+function rvOpen(path) {
+  const c = rvChanges().find(x => x.path === path);
+  if (!c) return;
+  if (c.status === 'deleted') { toast('Deleted by the agent — Undo restores it', '#f59e0b'); return; }
+  if (window.CSEditor && window.CSEditor.reviewing()) window.CSEditor.endReview('left');
+  S.screen = 'ide';
+  S.ideFile = path;
+  S.ideBuffer = Engine.FS.read(path) || '';
+  S.ideDirty = false;
+  renderAll();
+  const go = () => {
+    const ed = window.CSEditor && window.CSEditor.ready ? window.CSEditor.current() : null;
+    if (!ed || !ed.review) { toast('Review needs the code editor — it is still loading', '#f59e0b'); return; }
+    const rv = ed.review({
+      original: c.before == null ? '' : c.before,
+      onEnd: function (r) {
+        if (c.status === 'added' && r.reason === 'rejected') { Engine.FS.remove(path); if (S.ideFile === path) { S.ideFile = null; S.ideBuffer = ''; } }
+        else { Engine.FS.write(path, r.text); rvRefreshOpenFile(path); }
+        if (r.reason === 'done' || r.reason === 'rejected' || r.reason === 'kept') { if (S.rv) S.rv.done.add(path); }
+        renderReviewDock();
+        if (r.reason === 'done' || r.reason === 'rejected') renderAll();
+      }
+    });
+    if (!rv) toast('Nothing to review in ' + path, '#22d3ee');
+  };
+  setTimeout(go, 60);
+}
+function renderReviewDock() {
+  let dock = document.getElementById('csReviewDock');
+  const ch = rvChanges();
+  if (!S.rv || !ch.length) {
+    if (S.rv && !ch.length) S.rv = null;
+    if (dock) dock.remove();
+    return;
+  }
+  if (!dock) {
+    dock = document.createElement('div');
+    dock.id = 'csReviewDock';
+    dock.style.cssText = 'position:fixed;right:18px;bottom:18px;z-index:9000;width:360px;max-height:60vh;display:flex;flex-direction:column;background:#141a29;border:1px solid rgba(167,139,250,.45);border-radius:12px;box-shadow:0 10px 36px rgba(0,0,0,.55);font:500 12px Inter,sans-serif;color:#c9d1e0;overflow:hidden';
+    document.body.appendChild(dock);
+  }
+  const add = ch.reduce((n, c) => n + c.added, 0), del = ch.reduce((n, c) => n + c.removed, 0);
+  const btn = (act, label, col, p) => '<button data-rv="' + act + '"' + (p != null ? ' data-rvpath="' + esc(p) + '"' : '') + ' style="font:600 11px Inter,sans-serif;border-radius:6px;padding:2px 8px;cursor:pointer;background:transparent;color:' + col + ';border:1px solid ' + col + '66">' + label + '</button>';
+  const icon = { added: '<span style="color:#34d399">A</span>', modified: '<span style="color:#f59e0b">M</span>', deleted: '<span style="color:#f87171">D</span>' };
+  dock.innerHTML =
+    '<div style="display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid rgba(255,255,255,.07)">'
+    + '<span style="font-weight:700">Agent changed ' + ch.length + ' file' + (ch.length === 1 ? '' : 's') + '</span>'
+    + '<span style="color:#34d399">+' + add + '</span><span style="color:#f87171">−' + del + '</span><span style="flex:1"></span>'
+    + btn('keepall', 'Keep all', '#34d399') + btn('undoall', 'Undo all', '#f87171') + '</div>'
+    + '<div style="overflow:auto">' + ch.map(c =>
+      '<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid rgba(255,255,255,.04)">'
+      + icon[c.status] + '<span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:400 11.5px monospace" title="' + esc(c.path) + '">' + esc(c.path) + '</span>'
+      + '<span style="color:#7b859c;font-size:11px">+' + c.added + ' −' + c.removed + '</span>'
+      + (c.status === 'deleted' ? '' : btn('open', 'Review', '#a78bfa', c.path)) + btn('keep', 'Keep', '#34d399', c.path) + btn('undo', 'Undo', '#f87171', c.path) + '</div>').join('') + '</div>';
+  dock.querySelectorAll('[data-rv]').forEach(b => b.onclick = () => {
+    const a = b.dataset.rv, p = b.dataset.rvpath;
+    if (a === 'open') rvOpen(p);
+    else if (a === 'keep') rvKeep(p);
+    else if (a === 'undo') rvUndo(p);
+    else if (a === 'keepall') { if (window.CSEditor && window.CSEditor.reviewing()) window.CSEditor.endReview('kept'); S.rv = null; renderReviewDock(); }
+    else if (a === 'undoall') { rvChanges().forEach(c => rvUndo(c.path)); S.rv = null; renderReviewDock(); }
   });
+}
+
+function bindInlineEdit(editor) {
+  if (!editor) return;
+  // The Monaco facade outlives re-renders, the box and its input do not: bind
+  // the editor's key handler once, but the input's handlers on every render.
+  if (editor.dataset.inlineBound !== '1') {
+    editor.dataset.inlineBound = '1';
+    editor.addEventListener('keydown', function (e) {
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        paintInlineEdit(editor, true);
+        return;
+      }
+      if (e.key === 'Escape' && S._inlineOpen) {
+        e.preventDefault();
+        paintInlineEdit(editor, false);
+      }
+    });
+  }
   const input = document.getElementById('inlineEditInput');
   if (input && input.dataset.inlineK !== '1') {
     input.dataset.inlineK = '1';
@@ -1948,6 +2073,8 @@ function bindInlineEdit(editor) {
 function bindAgentTab(editor) {
   const Tab = window.Engine && window.Engine.Tab;
   if (!Tab || !editor) return;
+  if (editor.dataset && editor.dataset.tabBound === '1') return;
+  if (editor.dataset) editor.dataset.tabBound = '1';
   let t = 0;
   const bump = function () {
     clearTimeout(t);
@@ -2031,11 +2158,23 @@ function bindIDE() {
     renderAll();
   });
   document.querySelectorAll('[data-idegit]').forEach(el => el.onclick = () => openFile(el.dataset.idegit));
-  const editor = document.getElementById('ideEditor');
+  let editor = document.getElementById('ideEditor');
+  if (window.CSEditor && !window.CSEditor.ready && !window.CSEditor.failed && editor && !S._monacoLoading) {
+    // load Monaco once, then swap the plain textarea for it
+    S._monacoLoading = true;
+    window.CSEditor.ensure(() => { S._monacoLoading = false; if (S.screen === 'ide') renderAll(); });
+  }
+  if (editor && editor.dataset.monaco === '1') editor = window.CSEditor.mount(editor, { path: S.ideFile, value: S.ideBuffer });
   if (editor) {
     editor.oninput = e => { S.ideBuffer = e.target.value; S.ideDirty = true; /* re-render would lose focus; mark only */ const ind = document.querySelector('[id="screenRoot"]'); };
     bindAgentTab(editor);
     bindInlineEdit(editor);
+    if (editor.dataset.saveBound !== '1') {
+      editor.dataset.saveBound = '1';
+      editor.addEventListener('keydown', e => {
+        if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); saveFile(); }
+      });
+    }
   }
   const sf = document.getElementById('saveFileBtn'); if (sf) sf.onclick = saveFile;
   const sf2 = document.getElementById('saveFileBtn2'); if (sf2) sf2.onclick = saveFile;

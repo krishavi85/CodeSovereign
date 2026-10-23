@@ -9,6 +9,7 @@ license texts are in this folder.
 | `acorn.js` | [acorn](https://github.com/acornjs/acorn) | 8.18.0 | ECMAScript parser — `engine.ast.js` uses it to replace the regex import/export/route extraction | MIT (`LICENSE-acorn.txt`) |
 | `acorn-loose.js` | [acorn-loose](https://github.com/acornjs/acorn) | 8.5.2 | error-tolerant fallback parser for files with syntax errors | MIT (`LICENSE-acorn.txt`) |
 | `js-yaml.min.js` | [js-yaml](https://github.com/nodeca/js-yaml) | 5.4.1 (UMD browser build) | YAML parser — `engine.pipeline-parse.js` uses it for GitHub Actions / GitLab CI / docker-compose. `load()` in this version has no code-execution tags. | MIT (`LICENSE-js-yaml.txt`) |
+| `monaco/vs/` | [monaco-editor](https://github.com/microsoft/monaco-editor) | 0.52.2 (AMD `min/vs`, without the `nls.messages.*` locale files) | Code editor for the IDE tab (`app.editor.js`), loaded lazily on first IDE open. Language-service workers are off: the CSP blocks them, so highlighting and editing only | MIT (`monaco/LICENSE`, `monaco/ThirdPartyNotices.txt`) |
 
 ## Safeguards applied by the callers
 
