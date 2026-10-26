@@ -1,0 +1,427 @@
+{
+  "startedAt": "2026-10-26T22:32:41.953Z",
+  "finishedAt": "2026-10-26T22:49:31.232Z",
+  "model": "qwen2.5-coder:7b",
+  "base": "http://127.0.0.1:11434",
+  "ctx": 16384,
+  "mode": "auto",
+  "toolset": "compact",
+  "trialsPerTask": 3,
+  "environment": {
+    "node": "v24.22.0",
+    "platform": "win32 10.0.26300",
+    "cpus": "16× AMD Ryzen 7 5700U with Radeon Graphics         ",
+    "ramGB": 34
+  },
+  "overall": {
+    "trials": 9,
+    "passed": 5,
+    "rate": 0.5555555555555556
+  },
+  "summary": [
+    {
+      "task": "bugfix-range",
+      "title": "Fix an off-by-one bug",
+      "trials": 3,
+      "passed": 3,
+      "rate": 1,
+      "medianSeconds": 36,
+      "medianTurns": 6,
+      "medianToolCalls": 4,
+      "trialsThatRepaired": 0,
+      "claimedVerifiedButFailedJudge": 0
+    },
+    {
+      "task": "feature-slugify",
+      "title": "Add a function and use it from another file",
+      "trials": 3,
+      "passed": 0,
+      "rate": 0,
+      "medianSeconds": 209,
+      "medianTurns": 13,
+      "medianToolCalls": 12,
+      "trialsThatRepaired": 3,
+      "claimedVerifiedButFailedJudge": 0
+    },
+    {
+      "task": "bugfix-crossfile",
+      "title": "Find a bug that spans two files",
+      "trials": 3,
+      "passed": 2,
+      "rate": 0.6666666666666666,
+      "medianSeconds": 78,
+      "medianTurns": 7,
+      "medianToolCalls": 7,
+      "trialsThatRepaired": 0,
+      "claimedVerifiedButFailedJudge": 0
+    }
+  ],
+  "results": [
+    {
+      "task": "bugfix-range",
+      "status": "verified",
+      "success": true,
+      "judge": {
+        "code": 0,
+        "pass": 4,
+        "fail": 0
+      },
+      "ms": 52594,
+      "turns": 6,
+      "toolCalls": 4,
+      "tools": {
+        "list_dir": 1,
+        "read_file": 2,
+        "edit_file": 1
+      },
+      "attempts": 0,
+      "states": [
+        "PLANNING",
+        "EXECUTING",
+        "VERIFYING",
+        "COMPLETED"
+      ],
+      "changed": [
+        "/src/range.js (modified)"
+      ],
+      "toolErrors": [],
+      "verification": [
+        true
+      ],
+      "note": "",
+      "crashed": null,
+      "report": "**VERIFIED** — All verification steps passed.\n\nPlan:\n- [x] Read the code that is involved\n- [x] Make the change\n- [x] Run the project's tests to verify\n\nChanged files:\n- /src/range.js (modified, +1 −1)\n\nVerification runs:\n1. passed — tests (exit 0, 2 pass / 0 fail)\n\nEffort: 6 model turn(s), 4 tool call(s), 53s.",
+      "dir": null,
+      "trial": 1
+    },
+    {
+      "task": "bugfix-range",
+      "status": "verified",
+      "success": true,
+      "judge": {
+        "code": 0,
+        "pass": 4,
+        "fail": 0
+      },
+      "ms": 34315,
+      "turns": 6,
+      "toolCalls": 4,
+      "tools": {
+        "list_dir": 1,
+        "read_file": 2,
+        "edit_file": 1
+      },
+      "attempts": 0,
+      "states": [
+        "PLANNING",
+        "EXECUTING",
+        "VERIFYING",
+        "COMPLETED"
+      ],
+      "changed": [
+        "/src/range.js (modified)"
+      ],
+      "toolErrors": [],
+      "verification": [
+        true
+      ],
+      "note": "",
+      "crashed": null,
+      "report": "**VERIFIED** — All verification steps passed.\n\nPlan:\n- [x] Read the code that is involved\n- [x] Make the change\n- [x] Run the project's tests to verify\n\nChanged files:\n- /src/range.js (modified, +1 −1)\n\nVerification runs:\n1. passed — tests (exit 0, 2 pass / 0 fail)\n\nEffort: 6 model turn(s), 4 tool call(s), 34s.",
+      "dir": null,
+      "trial": 2
+    },
+    {
+      "task": "bugfix-range",
+      "status": "verified",
+      "success": true,
+      "judge": {
+        "code": 0,
+        "pass": 4,
+        "fail": 0
+      },
+      "ms": 35677,
+      "turns": 6,
+      "toolCalls": 4,
+      "tools": {
+        "list_dir": 1,
+        "read_file": 2,
+        "edit_file": 1
+      },
+      "attempts": 0,
+      "states": [
+        "PLANNING",
+        "EXECUTING",
+        "VERIFYING",
+        "COMPLETED"
+      ],
+      "changed": [
+        "/src/range.js (modified)"
+      ],
+      "toolErrors": [],
+      "verification": [
+        true
+      ],
+      "note": "",
+      "crashed": null,
+      "report": "**VERIFIED** — All verification steps passed.\n\nPlan:\n- [x] Read the code that is involved\n- [x] Make the change\n- [x] Run the project's tests to verify\n\nChanged files:\n- /src/range.js (modified, +1 −1)\n\nVerification runs:\n1. passed — tests (exit 0, 2 pass / 0 fail)\n\nEffort: 6 model turn(s), 4 tool call(s), 36s.",
+      "dir": null,
+      "trial": 3
+    },
+    {
+      "task": "feature-slugify",
+      "status": "blocked",
+      "success": false,
+      "judge": {
+        "code": 1,
+        "pass": 4,
+        "fail": 1
+      },
+      "ms": 189953,
+      "turns": 9,
+      "toolCalls": 10,
+      "tools": {
+        "list_dir": 1,
+        "read_file": 2,
+        "edit_file": 4,
+        "report_result": 2,
+        "run_tests": 1
+      },
+      "attempts": 2,
+      "states": [
+        "PLANNING",
+        "EXECUTING",
+        "VERIFYING",
+        "REPAIRING",
+        "VERIFYING",
+        "REPAIRING",
+        "VERIFYING",
+        "BLOCKED"
+      ],
+      "changed": [
+        "/src/text.js (modified)",
+        "/src/format.js (modified)"
+      ],
+      "toolErrors": [
+        "edit_file: old_text was not found in /src/format.js. Copy it exactly from read_file (including indentation), or",
+        "run_tests: tests — exit 1 (1 pass, 1 fail)"
+      ],
+      "verification": [
+        false,
+        false,
+        false
+      ],
+      "note": "",
+      "crashed": null,
+      "report": "**BLOCKED** — Tests still fail after 2 repair attempts.\n\nPlan:\n- [ ] Read the code that is involved\n- [ ] Make the change\n- [ ] Run the project's tests to verify\n\nChanged files:\n- /src/text.js (modified, +3 −3)\n- /src/format.js (modified, +2 −2)\n\nVerification runs:\n1. FAILED — tests (exit 1, 0 pass / 2 fail)\n2. FAILED — tests (exit 1, 1 pass / 1 fail)\n3. FAILED — tests (exit 1, 1 pass / 1 fail)\n\nRepair attempts:\n- #1: /src/format.js → improved (2 → 1 failing)\n- #2: /src/format.js → no progress (1 failing)\n\nEffort: 9 model turn(s), 10 tool call(s), 190s.",
+      "dir": null,
+      "trial": 1
+    },
+    {
+      "task": "feature-slugify",
+      "status": "blocked",
+      "success": false,
+      "judge": {
+        "code": 1,
+        "pass": 0,
+        "fail": 2
+      },
+      "ms": 208928,
+      "turns": 13,
+      "toolCalls": 12,
+      "tools": {
+        "list_dir": 1,
+        "read_file": 3,
+        "edit_file": 4,
+        "report_result": 3,
+        "write_file": 1
+      },
+      "attempts": 2,
+      "states": [
+        "PLANNING",
+        "EXECUTING",
+        "VERIFYING",
+        "REPAIRING",
+        "VERIFYING",
+        "REPAIRING",
+        "VERIFYING",
+        "BLOCKED"
+      ],
+      "changed": [
+        "/src/text.js (modified)"
+      ],
+      "toolErrors": [
+        "edit_file: old_text was not found in /src/text.js. Copy it exactly from read_file (including indentation), or u",
+        "edit_file: old_text was not found in /src/text.js. Copy it exactly from read_file (including indentation), or u"
+      ],
+      "verification": [
+        false,
+        false,
+        false,
+        false
+      ],
+      "note": "",
+      "crashed": null,
+      "report": "**BLOCKED** — Tests still fail after 2 repair attempts.\n\nPlan:\n- [ ] Read the code that is involved\n- [ ] Make the change\n- [ ] Run the project's tests to verify\n\nChanged files:\n- /src/text.js (modified, +6 −3)\n\nVerification runs:\n1. FAILED — tests (exit 1, 0 pass / 1 fail)\n2. FAILED — tests (exit 1, 0 pass / 1 fail)\n3. FAILED — tests (exit 1, 0 pass / 2 fail)\n4. FAILED — tests (exit 1, 0 pass / 1 fail)\n\nRepair attempts:\n- #1: /src/text.js → no progress (1 failing)\n- #2: /src/text.js → reverted — it made things worse (1 → 2 failing)\n\nEffort: 13 model turn(s), 12 tool call(s), 209s.",
+      "dir": null,
+      "trial": 2
+    },
+    {
+      "task": "feature-slugify",
+      "status": "blocked",
+      "success": false,
+      "judge": {
+        "code": 1,
+        "pass": 4,
+        "fail": 1
+      },
+      "ms": 264092,
+      "turns": 13,
+      "toolCalls": 13,
+      "tools": {
+        "list_dir": 1,
+        "read_file": 3,
+        "edit_file": 4,
+        "report_result": 1,
+        "run_tests": 4
+      },
+      "attempts": 2,
+      "states": [
+        "PLANNING",
+        "EXECUTING",
+        "VERIFYING",
+        "REPAIRING",
+        "VERIFYING",
+        "REPAIRING",
+        "VERIFYING",
+        "BLOCKED"
+      ],
+      "changed": [
+        "/src/text.js (modified)",
+        "/src/format.js (modified)"
+      ],
+      "toolErrors": [
+        "edit_file: old_text was not found in /src/format.js. Copy it exactly from read_file (including indentation), or",
+        "run_tests: tests — exit 1 (1 pass, 1 fail)",
+        "run_tests: tests — exit 1 (1 pass, 1 fail)",
+        "run_tests: tests — exit 1 (1 pass, 1 fail)",
+        "run_tests: tests — exit 1 (1 pass, 1 fail)"
+      ],
+      "verification": [
+        false,
+        false,
+        false
+      ],
+      "note": "",
+      "crashed": null,
+      "report": "**BLOCKED** — Tests still fail after 2 repair attempts.\n\nPlan:\n- [ ] Read the code that is involved\n- [ ] Make the change\n- [ ] Run the project's tests to verify\n\nChanged files:\n- /src/text.js (modified, +3 −3)\n- /src/format.js (modified, +2 −2)\n\nVerification runs:\n1. FAILED — tests (exit 1, 0 pass / 2 fail)\n2. FAILED — tests (exit 1, 1 pass / 1 fail)\n3. FAILED — tests (exit 1, 1 pass / 1 fail)\n\nRepair attempts:\n- #1: /src/format.js → improved (2 → 1 failing)\n- #2: /src/format.js → no progress (1 failing)\n\nEffort: 13 model turn(s), 13 tool call(s), 264s.",
+      "dir": null,
+      "trial": 3
+    },
+    {
+      "task": "bugfix-crossfile",
+      "status": "verified",
+      "success": true,
+      "judge": {
+        "code": 0,
+        "pass": 3,
+        "fail": 0
+      },
+      "ms": 78111,
+      "turns": 7,
+      "toolCalls": 7,
+      "tools": {
+        "list_dir": 1,
+        "read_file": 5,
+        "edit_file": 1
+      },
+      "attempts": 0,
+      "states": [
+        "PLANNING",
+        "EXECUTING",
+        "VERIFYING",
+        "COMPLETED"
+      ],
+      "changed": [
+        "/src/cart.js (modified)"
+      ],
+      "toolErrors": [],
+      "verification": [
+        true
+      ],
+      "note": "",
+      "crashed": null,
+      "report": "**VERIFIED** — All verification steps passed.\n\nPlan:\n- [x] Read the code that is involved\n- [x] Make the change\n- [x] Run the project's tests to verify\n\nChanged files:\n- /src/cart.js (modified, +1 −1)\n\nVerification runs:\n1. passed — tests (exit 0, 2 pass / 0 fail)\n\nEffort: 7 model turn(s), 7 tool call(s), 78s.",
+      "dir": null,
+      "trial": 1
+    },
+    {
+      "task": "bugfix-crossfile",
+      "status": "verified",
+      "success": true,
+      "judge": {
+        "code": 0,
+        "pass": 3,
+        "fail": 0
+      },
+      "ms": 56340,
+      "turns": 6,
+      "toolCalls": 6,
+      "tools": {
+        "list_dir": 1,
+        "read_file": 4,
+        "edit_file": 1
+      },
+      "attempts": 0,
+      "states": [
+        "PLANNING",
+        "EXECUTING",
+        "VERIFYING",
+        "COMPLETED"
+      ],
+      "changed": [
+        "/src/cart.js (modified)"
+      ],
+      "toolErrors": [],
+      "verification": [
+        true
+      ],
+      "note": "",
+      "crashed": null,
+      "report": "**VERIFIED** — All verification steps passed.\n\nPlan:\n- [x] Read the code that is involved\n- [x] Make the change\n- [x] Run the project's tests to verify\n\nChanged files:\n- /src/cart.js (modified, +1 −1)\n\nVerification runs:\n1. passed — tests (exit 0, 2 pass / 0 fail)\n\nEffort: 6 model turn(s), 6 tool call(s), 56s.",
+      "dir": null,
+      "trial": 2
+    },
+    {
+      "task": "bugfix-crossfile",
+      "status": "no-changes",
+      "success": false,
+      "judge": {
+        "code": 1,
+        "pass": 1,
+        "fail": 2
+      },
+      "ms": 86995,
+      "turns": 11,
+      "toolCalls": 7,
+      "tools": {
+        "list_dir": 1,
+        "read_file": 6
+      },
+      "attempts": 0,
+      "states": [
+        "PLANNING",
+        "EXECUTING",
+        "COMPLETED"
+      ],
+      "changed": [],
+      "toolErrors": [],
+      "verification": [],
+      "note": "",
+      "crashed": null,
+      "report": "**NO CHANGES** — The agent finished without changing any file.\n\nPlan:\n- [ ] Read the code that is involved\n- [ ] Make the change\n- [ ] Run the project's tests to verify\n\nEffort: 11 model turn(s), 7 tool call(s), 87s.",
+      "dir": null,
+      "trial": 3
+    }
+  ]
+}

@@ -362,6 +362,14 @@ module.exports = async function (t) {
     t.ok('planning offers only read tools + create_plan; execution offers editing and tests', m.seen[0].tools.indexOf('edit_file') < 0 && m.seen[0].tools.indexOf('create_plan') >= 0 && m.seen[2].tools.indexOf('edit_file') >= 0 && m.seen[2].tools.indexOf('run_tests') >= 0 && m.seen[2].tools.indexOf('report_result') >= 0);
     t.ok('the plan reaches the execution prompt', /fix the operator/.test(m.seen[2].msgs[1].content) && /Goal: Fix sum/.test(m.seen[2].msgs[1].content));
 
+    // a small/local model is told to prefer write_file for short files; a full toolset is not
+    const mSmall = scripted([planStep(), planDone, report('x')]);
+    await task({ opts: { chatStream: mSmall, toolset: 'compact' }, steps: [] });
+    t.ok('the compact (small-model) prompt tells the model to use write_file for short files', /shorter than about 80 lines, use write_file/.test(mSmall.seen[2].msgs[0].content));
+    const mFull = scripted([planStep(), planDone, report('x')]);
+    await task({ opts: { chatStream: mFull, toolset: 'full' }, steps: [] });
+    t.ok('the full-toolset prompt does not', !/shorter than about 80 lines/.test(mFull.seen[2].msgs[0].content));
+
     // 4. repair: a wrong first fix, a correct second
     const wrong = { calls: [{ name: 'edit_file', args: { path: '/sum.js', old_text: 'a - b', new_text: 'a * b' } }] };
     const hooksSeen = [];
@@ -436,6 +444,22 @@ module.exports = async function (t) {
     r = await task({ opts: { chatStream: blocked }, steps: [] });
     t.ok('a model that honestly reports blocked is not pushed again: the run is BLOCKED with its reason', r.report.status === 'blocked' && /contradicts itself/.test(r.report.text) && r.states[r.states.length - 1] === 'BLOCKED');
     t.equal('...and no nudge was sent', blocked.seen.filter((c) => /No file has been changed yet/.test(c.msgs[1].content)).length, 0);
+
+    // 9c. the model says it changed a file it did not change: the repair prompt calls it out
+    const filesC = { '/package.json': PKG, '/a.js': 'A0\n', '/util.js': 'U0\n', '/a.test.js': 'x\n' };
+    const runnerC = (spec, d) => (/A1/.test(d['/a.js']) && /U1/.test(d['/util.js']) ? { code: 0, output: specOut(2, []) } : { code: 1, output: specOut(0, [{ name: 'uses the helper', message: 'util not updated' }]) });
+    const mC = scripted([planStep(), planDone,
+      { calls: [{ name: 'write_file', args: { path: '/a.js', content: 'A1\n' } }] }, { calls: [{ name: 'report_result', args: { summary: 'Updated a.js and updated util.js to use the helper.', status: 'done' } }] },
+      { calls: [{ name: 'write_file', args: { path: '/util.js', content: 'U1\n' } }] }, report('now util.js')]);
+    r = await task({ env: makeEnv(filesC, { runner: runnerC }), opts: { chatStream: mC }, steps: [] });
+    const repairC = mC.seen.filter((c) => /Verification failed/.test(c.msgs[1].content))[0];
+    t.ok('the repair prompt says which claimed file is unchanged', !!repairC && /you reported changing \/util\.js but it is UNCHANGED/.test(repairC.msgs[1].content));
+    t.ok('and the run then succeeds', r.report.status === 'verified' && !/Warning: the agent said/.test(r.report.text));
+    // a verified run whose summary still overclaims carries a warning
+    const mD = scripted([planStep(), planDone, { calls: [{ name: 'write_file', args: { path: '/a.js', content: 'A1\nU1\n' } }] },
+      { calls: [{ name: 'report_result', args: { summary: 'Updated a.js and also updated util.js.', status: 'done' } }] }]);
+    r = await task({ env: makeEnv(filesC, { runner: (s, d) => ({ code: 0, output: specOut(2, []) }) }), opts: { chatStream: mD }, steps: [] });
+    t.ok('a verified report still warns about a claim the changes do not back', r.report.status === 'verified' && /Warning: the agent said it changed \/util\.js, but that file was not changed/.test(r.report.text));
 
     // 10. nothing to verify with
     r = await task({ files: { '/sum.js': 'function sum(a, b) { return a - b; }\n' }, steps: [planStep(), planDone, fixSum, report()] });

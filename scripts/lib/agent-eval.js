@@ -103,7 +103,7 @@ async function runTrial(opts) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-eval-' + task.id + '-'));
   writeTree(dir, task.files);
   const env = makeEnv(dir);
-  const events = { turns: 0, toolCalls: 0, tools: {}, states: [], attempts: 0, errors: [] };
+  const events = { turns: 0, toolCalls: 0, tools: {}, states: [], attempts: 0, errors: [], trace: [] };
   const ac = new AbortController();
   const budgets = Object.assign({ maxTurns: 12, maxToolCalls: 60, maxRepairs: 2, maxMs: opts.timeoutMs || 20 * 60 * 1000, contextChars: 20000, execTimeoutMs: 120000 }, opts.budgets || {});
   const timer = setTimeout(() => ac.abort(), budgets.maxMs + 30000);
@@ -117,7 +117,10 @@ async function runTrial(opts) {
         onState: (s) => events.states.push(s),
         onTurnStart: () => { events.turns++; },
         onToolStart: (c) => { events.toolCalls++; events.tools[c.name] = (events.tools[c.name] || 0) + 1; },
-        onToolDone: (c, r) => { if (!r.ok) events.errors.push(c.name + ': ' + String(r.summary || r.text).slice(0, 100)); },
+        onToolDone: (c, r) => {
+          if (!r.ok) events.errors.push(c.name + ': ' + String(r.summary || r.text).slice(0, 100));
+          if (events.trace.length < 80) events.trace.push({ tool: c.name, args: JSON.stringify(c.args).slice(0, 160), ok: r.ok, result: String(r.summary || r.text).slice(0, 160) });
+        },
         onAttempt: () => { events.attempts++; },
         approvePlan: () => true, approve: () => Promise.resolve(false)
       }
@@ -135,7 +138,7 @@ async function runTrial(opts) {
     judge: { code: judge.code, pass: m ? Number(m[1]) : null, fail: f ? Number(f[1]) : null },
     ms, turns: events.turns, toolCalls: events.toolCalls, tools: events.tools, attempts: events.attempts, states: events.states,
     changed: result ? result.changes.map((c) => c.path + ' (' + c.status + ')') : [], toolErrors: events.errors.slice(0, 8),
-    verification: result ? result.run.verification.map((v) => v.ok) : [], note: result ? result.run.note : '', crashed,
+    verification: result ? result.run.verification.map((v) => v.ok) : [], note: result ? result.run.note : '', crashed, trace: events.trace,
     report: result ? result.report.text : null, dir: opts.keepDir ? dir : null
   };
   if (!opts.keepDir) { try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) {} }

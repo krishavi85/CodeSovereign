@@ -428,6 +428,22 @@
     return res;
   }
 
+  // Files the model's own summary says it changed, that were not changed. Weak
+  // models routinely report work they did not do; the harness checks the claim
+  // against what actually changed on disk.
+  function unbackedClaims(summary, changedPaths, files) {
+    var text = String(summary || ''), out = [];
+    if (!text) return out;
+    (files || []).forEach(function (f) {
+      if (changedPaths.indexOf(f) >= 0 || TEST_FILE.test(f)) return;
+      var rel = f.slice(1), base = f.slice(f.lastIndexOf('/') + 1);
+      var esc = function (x) { return x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); };
+      var re = new RegExp('\\b(updated|modified|changed|edited|fixed|added|created|wrote|rewrote|replaced|refactored)\\b[^\\n]{0,90}?(?:' + esc(rel) + '|' + esc(base) + ')(?![\\w])', 'i');
+      if (re.test(text)) out.push(f);
+    });
+    return out;
+  }
+
   function failureSignature(failures) {
     return hash((failures || []).map(function (f) { return (f.name || '') + '|' + String(f.message || '').split('\n')[0].slice(0, 120); }).sort().join('\n'));
   }
@@ -991,6 +1007,12 @@
     'Keep changes minimal and focused. Never weaken, skip or delete existing tests to make them pass: fix the code under test. ' +
     'If a tool returns an error, read it and adjust; do not repeat the same call.';
 
+  // Small local models mis-copy the exact text edit_file needs; on a small
+  // project, replacing a whole short file is far more reliable.
+  var SMALL_MODEL_RULES =
+    '\nFor any file shorter than about 80 lines, use write_file with the COMPLETE new content of the file (keep everything that should stay): ' +
+    'it is more reliable than edit_file, which needs an exact text match. Use edit_file only for long files.';
+
   function projectSummary(env, reg) {
     var files = reg.allPaths().slice(0, 60), pkg = null;
     try { pkg = JSON.parse(env.read('/package.json') || 'null'); } catch (_) {}
@@ -1074,7 +1096,7 @@
 
     function finish(status, text, extra) {
       var changes = reg.ws.changes(cp0);
-      var report = buildReport(run, { status: status, summary: text, changes: changes, reg: reg, turns: turnsUsed, ms: Date.now() - t0, budgets: B });
+      var report = buildReport(run, { status: status, summary: text, changes: changes, reg: reg, turns: turnsUsed, ms: Date.now() - t0, budgets: B, claim: lastClaim });
       run.result = { status: status, summary: text }; machine.save();
       return { run: run, report: report, registry: reg, changes: changes };
     }
@@ -1125,7 +1147,9 @@
       });
       var done = run.attempts.filter(function (a) { return a.outcome !== 'running'; });
       if (done.length) parts.push('Earlier attempts:\n' + done.map(function (a) { return '- attempt ' + a.n + ' changed ' + (a.changed.join(', ') || 'nothing') + ' → ' + a.outcome; }).join('\n'));
-      parts.push('Find the cause in the SOURCE (not the tests), fix it with edit_file, then call report_result.');
+      var claimed = unbackedClaims(lastClaim, reg.ws.changes(cp0).map(function (c) { return c.path; }), reg.allPaths());
+      if (claimed.length) parts.push('IMPORTANT: you reported changing ' + claimed.join(', ') + ' but ' + (claimed.length === 1 ? 'it is' : 'they are') + ' UNCHANGED on disk. That is part of why the tests fail — make that change.');
+      parts.push('Find the cause in the SOURCE (not the tests), fix it with ' + (toolset === 'compact' ? 'write_file (whole file)' : 'edit_file') + ', then call report_result.');
       return parts.join('\n\n');
     }
 
@@ -1137,11 +1161,12 @@
         if (n > B.maxRepairs) { machine.transition('BLOCKED', 'repair attempts exhausted'); return Promise.resolve(finish('blocked', 'Tests still fail after ' + B.maxRepairs + ' repair attempts.', { verification: bestVerif })); }
         machine.transition('REPAIRING', 'attempt ' + n);
         var mark = reg.ws.mark('before attempt ' + n);
+        if (reg.reported) lastClaim = reg.reported.summary;
         reg.reported = null;
         var rec = { n: n, signature: lastSig, failBefore: best, changed: [], outcome: 'running' };
         run.attempts.push(rec); machine.save();
         if (hooks.onAttempt) hooks.onAttempt(rec);
-        var sys = BASE_RULES + '\nYou are repairing a failing project. The plan and goal are context; the failing output is what matters now.';
+        var sys = system + '\nYou are repairing a failing project. The plan and goal are context; the failing output is what matters now.';
         var user = 'Goal: ' + opts.goal + '\n\n' + repairBrief(v, n);
         return loop('repair', sys, user, 'repair ' + n).then(function (lr) {
           rec.changed = reg.ws.changes(mark).map(function (c) { return c.path; });
@@ -1182,7 +1207,7 @@
     }
 
     /* ---- the machine ---- */
-    var system = BASE_RULES;
+    var system = BASE_RULES + (toolset === 'compact' ? SMALL_MODEL_RULES : '');
 
     function plan() {
       machine.transition('PLANNING', 'start');
@@ -1200,7 +1225,7 @@
     }
 
     // The last few tool failures of this phase, quoted back when the model quits early.
-    var recentErrors = [], nudges = 0;
+    var recentErrors = [], nudges = 0, lastClaim = '';
     var trackDone = hooks.onToolDone;
     hooks = Object.assign({}, hooks, { onToolDone: function (c, res) {
       if (res && res.ok === false && res.status !== 'blocked') { recentErrors.push(c.name + ': ' + String(res.text).slice(0, 500)); if (recentErrors.length > 3) recentErrors.shift(); }
@@ -1236,6 +1261,7 @@
         machine.transition('COMPLETED', 'no changes');
         return finish('no-changes', 'The agent finished without changing any file' + (reg.reported ? ': ' + reg.reported.summary : '.'));
       }
+      lastClaim = reg.reported ? reg.reported.summary : '';
       machine.transition('VERIFYING', 'after execution');
       return verify().then(function (v) {
         if (aborted()) { machine.transition('CANCELLED', 'cancelled'); return finish('cancelled', 'Cancelled by the user.'); }
@@ -1286,6 +1312,8 @@
       if (tests.length) L.push('', 'Note: test files were touched: ' + tests.map(function (c) { return c.path; }).join(', '));
     }
     if (x.reg && x.reg.proposals.size) L.push('', 'Proposed (not applied): ' + Array.from(x.reg.proposals.keys()).join(', '));
+    var unbacked = x.claim ? unbackedClaims(x.claim, (x.changes || []).map(function (c) { return c.path; }), x.reg ? x.reg.allPaths() : []) : [];
+    if (unbacked.length) L.push('', 'Warning: the agent said it changed ' + unbacked.join(', ') + ', but ' + (unbacked.length === 1 ? 'that file was' : 'those files were') + ' not changed.');
     if (run.verification && run.verification.length) {
       L.push('', 'Verification runs:', run.verification.map(function (v, i) {
         return (i + 1) + '. ' + (v.ok === true ? 'passed' : v.ok === false ? 'FAILED' : 'unverified') + ' — ' + v.steps.map(function (s) { return s.label + ' (exit ' + s.code + (s.pass != null ? ', ' + s.pass + ' pass / ' + s.fail + ' fail' : '') + ')'; }).join('; ');
@@ -1303,6 +1331,6 @@
     decide: decide, classifyCommand: classifyCommand, validateArgs: validateArgs,
     createRegistry: createRegistry, createRun: createRun, loadRun: loadRun, runTask: runTask, buildReport: buildReport,
     parseTestOutput: parseTestOutput, parseStackFrames: parseStackFrames, toProjectPath: toProjectPath, failureSignature: failureSignature,
-    parsePatch: parsePatch, applyHunks: applyHunks, nearestLines: nearestLines, compactConvo: compactConvo, verificationPlan: verificationPlan, stepsFromText: stepsFromText, simpleDiff: simpleDiff
+    parsePatch: parsePatch, applyHunks: applyHunks, nearestLines: nearestLines, unbackedClaims: unbackedClaims, compactConvo: compactConvo, verificationPlan: verificationPlan, stepsFromText: stepsFromText, simpleDiff: simpleDiff
   };
 })();

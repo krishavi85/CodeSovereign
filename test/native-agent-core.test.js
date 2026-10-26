@@ -161,6 +161,19 @@ module.exports = async function (t) {
     t.ok('failure signatures are stable and order-independent', NA.failureSignature([{ name: 'a', message: 'x' }, { name: 'b', message: 'y' }]) === NA.failureSignature([{ name: 'b', message: 'y' }, { name: 'a', message: 'x' }]) && NA.failureSignature([{ name: 'a', message: 'x' }]) !== NA.failureSignature([{ name: 'a', message: 'z' }]));
   }
 
+  /* ---------- claims vs. what really changed ---------- */
+  {
+    const files = ['/src/format.js', '/src/text.js', '/test/a.test.js', '/README.md'];
+    const U = (summary, changed) => NA.unbackedClaims(summary, changed, files);
+    t.deepEqual('a claimed change to an unchanged file is flagged', U('Added slugify to text.js and updated makeUrl in src/format.js.', ['/src/text.js']), ['/src/format.js']);
+    t.deepEqual('a claim that is backed by a change is fine', U('Updated src/format.js and text.js', ['/src/format.js', '/src/text.js']), []);
+    t.deepEqual('merely mentioning a file is not a claim', U('I read src/format.js but did not need to touch it', []), []);
+    t.deepEqual('the base name or the full path both count', U('fixed format.js', []), ['/src/format.js']);
+    t.deepEqual('test files are never flagged (they are protected, not claimed)', U('updated a.test.js', []), []);
+    t.deepEqual('no summary, no claims', U('', []), []);
+    t.deepEqual('a file whose name merely contains another is not confused', U('modified text.json', []), []);
+  }
+
   /* ---------- context compaction ---------- */
   {
     const big = 'x'.repeat(3000);
