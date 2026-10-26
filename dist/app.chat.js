@@ -16,13 +16,16 @@
  *
  * It sees the open file and the project's file list. Phase 2 adds @mentions
  * (@/path, @selection, @problems, @file) shown as chips, and an Apply button on
- * code blocks that opens the change in the editor's per-hunk review. The model
- * never writes files itself; autonomous edit tools come in a later phase.
+ * code blocks that opens the change in the editor's per-hunk review. Agent mode
+ * (phase 3, tools in app.chat.agent.js) lets the model read and search files and
+ * run approved package jobs; its edits are only ever PROPOSALS, reviewed hunk
+ * by hunk before anything is written.
  * ===================================================================== */
 (function () {
   'use strict';
 
   var STORE_KEY = 'cs.chat.v1';
+  var MODE_KEY = 'cs.chat.mode.v1';
   var MAX_THREADS = 20;
   var MAX_MSGS = 200;
   var FILE_CHARS = 12000;      // open-file context cap
@@ -212,7 +215,8 @@
   // already the last history entry.
   function buildMessages(history, ctx) {
     ctx = ctx || {};
-    var sys = SYSTEM_PROMPT;
+    var sys = ctx.agent && ctx.systemPrompt ? ctx.systemPrompt : SYSTEM_PROMPT;
+    if (ctx.pending && ctx.pending.length) sys += '\n\nChanges you already proposed that the user has not reviewed yet: ' + ctx.pending.join(', ') + '.';
     if (ctx.files && ctx.files.length) {
       sys += '\n\nProject files (' + ctx.files.length + (ctx.filesTruncated ? ', first ' + FILE_LIST_MAX + ' shown' : '') + '):\n' + ctx.files.join('\n');
     }
@@ -247,7 +251,18 @@
   function loadStore() {
     try {
       var j = JSON.parse(storage().getItem(STORE_KEY) || 'null');
-      if (j && Array.isArray(j.threads)) return j;
+      if (j && Array.isArray(j.threads)) {
+        // a reload mid-run leaves streaming / running / awaiting-approval rows behind
+        j.threads.forEach(function (th) {
+          (th.messages || []).forEach(function (m) {
+            if (m.streaming) m.streaming = false;
+            if (m.role === 'tool' && (m.status === 'running' || m.status === 'approval')) {
+              m.status = 'error'; m.summary = (m.summary || m.name) + ' — interrupted'; delete m.approval;
+            }
+          });
+        });
+        return j;
+      }
     } catch (_) { /* corrupt → start over */ }
     return { threads: [], active: null };
   }
@@ -262,7 +277,16 @@
 
   /* --------------------------------------------------------------- state */
 
-  var state = { store: loadStore(), busy: false, ctrl: null, draft: '', renderTimer: null, noActive: false, pop: null };
+  function loadMode() { try { return storage().getItem(MODE_KEY) === 'agent' ? 'agent' : 'ask'; } catch (_) { return 'ask'; } }
+
+  var state = { store: loadStore(), busy: false, ctrl: null, draft: '', renderTimer: null, noActive: false, pop: null,
+    mode: loadMode(), toolbox: null, approvals: {}, lastTool: null };
+
+  function setMode(m) {
+    state.mode = m === 'agent' ? 'agent' : 'ask';
+    try { storage().setItem(MODE_KEY, state.mode); } catch (_) {}
+    mount();
+  }
 
   function thread() {
     var s = state.store, t = null;
@@ -351,17 +375,21 @@
     var selChip = att.chips.filter(function (c) { return c.kind === 'selection'; })[0];
     if (selChip) { var sel = currentSelection(); if (sel) userMsg.sel = { path: sel.path, text: sel.text.slice(0, 20000) }; }
     var botMsg = { id: uid(), role: 'assistant', content: '', at: Date.now(), streaming: true };
-    t.messages.push(userMsg, botMsg);
+    t.messages.push(userMsg);
     if (t.title === 'New chat') t.title = text.replace(/\s+/g, ' ').slice(0, 48);
     state.draft = '';
 
     if (!AI || !AI.chatStream || !aiReady()) {
       botMsg.streaming = false; botMsg.error = true;
       botMsg.content = 'No model is connected. Connect one (Ollama, LM Studio, OmniRoute or any OpenAI-compatible endpoint) and try again.';
+      t.messages.push(botMsg);
       saveStore(); mount();
       return Promise.resolve(botMsg);
     }
 
+    if (state.mode === 'agent' && w.CSChatAgent) return sendAgent(t, att, AI);
+
+    t.messages.push(botMsg);
     state.busy = true;
     state.ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     var msgs = buildMessages(t.messages.slice(0, -1), Object.assign(context(), { attachments: att.blocks, notes: att.notes }));
@@ -384,7 +412,148 @@
     });
   }
 
+  /* ------------------------------------------------------- agent mode */
+
+  function S_() { return win().S || {}; }
+
+  // What the agent's tools can see and do. Everything is read live, so the
+  // open file's unsaved text is what read_file returns.
+  function agentEnv() {
+    var w = win(), E = w.Engine || {};
+    return {
+      list: fileList,
+      read: function (p) {
+        try {
+          var S = S_();
+          if (S.ideFile === p && S.ideDirty && S.ideBuffer != null) return S.ideBuffer;
+          return E.FS && E.FS.isFile(p) ? E.FS.read(p) : null;
+        } catch (_) { return null; }
+      },
+      getProblems: function () { return E.Validator ? (E.Validator.runAll() || []) : []; },
+      diffStats: function (a, b) {
+        if (E.Review && E.Review.stats) { var st = E.Review.stats(a, b); return { added: st.added, removed: st.removed }; }
+        return { added: String(b).split('\n').length, removed: a ? String(a).split('\n').length : 0 };
+      },
+      canWrite: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('write'); },
+      canCommand: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('command'); },
+      jobsAvailable: function () { var X = win().CSExec; try { return !!(X && X.available && X.available()); } catch (_) { return false; } },
+      runJob: function (job) { var X = win().CSExec; return X && typeof X[job] === 'function' ? X[job]() : Promise.reject(new Error('no runner for ' + job)); }
+    };
+  }
+
+  function toolbox() {
+    if (!state.toolbox) state.toolbox = win().CSChatAgent.createToolbox(agentEnv());
+    return state.toolbox;
+  }
+
+  function pushNote(t, text) { t.messages.push({ id: uid(), role: 'note', content: text, at: Date.now() }); }
+
+  function askApproval(req) {
+    var tm = state.lastTool;
+    if (!tm) return Promise.resolve(false);
+    return new Promise(function (resolve) {
+      tm.status = 'approval'; tm.approval = req.label || ('Run ' + req.job);
+      state.approvals[tm.id] = function (yes) {
+        delete state.approvals[tm.id]; delete tm.approval;
+        tm.status = yes ? 'running' : 'denied';
+        resolve(!!yes); mount();
+      };
+      mount();
+    });
+  }
+  function settleApprovals(yes) { Object.keys(state.approvals).forEach(function (k) { try { state.approvals[k](yes); } catch (_) {} }); }
+
+  // Agent mode send: the model may call tools; each turn and each tool call
+  // becomes its own row in the conversation.
+  function sendAgent(t, att, AI) {
+    var w = win(), Ag = w.CSChatAgent, tb = toolbox();
+    state.busy = true;
+    state.ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    state.lastTool = null;
+    var ctx = Object.assign(context(), {
+      attachments: att.blocks, notes: att.notes, agent: true, systemPrompt: Ag.SYSTEM_PROMPT, pending: Array.from(tb.proposals.keys())
+    });
+    var msgs = buildMessages(t.messages, ctx);
+    var cur = null, said = false;
+    saveStore(); mount();
+
+    var finish = function () {
+      state.busy = false; state.ctrl = null; state.lastTool = null; settleApprovals(false);
+      saveStore(); mount();
+      return t.messages[t.messages.length - 1];
+    };
+
+    return Ag.runLoop({
+      chatStream: function (m, o) { return AI.chatStream(m, o); },
+      messages: msgs, toolbox: tb, signal: state.ctrl && state.ctrl.signal, approve: askApproval,
+      onTurnStart: function () {
+        cur = { id: uid(), role: 'assistant', content: '', at: Date.now(), streaming: true };
+        t.messages.push(cur); mount();
+      },
+      onText: function (d) { if (cur) { cur.content += d; paintMessage(cur); } },
+      onTurnEnd: function (x) {
+        if (cur) {
+          cur.content = x.text == null ? cur.content : x.text; cur.streaming = false;
+          if (!String(cur.content).trim()) { var i = t.messages.indexOf(cur); if (i >= 0) t.messages.splice(i, 1); }
+          else { said = true; if (x.aborted) cur.stopped = true; }
+        }
+        saveStore(); mount();
+      },
+      onToolStart: function (c) {
+        var tm = { id: c.id, role: 'tool', name: c.name, args: c.args, status: 'running', at: Date.now() };
+        state.lastTool = tm; t.messages.push(tm); mount();
+      },
+      onToolDone: function (c, res) {
+        var tm = t.messages.filter(function (m) { return m.role === 'tool' && m.id === c.id; })[0];
+        if (tm) {
+          tm.status = res.status || (res.ok ? 'done' : 'error'); tm.summary = res.summary;
+          tm.result = String(res.detail || res.text || '').slice(0, 4000);
+        }
+        state.lastTool = null; saveStore(); mount();
+      },
+      onNoTools: function () { pushNote(t, 'This model or provider does not accept tools, so it is answering without them (no file access in this reply).'); }
+    }).then(function (r) {
+      if (r.reason === 'max-turns') pushNote(t, 'Stopped after ' + r.turns + ' steps without finishing. Ask me to continue if you want more.');
+      else if (r.reason === 'repeat') pushNote(t, 'Stopped: the model kept repeating the same tool call.');
+      else if (r.reason === 'aborted' && !said) pushNote(t, 'Stopped.');
+      else if (r.reason === 'done' && !said) pushNote(t, 'The model returned an empty reply.');
+      return finish();
+    }, function (e) {
+      t.messages.push({ id: uid(), role: 'assistant', content: 'Request failed: ' + String((e && e.message) || e), error: true, at: Date.now() });
+      return finish();
+    });
+  }
+
+  /* Proposed changes: what the agent queued with write_file. They live in the
+     toolbox (this page session); each opens in the editor's hunk review. */
+  function proposalList() { return state.toolbox ? Array.from(state.toolbox.proposals.values()) : []; }
+
+  function reviewProposal(path, chain) {
+    var tb = state.toolbox, p = tb && tb.proposals.get(path);
+    if (!p) return { ok: false, error: 'no such proposal' };
+    var next = function () { if (chain) setTimeout(reviewNext, 150); };
+    var r = applyToFile(path, p.after, { persist: true, onDone: function (res) {
+      var decided = res.reason === 'done' || res.reason === 'rejected' || res.reason === 'kept' || res.reason === 'direct';
+      if (decided) { tb.proposals.delete(path); mount(); next(); }
+      else mount();
+    } });
+    if (!r.ok) {
+      if (/nothing to apply/.test(r.error)) { tb.proposals.delete(path); mount(); next(); }
+      else toast('Could not open ' + path + ': ' + r.error, '#f59e0b');
+    }
+    return r;
+  }
+  function reviewNext() {
+    var ps = proposalList();
+    if (ps.length) reviewProposal(ps[0].path, true);
+  }
+  function discardProposal(path) { if (state.toolbox) state.toolbox.proposals.delete(path); mount(); }
+  function discardAll() { if (state.toolbox) state.toolbox.proposals.clear(); mount(); }
+
   function stop() {
+    settleApprovals(false);
+    var tm = state.lastTool, X = win().CSExec;
+    if (tm && tm.name === 'run_command' && tm.status === 'running' && X && X.stop) { try { X.stop(); } catch (_) {} }
     if (state.ctrl) { try { state.ctrl.abort(); } catch (_) {} }
   }
 
@@ -430,7 +599,29 @@
     '.csc-pop{position:absolute;left:12px;right:12px;bottom:100%;margin-bottom:4px;background:#121827;border:1px solid rgba(255,255,255,.14);border-radius:9px;max-height:210px;overflow:auto;z-index:5;box-shadow:0 8px 24px rgba(0,0,0,.45)}' +
     '.csc-pop-item{display:flex;justify-content:space-between;gap:10px;padding:6px 10px;cursor:pointer;font-size:12px;color:#c9d1e0}' +
     '.csc-pop-item.on,.csc-pop-item:hover{background:rgba(124,111,245,.22)}.csc-pop-item small{color:#7b859c;white-space:nowrap}' +
-    '.csc-pop-item.off{opacity:.5}';
+    '.csc-pop-item.off{opacity:.5}' +
+    '.csc-seg{display:inline-flex;border:1px solid rgba(255,255,255,.12);border-radius:7px;overflow:hidden}' +
+    '.csc-chat-bar .csc-seg button{border:0;border-radius:0;background:transparent;padding:3px 9px}' +
+    '.csc-chat-bar .csc-seg button.on{background:rgba(124,111,245,.3);color:#e6e0ff}' +
+    '.csc-tool{border:1px solid rgba(255,255,255,.08);border-radius:8px;background:rgba(255,255,255,.025);font-size:12px;margin:-6px 0}' +
+    '.csc-tool summary{cursor:pointer;padding:5px 9px;display:flex;gap:6px;align-items:baseline;list-style:none;color:#aab2c7;min-width:0}' +
+    '.csc-tool summary::-webkit-details-marker{display:none}' +
+    '.csc-tool-ico{color:#a78bfa;width:14px;text-align:center;flex:none}.csc-tool-sum{color:#8b93a7;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}' +
+    '.csc-tool-st{font-size:10.5px;color:#f1b863;margin-left:auto;flex:none}' +
+    '.csc-tool.st-error .csc-tool-st,.csc-tool.st-blocked .csc-tool-st{color:#fca5a5}.csc-tool.st-denied .csc-tool-st{color:#8b93a7}' +
+    '.csc-tool pre{margin:0;padding:6px 10px 8px;max-height:220px;overflow:auto;font:11px/1.45 "JetBrains Mono",monospace;color:#9aa3b8;white-space:pre-wrap;word-break:break-word}' +
+    '.csc-approve{display:flex;gap:8px;align-items:center;padding:6px 9px;border-top:1px solid rgba(255,255,255,.08);background:rgba(245,158,11,.08)}' +
+    '.csc-approve span{flex:1;color:#f1d9a8}.csc-approve button{cursor:pointer;border:1px solid rgba(255,255,255,.15);background:rgba(255,255,255,.06);color:#e6e9f2;border-radius:6px;padding:3px 10px;font:600 11px Inter}' +
+    '.csc-approve button:first-of-type{background:#2d6a4f;border-color:#2d6a4f}' +
+    '.csc-note-line{font-size:11.5px;color:#8b93a7;text-align:center}' +
+    '.csc-tray{flex:none;border-top:1px solid rgba(124,111,245,.35);background:rgba(124,111,245,.07);padding:6px 12px;max-height:150px;overflow:auto}' +
+    '.csc-tray-h{display:flex;gap:8px;align-items:center;font-size:11px;font-weight:700;letter-spacing:.04em;color:#c4bcff;margin-bottom:4px}' +
+    '.csc-prop{display:flex;gap:8px;align-items:center;padding:2px 0;font-size:12px}' +
+    '.csc-prop-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dfe3ee;font-family:"JetBrains Mono",monospace;font-size:11.5px}' +
+    '.csc-prop-path em{font-style:normal;color:#34d399;font-size:10px;margin-left:4px}' +
+    '.csc-prop-st b{font-size:11px;font-weight:600}.csc-prop-st .a{color:#34d399}.csc-prop-st .r{color:#f87171}' +
+    '.csc-tray button{cursor:pointer;border:1px solid rgba(255,255,255,.15);background:rgba(124,111,245,.25);color:#e6e0ff;border-radius:6px;padding:2px 9px;font:600 11px Inter}' +
+    '.csc-tray button.quiet{background:transparent;color:#8b93a7;border-color:rgba(255,255,255,.1)}';
 
   function ensureStyle() {
     var d = doc();
@@ -468,12 +659,51 @@
     return body;
   }
 
+  var TOOL_ICON = { list_dir: '▤', read_file: '▭', grep: '⌕', get_problems: '⚠', write_file: '✎', run_command: '▶' };
+  var STATUS_LABEL = { running: 'running…', approval: 'needs your OK', done: '', error: 'failed', denied: 'declined', blocked: 'blocked' };
+
+  function toolHtml(m) {
+    var st = m.status || 'done';
+    var head = '<span class="csc-tool-ico">' + (TOOL_ICON[m.name] || '•') + '</span><b>' + esc(m.name) + '</b> ' +
+      '<span class="csc-tool-sum">' + esc(m.summary || (m.args && (m.args.path || m.args.query || m.args.job)) || '') + '</span>' +
+      (STATUS_LABEL[st] ? ' <span class="csc-tool-st">' + STATUS_LABEL[st] + '</span>' : '');
+    var args = '';
+    try { args = JSON.stringify(m.args || {}, null, 1); } catch (_) {}
+    if (m.name === 'write_file' && m.args && typeof m.args.content === 'string') {
+      args = JSON.stringify({ path: m.args.path, content: '(' + m.args.content.length + ' characters — see Proposed changes)' }, null, 1);
+    }
+    var body = '<pre>' + esc(args) + (m.result ? '\n— result —\n' + esc(m.result) : '') + '</pre>';
+    var ask = m.status === 'approval'
+      ? '<div class="csc-approve"><span>' + esc(m.approval || 'Run this command?') + '</span>' +
+        '<button type="button" data-cs-approve="' + esc(m.id) + '">Run</button><button type="button" data-cs-deny="' + esc(m.id) + '">Don\'t run</button></div>' : '';
+    return '<div class="csc-tool st-' + esc(st) + '" data-tool="' + esc(m.id) + '"><details' + (m.status === 'approval' ? ' open' : '') + '><summary>' + head + '</summary>' + body + '</details>' + ask + '</div>';
+  }
+
+  function trayHtml() {
+    var ps = proposalList();
+    if (!ps.length) return '';
+    var env = agentEnv();
+    var rows = ps.map(function (p) {
+      var st = env.diffStats(p.before, p.after);
+      return '<div class="csc-prop"><span class="csc-prop-path" title="' + esc(p.path) + '">' + esc(p.path) + (p.isNew ? ' <em>new</em>' : '') + '</span>' +
+        '<span class="csc-prop-st"><b class="a">+' + st.added + '</b> <b class="r">−' + st.removed + '</b></span>' +
+        '<button type="button" data-cs-review="' + esc(p.path) + '">Review</button>' +
+        '<button type="button" class="quiet" data-cs-discard="' + esc(p.path) + '" title="Discard this proposal">✕</button></div>';
+    }).join('');
+    return '<div class="csc-tray"><div class="csc-tray-h"><span>Proposed changes · ' + ps.length + '</span><span style="flex:1"></span>' +
+      (ps.length > 1 ? '<button type="button" data-cs-review-all="1">Review all</button>' : '') +
+      '<button type="button" class="quiet" data-cs-discard-all="1">Discard all</button></div>' + rows + '</div>';
+  }
+
   function threadHtml(t) {
     if (!t.messages.length) {
-      return '<div class="csc-empty">Ask about your project. The assistant sees the open file and your file list' +
-        ' and answers with the model you have connected.</div>';
+      return '<div class="csc-empty">' + (state.mode === 'agent'
+        ? 'Agent mode: I can read and search your files, run checks you approve, and propose edits for you to review hunk by hunk.'
+        : 'Ask about your project. The assistant sees the open file and your file list and answers with the model you have connected.') + '</div>';
     }
     return t.messages.map(function (m) {
+      if (m.role === 'tool') return toolHtml(m);
+      if (m.role === 'note') return '<div class="csc-note-line">' + esc(m.content) + '</div>';
       return '<div class="csc-msg ' + (m.role === 'user' ? 'user' : 'bot') + (m.error ? ' err' : '') + '" data-msg="' + esc(m.id) + '">' +
         '<div class="csc-who">' + (m.role === 'user' ? 'YOU' : 'ASSISTANT') + '</div>' +
         '<div class="csc-body">' + messageHtml(m) + '</div></div>';
@@ -517,20 +747,22 @@
     h.innerHTML =
       '<div class="csc-chat">' +
         '<div class="csc-chat-bar">' + statusLine() + '<span style="flex:1"></span>' +
+          '<span class="csc-seg" title="Ask: answers only. Agent: can read files, run approved checks and propose edits for your review.">' +
+            '<button type="button" data-cs-mode="ask" class="' + (state.mode === 'ask' ? 'on' : '') + '">Ask</button>' +
+            '<button type="button" data-cs-mode="agent" class="' + (state.mode === 'agent' ? 'on' : '') + '">Agent</button></span>' +
           '<button type="button" data-cs-new="1" title="Start a new conversation">New chat</button></div>' +
         '<div class="csc-chat-msgs">' + threadHtml(t) + '</div>' +
+        '<div id="csChatTray">' + trayHtml() + '</div>' +
         '<div class="csc-compose">' +
           '<div id="csChatPop" class="csc-pop" hidden></div>' +
           '<div id="csChatChips"></div>' +
           '<div class="csc-chat-in">' +
-            '<textarea id="csChatInput" rows="1" placeholder="Ask about this project…  @ to attach a file, @selection, @problems  (Enter sends)"></textarea>' +
+            '<textarea id="csChatInput" rows="1" placeholder="' + (state.mode === 'agent' ? 'Tell the agent what to do…  @ to attach context  (Enter sends)' : 'Ask about this project…  @ to attach a file, @selection, @problems  (Enter sends)') + '"></textarea>' +
             (state.busy ? '<button type="button" class="csc-send stop" data-cs-stop="1">Stop</button>'
                         : '<button type="button" class="csc-send" data-cs-send="1">Send</button>') +
           '</div>' +
         '</div>' +
       '</div>';
-    var box = h.querySelector('.csc-chat-msgs');
-    if (box) box.scrollTop = (wasBottom || keepScroll == null) ? box.scrollHeight : keepScroll;
     var input = h.querySelector('#csChatInput');
     if (input) {
       input.value = state.draft || '';
@@ -553,6 +785,9 @@
       });
     }
     paintChips();
+    // scroll last: the chips row changes the composer height, which resizes this box
+    var box = h.querySelector('.csc-chat-msgs');
+    if (box) box.scrollTop = (wasBottom || keepScroll == null) ? box.scrollHeight : keepScroll;
     h.onclick = onClick;
   }
 
@@ -648,7 +883,9 @@
   // editor with the new text and every changed hunk can be accepted or
   // rejected (Monaco review, same as Ctrl+K). Nothing is saved to disk until
   // the user saves. opts.selection = {text}: replace that text inside the
-  // open file instead of the whole file.
+  // open file instead of the whole file. opts.persist: once the review is
+  // decided (accepted / rejected / done) write the result to the project, as
+  // the agent-run review does. opts.onDone(r): called when the review ends.
   // -> { ok, error?, how: 'review'|'direct' }
   function applyToFile(path, content, opts) {
     opts = opts || {};
@@ -680,14 +917,18 @@
         if (tries++ < 40) return setTimeout(go, 75);
         // no Monaco: put the text in the buffer, unsaved, so nothing is lost or silently written
         S.ideBuffer = next; S.ideDirty = true; if (w.renderAll) w.renderAll();
+        if (opts.onDone) { try { opts.onDone({ reason: 'direct', text: next }); } catch (_) {} }
         return toast('Applied to ' + path + ' without hunk review (the code editor did not load). Save to keep it.', '#f59e0b');
       }
       var before = cur;   // the text as it was, whatever the editor momentarily holds
       ed.value = next; S.ideBuffer = next; S.ideDirty = next !== (FS.read(path) || '');
       var rv = ed.review({ original: before, onEnd: function (r) {
         S.ideBuffer = r.text;
+        var decided = r.reason === 'done' || r.reason === 'rejected' || r.reason === 'kept';
         if (!exists && r.reason === 'rejected') { FS.remove(path); S.ideFile = null; S.ideBuffer = ''; S.ideDirty = false; }
+        else if (opts.persist && decided) { FS.write(path, r.text); S.ideDirty = false; }
         else S.ideDirty = r.text !== (FS.read(path) || '');
+        if (opts.onDone) { try { opts.onDone(r); } catch (e) { try { console.error(e); } catch (_) {} } }
         toast(r.reason === 'rejected' ? 'Change rejected'
           : (r.rejected ? 'Reviewed — ' + r.accepted + ' kept, ' + r.rejected + ' rejected' : 'Change accepted') + (S.ideDirty ? ' — Ctrl+S to save' : ''),
           r.reason === 'rejected' ? '#f59e0b' : '#34d399');
@@ -727,6 +968,13 @@
     if ((b = tgt.closest('[data-cs-send]'))) return submit();
     if ((b = tgt.closest('[data-cs-stop]'))) return stop();
     if ((b = tgt.closest('[data-cs-new]'))) return void newThread();
+    if ((b = tgt.closest('[data-cs-mode]'))) return setMode(b.getAttribute('data-cs-mode'));
+    if ((b = tgt.closest('[data-cs-approve]'))) { var ap = state.approvals[b.getAttribute('data-cs-approve')]; if (ap) ap(true); return; }
+    if ((b = tgt.closest('[data-cs-deny]'))) { var dn = state.approvals[b.getAttribute('data-cs-deny')]; if (dn) dn(false); return; }
+    if ((b = tgt.closest('[data-cs-review-all]'))) return void reviewNext();
+    if ((b = tgt.closest('[data-cs-discard-all]'))) return discardAll();
+    if ((b = tgt.closest('[data-cs-review]'))) return void reviewProposal(b.getAttribute('data-cs-review'), false);
+    if ((b = tgt.closest('[data-cs-discard]'))) return discardProposal(b.getAttribute('data-cs-discard'));
     if ((b = tgt.closest('[data-cs-pick]'))) {
       if (state.pop) acceptMention(state.pop.items[Number(b.getAttribute('data-cs-pick'))]);
       return;
@@ -767,6 +1015,9 @@
   win().CSChat = {
     mount: mount, send: send, stop: stop, newThread: newThread,
     applyToFile: applyToFile, applyBlock: applyBlock,
+    setMode: setMode, get mode() { return state.mode; },
+    reviewProposal: reviewProposal, reviewAll: reviewNext, discardProposal: discardProposal, discardAll: discardAll,
+    proposals: proposalList,
     get busy() { return state.busy; },
     thread: thread,
     core: {
