@@ -119,6 +119,14 @@ contextBridge.exposeInMainWorld('desktop', {
   ai: {
     discover: () => invoke('ai:discover'),
     request: (opts) => invoke('ai:request', opts),
+    // stream(opts, onChunk) -> { done: Promise<result>, abort() }. Chunks are the
+    // raw response text as it arrives (for an SSE answer: `data: {...}` lines).
+    stream: (opts, onChunk) => {
+      const id = Math.random().toString(36).slice(2) + Date.now().toString(36);
+      const off = subscribe('ai:stream-chunk', (m) => { if (m && m.id === id && onChunk) onChunk(m.data); });
+      const done = invoke('ai:stream', Object.assign({}, opts, { streamId: id })).finally(off);
+      return { done, abort: () => invoke('ai:stream-abort', id) };
+    },
     omniroute: (action) => invoke('ai:omniroute', action)
   },
 

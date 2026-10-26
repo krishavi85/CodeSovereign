@@ -1628,6 +1628,7 @@ function renderIDE() {
     previewHTML = `<div style="padding:24px;color:#6b7488;text-align:center;font-size:13px">No /index.html — preview unavailable</div>`;
   }
 
+  const chatTab = S.ideRight === 'chat';
   const ideFollowPh = S.agentBuilt ? 'Ask a follow-up to fix or change this app…' : 'Describe what you want to build…';
   return `<div style="height:100%;display:flex;flex-direction:column;min-height:0;background:#0a0e17">
   <div style="flex:1;display:flex;min-height:0">
@@ -1669,22 +1670,22 @@ function renderIDE() {
 
     <div style="width:436px;flex:none;border-left:1px solid rgba(255,255,255,.06);display:flex;flex-direction:column;min-height:0;background:#0a0e17">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 14px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">
-        <span style="font-size:11px;font-weight:700;letter-spacing:.05em;color:#7b859c">LIVE PREVIEW</span>
-        <div style="display:flex;align-items:center;gap:4px">
+        <div style="display:flex;gap:4px"><span data-iderighttab="preview" style="cursor:pointer;font-size:11px;font-weight:700;letter-spacing:.05em;padding:3px 9px;border-radius:6px;${chatTab?'color:#7b859c':'background:rgba(124,111,245,.2);color:#c4bcff'}">LIVE PREVIEW</span><span data-iderighttab="chat" style="cursor:pointer;font-size:11px;font-weight:700;letter-spacing:.05em;padding:3px 9px;border-radius:6px;${chatTab?'background:rgba(124,111,245,.2);color:#c4bcff':'color:#7b859c'}">CHAT</span></div>
+        ${chatTab ? '' : `<div style="display:flex;align-items:center;gap:4px">
           ${['desktop','tablet','mobile'].map(d => {
             const act = (S.ideDevice||'desktop')===d;
             const ic = d==='desktop'?I.monitor:d==='tablet'?I.tablet:I.phone;
             return `<span data-idedevice="${d}" style="width:26px;height:26px;border-radius:7px;display:inline-flex;align-items:center;justify-content:center;background:${act?'rgba(109,93,252,.18)':'transparent'};color:${act?'#a9b0ff':'#6b7488'};cursor:pointer"><span style="width:15px;height:15px;display:inline-flex">${ic}</span></span>`;
           }).join('')}
-        </div>
+        </div>`}
       </div>
-      <div style="display:flex;align-items:center;gap:8px;padding:7px 12px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">
+      ${chatTab ? '' : `<div style="display:flex;align-items:center;gap:8px;padding:7px 12px;flex:none;border-bottom:1px solid rgba(255,255,255,.06)">
         <span style="width:15px;height:15px;display:inline-flex;color:#6b7488;cursor:pointer">${I.back}</span>
         <div style="flex:1;display:flex;align-items:center;gap:7px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:7px;padding:5px 10px;font-size:11.5px;color:#8b93a7">preview://workspace — ${S.ideFile||'preview'}</div>
         <span id="refreshPreviewIde" style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer">${I.refresh}</span>
         <span id="openPreviewIde" style="width:14px;height:14px;display:inline-flex;color:#6b7488;cursor:pointer">${I.ext}</span>
-      </div>
-      <div style="flex:1;overflow:hidden;display:flex">${previewHTML}</div>
+      </div>`}
+      ${chatTab ? '<div id="csChatHost" style="flex:1;display:flex;min-height:0;min-width:0"></div>' : `<div style="flex:1;overflow:hidden;display:flex">${previewHTML}</div>`}
     </div>
   </div>
   <div style="flex:none;border-top:1px solid rgba(255,255,255,.08);padding:8px 12px;display:flex;align-items:center;gap:10px;background:#0b0f1a">
@@ -2137,6 +2138,12 @@ function runProblemFix(which, work) {
 
 function bindIDE() {
   try { bindPipelineModal(); } catch (_) {}
+  document.querySelectorAll('[data-iderighttab]').forEach(el => el.onclick = () => {
+    const to = el.dataset.iderighttab;
+    if (S.ideRight === to || (to === 'preview' && !S.ideRight)) return;
+    S.ideRight = to; renderAll();
+  });
+  try { if (S.ideRight === 'chat' && window.CSChat) window.CSChat.mount(); } catch (e) { console.error('chat mount', e); }
   document.querySelectorAll('[data-fixissue]').forEach(el => el.onclick = () => {
     const i = Number(el.dataset.fixissue);
     const issue = (S.problemList || [])[i];
