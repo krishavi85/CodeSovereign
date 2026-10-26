@@ -139,7 +139,7 @@ module.exports = async function (t) {
     t.ok('the backend prompt requires port 3000 (what the observer loads)', backendSys.includes('process.env.PORT || 3000'));
     t.ok('the backend prompt requires serving the static frontend from the same server', /serves the static frontend files/.test(backendSys));
     t.ok('the prompt\'s own worked example no longer teaches the wrong port', !/listen\(4319\)/.test(backendSys));
-    t.ok('the backend prompt requires a "test": "node --test" script (the Tests stage can\'t add one — package.json is protected)', backendSys.includes('"test": "node --test"'));
+    t.ok('the backend prompt requires a "test": "node --test" script (the Tests stage can\'t add one — package.json is protected)', backendSys.includes('"test": "node --test --test-concurrency=1"'));
     t.ok('the backend prompt requires listening only when run directly, so tests can import the app', backendSys.includes('require.main === module') && backendSys.includes('module.exports = app'));
     const frontendSys = requestsSeen.find((s) => /FRONTEND ONLY/.test(s));
     t.ok('the frontend prompt requires real forms/buttons in index.html from an empty start (the observer needs controls to exercise)', /usable from an EMPTY start/.test(frontendSys) && /<form>s, <input>s and <button>s/.test(frontendSys));
