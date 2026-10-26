@@ -504,6 +504,8 @@
         return { type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } };
       });
     }
+    // provider-specific body fields, e.g. Ollama: { options: { num_ctx: 16384 } }
+    if (opts.extraBody && typeof opts.extraBody === "object") Object.assign(body, opts.extraBody);
     const st = sseState();
     let raw = "", aborted = false;
     const onDelta = typeof opts.onDelta === "function" ? opts.onDelta : function () {};
