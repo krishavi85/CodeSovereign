@@ -272,6 +272,25 @@
     return false;
   }
 
+  // The lines of `text` closest to `needle` (by shared words), for an error
+  // message that helps a model that mis-copied the text it wanted to replace.
+  function nearestLines(text, needle) {
+    var words = function (l) { return String(l).toLowerCase().match(/[a-z0-9_$]+/g) || []; };
+    var want = {}, nw = 0;
+    String(needle).split('\n').forEach(function (l) { words(l).forEach(function (w) { if (!want[w]) { want[w] = true; nw++; } }); });
+    if (!nw) return '';
+    var lines = String(text).split('\n'), best = -1, bestScore = 0;
+    lines.forEach(function (l, i) {
+      var seen = {}, hit = 0;
+      words(l).forEach(function (w) { if (want[w] && !seen[w]) { seen[w] = true; hit++; } });
+      var score = hit / Math.max(nw, 1);
+      if (score > bestScore) { bestScore = score; best = i; }
+    });
+    if (best < 0 || bestScore < 0.34) return '';
+    var a = Math.max(0, best - 1), b = Math.min(lines.length, best + 2);
+    return lines.slice(a, b).map(function (l, i) { return (a + i + 1) + '| ' + l; }).join('\n');
+  }
+
   /* ------------------------------------------------------------- patches */
 
   function cleanPatchPath(s) {
@@ -463,6 +482,15 @@
     /* ---- workspace: journal, checkpoints, overlay-aware reads ---- */
     var ws = (function () {
       var journal = [], marks = [{ id: 'cp0', label: 'start', seq: 0 }], created = {}, baseline = {}, seq = 0;
+      if (opts.restoreJournal) {
+        try {
+          var saved = typeof opts.restoreJournal === 'string' ? JSON.parse(opts.restoreJournal) : opts.restoreJournal;
+          if (saved && Array.isArray(saved.journal) && Array.isArray(saved.marks)) {
+            journal = saved.journal; marks = saved.marks; created = saved.created || {};
+            journal.forEach(function (e) { if (e.seq > seq) seq = e.seq; });
+          }
+        } catch (_) { /* a damaged journal means a fresh start, never a crash */ }
+      }
       function persist() {
         if (!env.store || !env.store.set) return;
         try {
@@ -710,7 +738,10 @@
         // forgive trailing-whitespace differences line by line (models often add or drop them)
         var hay = cur.split(eol ? '\r\n' : '\n'), nl = needle.split(eol ? '\r\n' : '\n');
         var at = findBlock(hay, nl, 0, true);
-        if (at < 0) return fail('old_text was not found in ' + p + '. Copy it exactly from read_file (including indentation), or use write_file.');
+        if (at < 0) {
+          var near = nearestLines(cur, a.old_text);
+          return fail('old_text was not found in ' + p + '. Copy it exactly from read_file (including indentation), or use write_file.' + (near ? '\nThe closest text in the file is:\n' + near : ''));
+        }
         if (findBlock(hay.slice(at + 1), nl, 0, true) >= 0 && !a.replace_all) return fail('old_text matches more than one place in ' + p + '. Include more surrounding lines so it is unique.');
         hay.splice.apply(hay, [at, nl.length].concat(repl.split(eol ? '\r\n' : '\n')));
         return stage(p, hay.join(eol ? '\r\n' : '\n'), ctx.decision);
@@ -764,6 +795,8 @@
     });
 
     /* execution tools */
+    // Never ask the user to approve something this host cannot do.
+    var noJobs = function () { return env.jobsAvailable && !env.jobsAvailable() ? 'Commands run only in the desktop app with a project folder open.' : null; };
     var jobTool = function (job, label) {
       return function (a, ctx) {
         var spec = job === 'test' && a && a.path ? testSpec(a.path) : { kind: 'job', job: job };
@@ -778,14 +811,14 @@
       if (!/\.(c|m)?[jt]s$/i.test(p)) return { error: 'run_tests can target a single .js/.mjs/.cjs test file; omit path to run everything.' };
       return { kind: 'cmd', cmd: 'node', args: ['--test', p.slice(1)] };
     }
-    def('run_tests', 'Run the project\'s tests (optionally one test file). Returns pass/fail counts and the failures.', { path: S('Optional single test file.') }, [], 'exec', jobTool('test', 'tests'), { timeoutMs: 600000 });
-    def('build_project', 'Run the project\'s build script.', {}, [], 'exec', jobTool('build', 'build'), { timeoutMs: 600000 });
+    def('run_tests', 'Run the project\'s tests (optionally one test file). Returns pass/fail counts and the failures.', { path: S('Optional single test file.') }, [], 'exec', jobTool('test', 'tests'), { timeoutMs: 600000, requires: noJobs });
+    def('build_project', 'Run the project\'s build script.', {}, [], 'exec', jobTool('build', 'build'), { timeoutMs: 600000, requires: noJobs });
     def('run_acceptance_tests', 'Run the project\'s acceptance / end-to-end script, if it has one.', {}, [], 'exec', function (a, ctx) {
       var pkg = null; try { pkg = JSON.parse(env.read('/package.json') || 'null'); } catch (_) {}
       var sc = (pkg && pkg.scripts) || {}, name = ['acceptance', 'test:acceptance', 'e2e', 'test:e2e'].filter(function (n) { return sc[n]; })[0];
       if (!name) return Promise.resolve(fail('The project has no acceptance / e2e script.'));
       return execute({ kind: 'script', script: name }, ctx.hooks).then(function (e) { return execResult(e, name); });
-    }, { timeoutMs: 900000 });
+    }, { timeoutMs: 900000, requires: noJobs });
     def('run_command', 'Run a project command. Either {job: test|build|lint|typecheck|install} or {command, args:[...]} (no shell syntax). Each run is checked and may need the user\'s approval.',
       { job: { type: 'string', enum: ['install', 'test', 'build', 'lint', 'typecheck'] }, command: S('Executable, e.g. node.'), args: { type: 'array', description: 'Arguments, one string each.' } }, [],
       function (a) {
@@ -799,7 +832,7 @@
         if (env.jobsAvailable && !env.jobsAvailable()) return Promise.resolve(fail('Commands run only in the desktop app with a project folder open.', 'blocked'));
         var spec = a.job ? { kind: 'job', job: a.job } : { kind: 'cmd', cmd: a.command, args: (a.args || []).map(String) };
         return execute(spec, ctx.hooks).then(function (e) { return execResult(e, a.job || (a.command + ' ' + (a.args || []).join(' ')).trim()); });
-      }, { timeoutMs: 900000 });
+      }, { timeoutMs: 900000, requires: noJobs });
     def('start_dev_server', 'Start the project\'s dev server in the background. Returns a process id; read its output with inspect_logs.', { command: S('Executable (default: npm).'), args: { type: 'array', description: 'Arguments (default: ["start"]).' } }, [],
       function (a) {
         var cmd = a.command || 'npm', args = a.args || ['start'], c = classifyCommand(cmd, args);
@@ -856,6 +889,8 @@
       if (p.deny) return Promise.resolve(finish(fail('Not allowed: ' + p.deny + '.', 'blocked')));
       var dec = decide(cfg.mode, p.perm, { autonomy: autonomy, planApproved: cfg.planApproved });
       if (dec.action === 'deny') return Promise.resolve(finish(fail(dec.reason, 'blocked')));
+      var unavailable = d.requires ? d.requires(args) : null;
+      if (unavailable) return Promise.resolve(finish(fail(unavailable, 'blocked')));
       // Edit mode keeps everything as proposals; a rename/delete can't be one, so it asks instead
       if (dec.action === 'propose' && (name === 'rename_file' || name === 'delete_file')) dec = { action: 'ask' };
       var go = function (decision, approved) {
@@ -1001,10 +1036,14 @@
     var run = machine.run;
     if (opts.resumeFrom) { run.id = opts.resumeFrom.id; run.plan = opts.resumeFrom.plan || []; run.attempts = opts.resumeFrom.attempts || []; run.verification = opts.resumeFrom.verification || []; run.history = (opts.resumeFrom.history || []).slice(); run.state = 'BLOCKED'; }
     var allowTests = /\b(add|write|create|update|extend)\b[^.]*\btests?\b/i.test(opts.goal || '');
-    var reg = createRegistry({ env: env, mode: mode === 'plan' ? 'plan' : mode, planApproved: mode === 'auto', maxToolCalls: B.maxToolCalls, protectExisting: true, allowTestEdits: allowTests, execTimeoutMs: B.execTimeoutMs });
+    var resumed = !!opts.resumeFrom;
+    var reg = createRegistry({ env: env, mode: mode === 'plan' ? 'plan' : mode, planApproved: mode === 'auto', restoreJournal: resumed && env.store ? env.store.get('cs.nagent.journal.v1') : null, maxToolCalls: B.maxToolCalls, protectExisting: true, allowTestEdits: allowTests, execTimeoutMs: B.execTimeoutMs });
     reg.beginTask();
     reg.onPlan(function (p) { run.plan = p.map(function (s) { return Object.assign({}, s); }); machine.save(); if (hooks.onPlan) hooks.onPlan(run.plan); });
-    var cp0 = reg.ws.mark('task start');
+    var cp0 = (function () {
+      if (resumed) { var first = reg.ws.marks().filter(function (m) { return m.label === 'task start'; })[0]; if (first) return first.id; }
+      return reg.ws.mark('task start');
+    })();
     if (env.snapshot) { try { Promise.resolve(env.snapshot('agent task: ' + String(opts.goal).slice(0, 60))).catch(function () {}); } catch (_) {} }
 
     var aborted = function () { return !!(opts.signal && opts.signal.aborted); };
@@ -1135,6 +1174,8 @@
     function afterVerified(v) {
       if (v.ok === null) { machine.transition('COMPLETED', 'unverified'); return finish('unverified', v.note || 'Nothing could be verified.'); }
       machine.transition('COMPLETED', 'verified');
+      run.plan.forEach(function (s) { if (s.status !== 'blocked') s.status = 'done'; });
+      reg.plan = run.plan; machine.save(); if (hooks.onPlan) hooks.onPlan(run.plan);
       return finish('verified', 'All verification steps passed.');
     }
 
@@ -1241,6 +1282,6 @@
     decide: decide, classifyCommand: classifyCommand, validateArgs: validateArgs,
     createRegistry: createRegistry, createRun: createRun, loadRun: loadRun, runTask: runTask, buildReport: buildReport,
     parseTestOutput: parseTestOutput, parseStackFrames: parseStackFrames, toProjectPath: toProjectPath, failureSignature: failureSignature,
-    parsePatch: parsePatch, applyHunks: applyHunks, compactConvo: compactConvo, verificationPlan: verificationPlan, stepsFromText: stepsFromText, simpleDiff: simpleDiff
+    parsePatch: parsePatch, applyHunks: applyHunks, nearestLines: nearestLines, compactConvo: compactConvo, verificationPlan: verificationPlan, stepsFromText: stepsFromText, simpleDiff: simpleDiff
   };
 })();

@@ -172,6 +172,12 @@ module.exports = async function (t) {
     t.equal('replace_all replaces every occurrence', x.env._d['/f.js'], 'one\n2\nthree\n2\n');
     res = await call(x.r, 'edit_file', { path: '/f.js', old_text: 'nope', new_text: 'x' });
     t.ok('a missing old_text is an error pointing at read_file', res.ok === false && /not found/.test(res.text) && /read_file/.test(res.text));
+    x = reg('auto', { '/g.js': 'function range(start, end) {\n  for (let i = start; i < end; i++) out.push(i);\n}\n' });
+    res = await call(x.r, 'edit_file', { path: '/g.js', old_text: 'for (let j = start; j < end; j += 1) out.push(j);', new_text: 'x' });
+    t.ok('when old_text is not found the error shows the closest real line', res.ok === false && /closest text in the file/.test(res.text) && /2\| +for \(let i = start; i < end; i\+\+\) out\.push\(i\);/.test(res.text));
+    res = await call(x.r, 'edit_file', { path: '/g.js', old_text: 'zzzz qqqq', new_text: 'x' });
+    t.ok('and offers no hint when nothing is similar', res.ok === false && !/closest text/.test(res.text));
+    x = reg('auto', { '/f.js': 'one\ntwo\nthree\ntwo\n' });
     res = await call(x.r, 'edit_file', { path: '/f.js', old_text: '', new_text: 'x' });
     t.ok('an empty old_text is refused', res.ok === false);
     res = await call(x.r, 'edit_file', { path: '/f.js', old_text: 'one', new_text: 'one' });
@@ -327,6 +333,7 @@ module.exports = async function (t) {
     t.ok('the verification evidence is recorded (command, exit code, counts)', r.run.verification.length === 1 && r.run.verification[0].ok === true && r.run.verification[0].steps[0].pass === 2);
     t.ok('the report text carries the evidence', /VERIFIED/.test(r.report.text) && /exit 0, 2 pass \/ 0 fail/.test(r.report.text) && /\/sum\.js/.test(r.report.text));
     t.ok('the plan is part of the run', r.run.plan.length === 3 && /fix the operator/.test(r.run.plan[1].text));
+    t.ok('a verified run shows every plan step as done', r.run.plan.every((s) => s.status === 'done') && /\[x\] fix the operator/.test(r.report.text));
     t.ok('the workspace was snapshotted before anything changed', r.env.snaps.length === 1);
     t.equal('the run state was persisted as COMPLETED', JSON.parse(r.env.store.get(NA.RUN_KEY)).state, 'COMPLETED');
 
