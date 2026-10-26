@@ -875,6 +875,8 @@
       if (!d || names().indexOf(name) < 0) {
         return Promise.resolve(fail('Unknown or unavailable tool "' + name + '". Available: ' + names().join(', ') + '.'));
       }
+      // a tool with no required arguments may be called with "", [] or null
+      if ((args == null || typeof args !== 'object' || Array.isArray(args)) && !((d.parameters && d.parameters.required) || []).length) args = {};
       var v = validateArgs(d.parameters, args);
       if (!v.ok) return Promise.resolve(fail('Bad arguments for ' + name + ': ' + v.error + '.'));
       args = v.args;
@@ -1197,24 +1199,43 @@
       });
     }
 
-    function execute() {
+    // The last few tool failures of this phase, quoted back when the model quits early.
+    var recentErrors = [], nudges = 0;
+    var trackDone = hooks.onToolDone;
+    hooks = Object.assign({}, hooks, { onToolDone: function (c, res) {
+      if (res && res.ok === false && res.status !== 'blocked') { recentErrors.push(c.name + ': ' + String(res.text).slice(0, 500)); if (recentErrors.length > 3) recentErrors.shift(); }
+      if (trackDone) trackDone(c, res);
+    } });
+
+    function execute(nudge) {
       reg.reported = null;
       var user = 'Goal: ' + opts.goal + '\n\nPlan:\n' + planText(run.plan) + '\n\n' + projectSummary(env, reg) +
-        '\n\nCarry out the plan with the tools. When the change is made, call report_result. The harness will run the project\'s tests itself afterwards, so you do not need to.';
-      return loop(toolset, system + '\nYou are EXECUTING the plan.', user, 'execute').then(function (lr) {
+        '\n\nCarry out the plan with the tools. When the change is made, call report_result. The harness will run the project\'s tests itself afterwards, so you do not need to.' +
+        (nudge ? '\n\n' + nudge : '');
+      return loop(toolset, system + '\nYou are EXECUTING the plan.', user, nudge ? 'execute (retry ' + nudges + ')' : 'execute').then(function (lr) {
         if (lr.reason === 'aborted') { machine.transition('CANCELLED', 'cancelled'); return finish('cancelled', 'Cancelled by the user.'); }
         if (['budget', 'time', 'repeat', 'max-turns'].indexOf(lr.reason) >= 0) run.note = 'stopped: ' + stopped(lr.reason);
-        return afterExec();
+        return afterExec(lr);
       });
     }
 
-    function afterExec() {
+    function afterExec(lr) {
       var changes = reg.ws.changes(cp0);
+      // The model quit without changing anything and did not say it was blocked:
+      // that is usually a failed edit it gave up on. Push back, bounded.
+      if (!changes.length && nudges < 2 && !(reg.reported && reg.reported.status === 'blocked') && !overBudget() && !aborted() && !(lr && ['budget', 'time'].indexOf(lr.reason) >= 0)) {
+        nudges++;
+        return execute('No file has been changed yet, so the goal is NOT met.' +
+          (recentErrors.length ? '\nYour last tool failures were:\n' + recentErrors.join('\n') : '') +
+          '\nMake the change now: read the file, then use edit_file (copy old_text exactly) or write_file with the COMPLETE new file content. ' +
+          'Only if it is truly impossible, call report_result with status "blocked" and say why.');
+      }
+      // an honest "I am blocked" is a BLOCKED run with the model's reason, whether or not it touched anything
+      if (reg.reported && reg.reported.status === 'blocked') { machine.transition('BLOCKED', 'agent reported blocked'); return finish('blocked', reg.reported.summary); }
       if (!changes.length) {
         machine.transition('COMPLETED', 'no changes');
         return finish('no-changes', 'The agent finished without changing any file' + (reg.reported ? ': ' + reg.reported.summary : '.'));
       }
-      if (reg.reported && reg.reported.status === 'blocked') { machine.transition('BLOCKED', 'agent reported blocked'); return finish('blocked', reg.reported.summary); }
       machine.transition('VERIFYING', 'after execution');
       return verify().then(function (v) {
         if (aborted()) { machine.transition('CANCELLED', 'cancelled'); return finish('cancelled', 'Cancelled by the user.'); }

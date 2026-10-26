@@ -121,6 +121,8 @@
   function revertAll() {
     if (!task || !task.reg) return;
     var E = Engine(), S = w.S || {}, t = x.thread();
+    // an open hunk review would keep showing the agent's text: close it first
+    try { if (w.CSEditor && w.CSEditor.reviewing && w.CSEditor.reviewing()) w.CSEditor.endReview('replaced'); } catch (_) {}
     var r = task.reg.ws.revertAll();
     var n = r.reverted.length;
     Promise.resolve(E.FS && E.FS.__flush ? E.FS.__flush() : null).then(function () {

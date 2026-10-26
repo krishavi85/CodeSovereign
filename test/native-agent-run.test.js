@@ -306,6 +306,15 @@ module.exports = async function (t) {
     t.ok('the plan is recorded and updated', res.ok && up.ok && x.r.plan[1].status === 'done');
     t.ok('updating a step that does not exist is an error', (await call(x.r, 'update_plan', { step: 9, status: 'done' })).ok === false);
 
+    // lenient arguments: a tool with no required arguments may get "", [] or null
+    x = reg('auto', { '/package.json': PKG, '/a.js': 'x' }, { runner: () => ({ code: 0, output: specOut(1, []) }) });
+    res = await call(x.r, 'run_tests', []);
+    t.ok('an empty array is accepted as "no arguments"', res.ok === true);
+    res = await call(x.r, 'get_problems', '');
+    t.ok('and so is an empty string', res.ok === true);
+    res = await call(x.r, 'read_file', []);
+    t.ok('but a tool WITH required arguments still rejects them', res.ok === false && /JSON object/.test(res.text));
+
     // dev server + processes
     const log = []; let stopped = false;
     const srv = reg('auto', null, { reg: {} });
@@ -406,6 +415,27 @@ module.exports = async function (t) {
     // 9. no changes
     r = await task({ steps: [planStep(), planDone, report('nothing to do')] });
     t.ok('finishing without changing anything is reported as such, not as success', r.report.status === 'no-changes' && r.env.execs.length === 0);
+
+    // 9b. a model that gives up after a failed edit is pushed back, with the error quoted
+    const badEdit = { calls: [{ name: 'edit_file', args: { path: '/sum.js', old_text: 'return a minus b;', new_text: 'return a + b;' } }] };
+    const m9 = scripted([planStep(), planDone, badEdit, report('could not edit'),
+      { calls: [{ name: 'write_file', args: { path: '/sum.js', content: 'function sum(a, b) { return a + b; }\nmodule.exports = { sum };\n' } }] }, report('fixed it')]);
+    r = await task({ opts: { chatStream: m9 }, steps: [] });
+    t.equal('a model that quits after one failed edit gets a second chance and succeeds', r.report.status, 'verified');
+    const nudged = m9.seen.filter((c) => /No file has been changed yet/.test(c.msgs[1].content))[0];
+    t.ok('the nudge says the goal is not met and quotes the real tool failure', !!nudged && /NOT met/.test(nudged.msgs[1].content) && /old_text was not found/.test(nudged.msgs[1].content));
+    t.ok('the retry is labelled as such in the run', r.states.filter((s) => s === 'EXECUTING').length === 1);
+
+    // never changes anything: nudged twice, then reported honestly
+    const never = scripted([planStep(), planDone, report('nothing')]);
+    r = await task({ opts: { chatStream: never }, steps: [] });
+    t.ok('a model that never changes anything is nudged twice and then reported as no-changes', r.report.status === 'no-changes' && never.seen.filter((c) => /No file has been changed yet/.test(c.msgs[1].content)).length === 2);
+
+    // an honest "blocked" is respected, not nagged
+    const blocked = scripted([planStep(), planDone, { calls: [{ name: 'report_result', args: { summary: 'The spec contradicts itself.', status: 'blocked' } }] }]);
+    r = await task({ opts: { chatStream: blocked }, steps: [] });
+    t.ok('a model that honestly reports blocked is not pushed again: the run is BLOCKED with its reason', r.report.status === 'blocked' && /contradicts itself/.test(r.report.text) && r.states[r.states.length - 1] === 'BLOCKED');
+    t.equal('...and no nudge was sent', blocked.seen.filter((c) => /No file has been changed yet/.test(c.msgs[1].content)).length, 0);
 
     // 10. nothing to verify with
     r = await task({ files: { '/sum.js': 'function sum(a, b) { return a - b; }\n' }, steps: [planStep(), planDone, fixSum, report()] });

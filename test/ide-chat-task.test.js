@@ -125,9 +125,12 @@ module.exports = async function (t) {
     t.ok('commands were flushed to disk-backed storage before they ran', x.flushes.length >= 1 && /a \+ b/.test(x.flushes[0]['/sum.js']));
     t.ok('the run state is stored as COMPLETED', JSON.parse(x.store['cs.nagent.run.v1']).state === 'COMPLETED');
 
-    // revert
+    // revert (with an editor review still open: it must be closed first, or it keeps showing the agent's text)
+    const order = [];
+    x.win.CSEditor = { reviewing: () => true, endReview: (why) => { order.push('end:' + why + ' fs=' + (/a \+ b/.test(x.files['/sum.js']) ? 'agent' : 'original')); } };
     x.click('revert');
     await wait(30);
+    t.deepEqual('an open review is closed BEFORE the files are reverted', order, ['end:replaced fs=agent']);
     t.ok('Revert undoes every change and says so', /a - b/.test(x.files['/sum.js']) && x.Chat.thread().messages.some((m) => m.role === 'note' && /Reverted 1 file/.test(m.content)));
     t.ok('and the card no longer offers it', !/data-cs-task="revert"/.test(x.x.ext.tray[0]()));
     t.equal('the editor buffer is refreshed after a revert', x.S.ideBuffer, 'function sum(a, b) { return a - b; }\n');

@@ -263,7 +263,7 @@
   function runLoop(opts) {
     var max = opts.maxTurns || MAX_TURNS, tb = opts.toolbox;
     var names = tb.defs.map(function (d) { return d.name; });
-    var convo = opts.messages.slice(), seen = {}, turns = 0, repeats = 0, useTools = true;
+    var convo = opts.messages.slice(), seen = {}, turns = 0, repeats = 0, useTools = true, malformed = 0;
     var cb = function (n) { return typeof opts[n] === 'function' ? opts[n] : function () {}; };
     var aborted = function () { return !!(opts.signal && opts.signal.aborted); };
 
@@ -283,8 +283,17 @@
       return opts.chatStream(convo, copts).then(function (r) {
         return r;
       }, function (e) {
+        var emsg = String((e && e.message) || e);
+        // The server could not parse the tool call the model wrote (small local
+        // models do this). Ask for it again, bounded, instead of ending the run.
+        if (/HTTP 4\d\d|HTTP 500/.test(emsg) && /looks like object|can't find closing|invalid (json|character)|unexpected end of json|failed to parse|error parsing tool/i.test(emsg) && malformed < 2 && !aborted()) {
+          malformed++;
+          convo.push({ role: 'user', content: 'Your last reply contained a tool call with invalid JSON, so it could not be read. Reply again. When you call a tool, give its arguments as valid JSON.' });
+          turns--;
+          return null;
+        }
         // a provider that rejects the tools parameter: retry this turn without tools, once
-        if (useTools && turns === 1 && /HTTP 4\d\d/.test(String((e && e.message) || e)) && !aborted()) {
+        if (useTools && turns === 1 && /HTTP 4\d\d/.test(emsg) && !aborted()) {
           useTools = false; cb('onNoTools')();
           cb('onTurnEnd')({ text: '', calls: [], aborted: false, retry: true });
           turns--;
