@@ -451,13 +451,23 @@ function registerIpc() {
     const root = workspace.getRoot();
     return { root, trusted: root ? trust.isTrusted(root) : false };
   });
-  ipcMain.handle('trust:grant', () => { const r = workspace.getRoot(); if (r) { trust.grant(r); rebuildMenu(); } return ok({ trusted: true }); });
+  // Granting trust is the user's decision, made in a native dialog in this process: an IPC call from the
+  // renderer alone must never be enough (it would bypass the prompt that guards command execution).
+  ipcMain.handle('trust:grant', async () => {
+    try { await ensureTrusted('(trust requested by the app)'); return ok({ trusted: true }); }
+    catch (e) { return fail(e); }
+  });
   ipcMain.handle('trust:revoke', () => { const r = workspace.getRoot(); if (r) { trust.revoke(r); rebuildMenu(); } return ok({ trusted: false }); });
   ipcMain.handle('trust:audit', (_e, limit) => trust.readAudit(typeof limit === 'number' ? limit : 200));
 
   /* ---- MCP stdio (allowlisted spawn + JSON-RPC) ---- */
-  ipcMain.handle('mcp:start', (_e, opts) => {
-    try { return ok(mcp.start(opts || {})); } catch (e) { return fail(e); }
+  ipcMain.handle('mcp:start', async (_e, opts) => {
+    try {
+      const o = opts || {};
+      // an MCP server is a program the project asks us to run: same folder-trust gate as any command
+      await ensureTrusted('MCP server: ' + String(o.cmd || o.command || '') + ' ' + (Array.isArray(o.args) ? o.args.map(String).join(' ') : ''));
+      return ok(mcp.start(o));
+    } catch (e) { return fail(e); }
   });
   ipcMain.handle('mcp:request', async (_e, opts) => {
     try {
@@ -472,8 +482,31 @@ function registerIpc() {
   });
 
   /* ---- HTTPS / localhost HTTP (desktop bypasses renderer CSP) ---- */
+  // net:fetch bypasses the page CSP, so it must not be a way for page code to send data anywhere it likes:
+  // private / link-local addresses are refused, and a host this session has not talked to yet needs the
+  // user's OK in a native dialog (the first use of a remote MCP server, an API, ...).
+  const netHostsOk = new Set();
   ipcMain.handle('net:fetch', async (_e, opts) => {
-    try { return ok(await net.fetchUrl(opts || {})); } catch (e) { return fail(e); }
+    try {
+      const o = opts || {};
+      let u; try { u = new URL(String(o.url || '')); } catch (_) { return fail(new Error('bad url')); }
+      const host = u.hostname.toLowerCase();
+      const local = host === '127.0.0.1' || host === 'localhost' || host === '[::1]';
+      if (!local) {
+        if (net.isPrivateHost(host)) return fail(new Error('Requests to private or link-local addresses are not allowed: ' + host));
+        if (!netHostsOk.has(host)) {
+          const r = await dialog.showMessageBox(win, {
+            type: 'question', title: 'Allow a network request?',
+            message: 'CodeSovereign wants to contact ' + host,
+            detail: 'Method: ' + String(o.method || 'GET').toUpperCase() + '\nURL: ' + u.origin + u.pathname + '\n\nOnly allow hosts you expect (for example a remote MCP server you added).',
+            buttons: ['Allow ' + host + ' this session', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true
+          });
+          if (r.response !== 0) return fail(new Error('Request declined: ' + host));
+          netHostsOk.add(host);
+        }
+      }
+      return ok(await net.fetchUrl(o));
+    } catch (e) { return fail(e); }
   });
 
   /* ---- runtime observer (hidden BrowserWindow, localhost/workspace only) ---- */
@@ -661,7 +694,17 @@ function registerIpc() {
     } catch (e) { return fail(e); }
   });
   ipcMain.handle('openclaw:openDashboard', async (_e, url) => {
-    try { await shell.openExternal(url || ('http://127.0.0.1:' + openclawManager.GATEWAY_PORT + '/')); return { ok: true }; }
+    try {
+      // only the local gateway's own http(s) page: a renderer-supplied URL must not become file:, ms-msdt:, or any
+      // other scheme handed to the operating system
+      let target = 'http://127.0.0.1:' + openclawManager.GATEWAY_PORT + '/';
+      if (url) {
+        const u = new URL(String(url));
+        if (!/^https?:$/.test(u.protocol) || !/^(127\.0\.0\.1|localhost|\[::1\])$/.test(u.hostname)) return fail(new Error('Only a local http(s) address can be opened here'));
+        target = u.href;
+      }
+      await shell.openExternal(target); return { ok: true };
+    }
     catch (e) { return fail(e); }
   });
   // No confirmation dialog: install/gatewayInstall/gatewayStart confirm once

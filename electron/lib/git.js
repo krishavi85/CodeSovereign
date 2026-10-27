@@ -3,7 +3,35 @@
  * git.js — thin wrapper around the system `git`, scoped to the open workspace.
  */
 const { spawn, execFile } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const workspace = require('./workspace');
+const trust = require('./trust');
+const { sanitizedEnv } = require('./proc');
+
+// A folder that already contains a .git directory can ship a hostile .git/config or hooks. Git runs programs
+// named there: core.fsmonitor on every `git status` (the Git panel runs it on each refresh), hooks on commit /
+// checkout / merge, external diff drivers on `git diff`. Opening a folder must not run its code, so:
+//  - core.fsmonitor is forced off (a speed feature, never needed here)
+//  - repository hooks run only once the user has trusted the folder (the same prompt that guards commands)
+//  - diff / show / log never call an external diff or textconv program
+//  - the environment is the sanitized one: no tokens for a hook or filter to read
+// These go in through GIT_CONFIG_COUNT / KEY / VALUE (highest-precedence config), not `-c`.
+let noHooksDir = null;
+function emptyHooksDir() {
+  if (!noHooksDir) { noHooksDir = path.join(os.tmpdir(), 'cs-no-hooks'); try { fs.mkdirSync(noHooksDir, { recursive: true }); } catch (_) {} }
+  return noHooksDir;
+}
+function gitEnv(root) {
+  const cfg = [['core.fsmonitor', 'false']];
+  if (!trust.isTrusted(root)) cfg.push(['core.hooksPath', emptyHooksDir()]);
+  const env = Object.assign({}, sanitizedEnv(), { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_COUNT: String(cfg.length) });
+  if (process.env.SSH_AUTH_SOCK) env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;      // ssh-agent for push/fetch over ssh
+  for (const k of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) if (process.env[k]) env[k] = process.env[k];   // identity only
+  cfg.forEach((kv, i) => { env['GIT_CONFIG_KEY_' + i] = kv[0]; env['GIT_CONFIG_VALUE_' + i] = kv[1]; });
+  return env;
+}
 
 function available() {
   return new Promise((resolve) => {
@@ -52,10 +80,10 @@ function exec(args) {
     if (!root) { resolve({ code: -1, stdout: '', stderr: 'No workspace is open' }); return; }
     const bad = validateArgs(args);
     if (bad) { resolve({ code: -1, stdout: '', stderr: bad }); return; }
-    const child = spawn('git', args, {
-      cwd: root, windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1' }
-    });
+    let argv = args;
+    const si = args.findIndex((a) => !a.startsWith('-'));
+    if (si >= 0 && ['diff', 'show', 'log'].includes(args[si])) argv = args.slice(0, si + 1).concat(['--no-ext-diff', '--no-textconv'], args.slice(si + 1));
+    const child = spawn('git', argv, { cwd: root, windowsHide: true, env: gitEnv(root) });
     let out = '', err = '';
     child.stdout.on('data', d => { out += d.toString(); });
     child.stderr.on('data', d => { err += d.toString(); });

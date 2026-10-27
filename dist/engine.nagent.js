@@ -190,7 +190,7 @@
       return refuse('node may only run a project .js/.mjs/.cjs file or --test');
     }
     if (base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun') {
-      if (has('-g', '--global', '--location=global') || hasPrefix('--registry') || hasPrefix('--userconfig') || hasPrefix('--prefix') || hasPrefix('--globalconfig'))
+      if (has('-g', '--global', '--location=global') || hasPrefix('--script-shell') || hasPrefix('--shell') || hasPrefix('--registry') || hasPrefix('--userconfig') || hasPrefix('--prefix') || hasPrefix('--globalconfig'))
         return refuse('changing global installs or package-manager configuration is not allowed');
       if (!sub) return refuse('a subcommand is required');
       if (sub === 'test' || sub === 't' || sub === 'tst') return res('exec', 'runs the project\'s test script');
@@ -1113,6 +1113,14 @@
     } catch (_) { return false; }                                         // memory is an aid; it must never break a run
   }
 
+  // why a run was blocked, from the harness's own state history: never the model's words, so nothing a model
+  // (or content it read) wrote can be carried into a later prompt through memory
+  function blockedWhy(run) {
+    var h = (run && run.history) || [];
+    for (var i = h.length - 1; i >= 0; i--) if (h[i].state === 'BLOCKED' && h[i].reason) return clip(String(h[i].reason).replace(/[^\w .,:'()\/-]/g, ' ').replace(/\s+/g, ' '), 80);
+    return 'stopped';
+  }
+
   function rememberOutcome(env, run, status, reason, changes, goal) {
     var files = (changes || []).map(function (c) { return c.path; });
     if (['verified', 'unverified', 'blocked', 'failed'].indexOf(status) < 0) return;
@@ -1120,7 +1128,7 @@
     var lastV = (run.verification || [])[run.verification.length - 1];
     var vtxt = lastV ? lastV.steps.map(function (s) { return s.label + (s.pass != null ? ' ' + s.pass + ' pass/' + s.fail + ' fail' : ' exit ' + s.code); }).join(', ') : 'not verified';
     var title = 'Task (' + status + '): ' + clip(String(goal).replace(/\s+/g, ' '), 90);
-    var body = (status === 'verified' ? 'Verified by the harness (' + vtxt + ').' : status === 'unverified' ? 'Finished but NOT verified (' + vtxt + ').' : status === 'blocked' ? 'BLOCKED: ' + clip(String(reason || '').replace(/\s+/g, ' '), 200) : 'FAILED.') +
+    var body = (status === 'verified' ? 'Verified by the harness (' + vtxt + ').' : status === 'unverified' ? 'Finished but NOT verified (' + vtxt + ').' : status === 'blocked' ? 'BLOCKED: ' + blockedWhy(run) : 'FAILED.') +
       (files.length ? ' Changed: ' + files.slice(0, 8).join(', ') + '.' : '') + (run.attempts && run.attempts.length ? ' Repair attempts: ' + run.attempts.length + '.' : '');
     remember(env, 'artifacts', title, body, { type: 'task', status: status, files: files.slice(0, 12), at: Date.now() });
     if (status === 'verified' && lastV && lastV.ok === true) {
@@ -1218,6 +1226,8 @@
       var changes = reg.ws.changes(cp0);
       var report = buildReport(run, { status: status, summary: text, changes: changes, reg: reg, turns: turnsUsed, ms: Date.now() - t0, budgets: B, claim: lastClaim });
       run.result = { status: status, summary: text }; machine.save();
+      // a background server the agent started must not outlive the task (it would keep running, unwatched)
+      try { reg.stopProcesses(); } catch (_) { /* nothing to stop */ }
       if (!opts.noMemory) rememberOutcome(env, run, status, text, changes, opts.goal);
       return { run: run, report: report, registry: reg, changes: changes };
     }

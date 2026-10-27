@@ -39,4 +39,18 @@ async function fetchUrl(opts) {
   }
 }
 
-module.exports = { fetchUrl };
+// Private, loopback-alias, link-local (cloud metadata) and unspecified addresses: never a legitimate target
+// for a renderer-initiated request to a remote service.
+function isPrivateHost(host) {
+  const h = String(host || '').toLowerCase().replace(/^\[|\]$/g, '');
+  if (!h || h === 'localhost.localdomain' || /\.(local|internal|lan|home|corp)$/.test(h) || h === 'metadata.google.internal') return true;
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (m) {
+    const a = +m[1], b = +m[2];
+    return a === 10 || a === 127 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (h.indexOf(':') >= 0) return h === '::1' || h === '::' || /^f[cd]/.test(h) || /^fe[89ab]/.test(h) || /^::ffff:/.test(h);
+  return /^\d+$/.test(h) || /^0x[0-9a-f]+$/.test(h);   // decimal / hex integer IPs
+}
+
+module.exports = { fetchUrl, isPrivateHost };

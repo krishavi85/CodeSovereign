@@ -85,7 +85,32 @@ function resolveInside(virtualPath) {
   if (!isInside(currentRoot, abs)) {
     throw new Error('Path escapes the workspace: ' + virtualPath);
   }
+  // The check above is lexical. A symlink or junction inside the project can still point out of it
+  // (an untrusted repository can ship one), so resolve the deepest part of the path that exists and
+  // check where it really is.
+  if (!realInside(currentRoot, abs)) {
+    throw new Error('Path escapes the workspace through a link: ' + virtualPath);
+  }
   return abs;
+}
+
+function realInside(root, abs) {
+  let realRoot;
+  try { realRoot = fs.realpathSync.native(root); } catch { return false; }
+  let p = abs;
+  const tail = [];
+  for (;;) {
+    try {
+      const real = fs.realpathSync.native(p);
+      return isInside(realRoot, tail.length ? path.join(real, ...tail) : real);
+    } catch (e) {
+      if (!e || (e.code !== 'ENOENT' && e.code !== 'ENOTDIR')) return false;   // anything unreadable: refuse
+      const parent = path.dirname(p);
+      if (parent === p) return false;
+      tail.unshift(path.basename(p));
+      p = parent;
+    }
+  }
 }
 
 /** Real absolute path -> virtual "/relative" path. */

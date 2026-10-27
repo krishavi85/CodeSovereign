@@ -10,6 +10,7 @@ const { spawn, spawnSync } = require('child_process');
 const crossSpawn = require('cross-spawn');
 const path = require('path');
 const workspace = require('./workspace');
+const { hardRefusal } = require('./cmdpolicy');
 
 const procs = new Map(); // id -> { child, cwd, killed }
 let seq = 0;
@@ -142,6 +143,8 @@ function spawnAllowed({ cmd, args = [], cwd, timeoutMs }, onEvent) {
     err.code = 'ENOTALLOWED';
     throw err;
   }
+  const refusal = hardRefusal(cmd, args);
+  if (refusal) { const err = new Error('Refused: ' + refusal); err.code = 'EREFUSED'; throw err; }
   return spawnManaged({ cmd, args, cwd, timeoutMs }, onEvent);
 }
 
@@ -152,6 +155,8 @@ function runManaged({ cmd, args = [], cwd, timeoutMs }) {
       resolve({ code: -1, stdout: '', stderr: `Command "${base}" is not on the allowlist. Use the terminal for arbitrary commands.` });
       return;
     }
+    const refusal = hardRefusal(cmd, args);
+    if (refusal) { resolve({ code: -1, stdout: '', stderr: 'Refused: ' + refusal }); return; }
     let workdir;
     try { workdir = cwdFor(cwd); } catch (e) { resolve({ code: -1, stdout: '', stderr: String(e.message) }); return; }
     const child = spawnCommand(cmd, args, {
