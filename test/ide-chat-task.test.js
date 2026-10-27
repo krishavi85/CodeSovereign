@@ -114,7 +114,7 @@ module.exports = async function (t) {
     t.ok('clicking Approve is handled by the task module', x.click('approve') === true);
     const last = await p;
     t.equal('after approval the task finishes VERIFIED', x.task().report.status, 'verified');
-    t.ok('the file really changed and the tests really ran', /a \+ b/.test(x.files['/sum.js']) && x.jobs.length === 1);
+    t.ok('the file really changed and the tests really ran (once before the edit to show what fails, once to verify it)', /a \+ b/.test(x.files['/sum.js']) && x.jobs.length === 2);
     t.deepEqual('the conversation has the plan, tool rows, phase labels and a report', rows(x.Chat).filter((r) => r !== 'note').join(' '), 'user tool:create_plan@plan assistant@plan tool:read_file@execute tool:edit_file@execute tool:report_result@execute assistant#report');
     t.deepEqual('tool rows know their phase', x.Chat.thread().messages.filter((m) => m.role === 'tool').map((m) => m.phase), ['plan', 'execute', 'execute', 'execute']);
     t.ok('the final message is the evidence-based report', last.report === true && /VERIFIED/.test(last.content) && /exit 0, 2 pass \/ 0 fail/.test(last.content) && /sum\.js/.test(last.content));
@@ -122,7 +122,7 @@ module.exports = async function (t) {
     t.ok('the plan is applied revertibly and the editor review dock is opened with the pre-task snapshot', x.reviewDock.length === 1 && /a - b/.test(x.reviewDock[0]['/sum.js']));
     t.ok('the file the agent edited was put in front of the user', x.renders.indexOf('/sum.js') >= 0 && x.Chat.thread().messages.some((m) => m.role === 'tool' && m.name === 'edit_file' && m.file === '/sum.js'));
     t.ok('the task card summarises the result and offers Revert', /VERIFIED/.test(x.x.ext.tray[0]()) && /data-cs-task="revert"/.test(x.x.ext.tray[0]()) && /1 file changed/.test(x.x.ext.tray[0]()));
-    t.ok('commands were flushed to disk-backed storage before they ran', x.flushes.length >= 1 && /a \+ b/.test(x.flushes[0]['/sum.js']));
+    t.ok('commands were flushed to disk-backed storage before they ran', x.flushes.length >= 2 && !/a \+ b/.test(x.flushes[0]['/sum.js']) && /a \+ b/.test(x.flushes[x.flushes.length - 1]['/sum.js']));
     t.ok('the run state is stored as COMPLETED', JSON.parse(x.store['cs.nagent.run.v1']).state === 'COMPLETED');
 
     // revert (with an editor review still open: it must be closed first, or it keeps showing the agent's text)
