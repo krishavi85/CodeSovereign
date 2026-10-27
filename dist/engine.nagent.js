@@ -474,7 +474,8 @@
     compact: ['list_dir', 'read_file', 'grep', 'edit_file', 'create_file', 'write_file', 'run_tests', 'read_diagnostics', 'update_plan', 'report_result'],
     full: ['list_dir', 'list_files', 'read_file', 'grep', 'get_problems', 'edit_file', 'create_file', 'write_file', 'apply_patch', 'rename_file', 'delete_file',
       'run_tests', 'build_project', 'run_command', 'start_dev_server', 'inspect_process', 'stop_process', 'inspect_logs',
-      'read_diagnostics', 'analyze_stack_trace', 'inspect_diff', 'create_plan', 'update_plan', 'report_result', 'request_approval'],
+      'read_diagnostics', 'analyze_stack_trace', 'inspect_diff', 'create_plan', 'update_plan', 'report_result', 'request_approval',
+      'find_symbol', 'find_references', 'file_dependencies'],
     repair: ['read_file', 'grep', 'list_dir', 'edit_file', 'write_file', 'create_file', 'run_tests', 'read_diagnostics', 'analyze_stack_trace', 'report_result'],
     verify: []
   };
@@ -664,6 +665,30 @@
           return base.call(n, a, {}).then(function (r) { if (n === 'read_file' && r.ok) { var p = normPath(a.path); var c = env.read(p); if (c != null) ws.noteRead(p, String(c)); } return r; });
         } };
     });
+
+    // repository intelligence (M5): symbols, imports, references; reads through the overlay so it sees the agent's own edits
+    var intel = (typeof window !== 'undefined' && window.Engine && window.Engine.RepoIntel) ? window.Engine.RepoIntel.create({ list: function () { return allPaths(); }, read: function (p) { return current(p); } }) : null;
+    if (intel) {
+      def('find_symbol', 'Find where a function, class, variable or type is defined (partial names work). Shows file, line, declaration and whether it is exported.', { name: S('Symbol name, e.g. slugify.') }, ['name'], 'read', function (a) {
+        var r = intel.findSymbol(a.name);
+        if (!r.length) return ok('No symbol named "' + a.name + '" in the project index. Try grep for other text.', 'none');
+        return ok(r.slice(0, 15).map(function (x) { return x.path + ':' + x.line + '  ' + x.kind + (x.exported ? ' (exported)' : '') + '  ' + x.signature; }).join('\n'), r.length + ' match' + (r.length === 1 ? '' : 'es'));
+      }, { parallel: true });
+      def('find_references', 'Find where a name is used across the project (not its definition). Use before changing a function\'s signature or behaviour.', { name: S('Identifier, e.g. makeUrl.') }, ['name'], 'read', function (a) {
+        var r = intel.references(a.name);
+        if (!r.length) return ok('No other uses of "' + a.name + '" found.', 'none');
+        return ok(r.map(function (x) { return x.path + ':' + x.line + '  ' + x.text; }).join('\n'), r.length + ' use' + (r.length === 1 ? '' : 's'));
+      }, { parallel: true });
+      def('file_dependencies', 'Show what a file imports (project files and packages) and which project files import it. Use to find what else a change can affect.', { path: S('File path.') }, ['path'], 'read', function (a) {
+        var p = normPath(a.path), d = intel.deps(p);
+        if (!current(p) && current(p) !== '') return fail('No such file: ' + p);
+        var L = ['Imports: ' + (d.imports.filter(function (i) { return i.path; }).map(function (i) { return i.path + (i.names.length ? ' {' + i.names.join(', ') + '}' : ''); }).join('; ') || '(no project files)')];
+        if (d.external.length) L.push('Packages: ' + d.external.join(', '));
+        L.push('Imported by: ' + (d.importedBy.join(', ') || '(no project file)'));
+        var ex = intel.exportsOf(p); if (ex.length) L.push('Exports: ' + ex.join(', '));
+        return ok(L.join('\n'), d.importedBy.length + ' importer' + (d.importedBy.length === 1 ? '' : 's'));
+      }, { parallel: true });
+    }
 
     def('list_files', 'List project files recursively, optionally filtered by a glob such as "*.js" or "src/**".', { glob: S('Optional filter.') }, [], 'read', function (a) {
       var re = null;
@@ -938,7 +963,7 @@
       call: call, proposals: proposals, ws: ws, history: history, budget: budget,
       get plan() { return plan; }, set plan(v) { plan = v; },
       get reported() { return reported; }, set reported(v) { reported = v; },
-      get lastExec() { return lastExec; }, get procs() { return procs; },
+      get lastExec() { return lastExec; }, get procs() { return procs; }, get intel() { return intel; },
       setMode: function (m) { cfg.mode = m; }, setProfile: function (p) { cfg.profile = p; }, get mode() { return cfg.mode; }, get profile() { return cfg.profile; },
       setPlanApproved: function (b) { cfg.planApproved = !!b; },
       beginTask: function () { startedFiles = {}; (env.list() || []).forEach(function (p) { startedFiles[p] = true; }); budget.toolCalls = 0; reported = null; },
@@ -1015,11 +1040,83 @@
     '\nFor any file shorter than about 80 lines, use write_file with the COMPLETE new content of the file (keep everything that should stay): ' +
     'it is more reliable than edit_file, which needs an exact text match. Use edit_file only for long files.';
 
-  function projectSummary(env, reg) {
+  /* ------------------------------------------------ project memory (M6) */
+  // env.memory = { all() -> [{ kind, title, body, meta, at }], remember(kind, title, body, meta) } is supplied by the
+  // host (the app wires it to Engine.ProjectBrain). The agent writes only facts it can state from evidence — the
+  // user's goal, the files really changed, what the harness verified — never the model's free text, so a memory
+  // cannot smuggle instructions into later prompts. Reading is relevance-selected and size-bounded.
+
+  function memWords(s) {
+    var RI = typeof window !== 'undefined' && window.Engine && window.Engine.RepoIntel;
+    if (RI && RI.words) return RI.words(s);
+    return String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter(function (w) { return w.length >= 4; });
+  }
+
+  // items: stored memories, newest last. -> the ones worth showing for this goal, best first
+  function selectMemories(items, goal, files, max) {
+    var gw = memWords(goal), fl = files || [], out = [], latestTests = null;
+    (items || []).forEach(function (it, idx) {
+      if (!it || !it.meta || !it.meta.agent) return;                      // only memories the native agent wrote
+      var hay = memWords(it.title + ' ' + it.body), score = 0;
+      gw.forEach(function (w) { if (hay.indexOf(w) >= 0) score += 3; });
+      (it.meta.files || []).forEach(function (f) { if (fl.indexOf(f) >= 0) score += 5; });
+      if (it.meta.type === 'verify') latestTests = it;                    // the newest "how to verify" fact is always useful
+      if (score >= 3) out.push({ it: it, score: score + idx / 1000 });
+    });
+    out.sort(function (a, b) { return b.score - a.score; });
+    var picked = out.slice(0, max || 4).map(function (x) { return x.it; });
+    if (latestTests && picked.indexOf(latestTests) < 0) picked.push(latestTests);
+    return picked;
+  }
+
+  function memoryText(items, maxChars) {
+    if (!items.length) return '';
+    var lines = ['Project memory (facts recorded by earlier tasks in this project; treat as hints, the code is the truth):'], used = lines[0].length;
+    items.forEach(function (it) {
+      var m = it.meta || {}, when = it.at ? new Date(it.at).toISOString().slice(0, 10) : '';
+      var line = '- ' + (when ? when + ' ' : '') + it.title + ': ' + String(it.body).replace(/\s+/g, ' ').slice(0, 260);
+      if (used + line.length > (maxChars || 1100)) return;
+      lines.push(line); used += line.length + 1;
+    });
+    return lines.length > 1 ? lines.join('\n') : '';
+  }
+
+  function remember(env, kind, title, body, meta) {
+    if (!env || !env.memory) return false;
+    try {
+      var all = env.memory.all() || [], last = null;
+      for (var i = all.length - 1; i >= 0; i--) if (all[i] && all[i].title === title) { last = all[i]; break; }
+      if (last && last.body === body) return false;                       // no duplicates of the same fact
+      env.memory.remember(kind, title, body, Object.assign({ agent: true }, meta || {}));
+      return true;
+    } catch (_) { return false; }                                         // memory is an aid; it must never break a run
+  }
+
+  function rememberOutcome(env, run, status, reason, changes, goal) {
+    var files = (changes || []).map(function (c) { return c.path; });
+    if (['verified', 'unverified', 'blocked', 'failed'].indexOf(status) < 0) return;
+    if (!files.length && status !== 'blocked') return;
+    var lastV = (run.verification || [])[run.verification.length - 1];
+    var vtxt = lastV ? lastV.steps.map(function (s) { return s.label + (s.pass != null ? ' ' + s.pass + ' pass/' + s.fail + ' fail' : ' exit ' + s.code); }).join(', ') : 'not verified';
+    var title = 'Task (' + status + '): ' + clip(String(goal).replace(/\s+/g, ' '), 90);
+    var body = (status === 'verified' ? 'Verified by the harness (' + vtxt + ').' : status === 'unverified' ? 'Finished but NOT verified (' + vtxt + ').' : status === 'blocked' ? 'BLOCKED: ' + clip(String(reason || '').replace(/\s+/g, ' '), 200) : 'FAILED.') +
+      (files.length ? ' Changed: ' + files.slice(0, 8).join(', ') + '.' : '') + (run.attempts && run.attempts.length ? ' Repair attempts: ' + run.attempts.length + '.' : '');
+    remember(env, 'artifacts', title, body, { type: 'task', status: status, files: files.slice(0, 12), at: Date.now() });
+    if (status === 'verified' && lastV && lastV.ok === true) {
+      remember(env, 'tests', 'How to verify this project', 'The harness verified with: ' + vtxt + '.', { type: 'verify' });
+    }
+  }
+
+  // goal/focus (optional): when the repository index is available, add the files most relevant to
+  // the goal and how they are linked by imports, so a multi-file change is seen as one change
+  function projectSummary(env, reg, goal, focus, toolset) {
     var files = reg.allPaths().slice(0, 60), pkg = null;
     try { pkg = JSON.parse(env.read('/package.json') || 'null'); } catch (_) {}
     var lines = ['Project files (' + files.length + (reg.allPaths().length > 60 ? '+' : '') + '):', files.join('\n')];
     if (pkg && pkg.scripts) lines.push('package.json scripts: ' + JSON.stringify(pkg.scripts));
+    if (goal && reg.intel) {
+      try { var blk = reg.intel.contextBlock(goal, { focus: focus || [], maxChars: toolset === 'compact' ? 2600 : 4000 }); if (blk) lines.push('', blk); } catch (_) { /* the index is an aid, never a blocker */ }
+    }
     return lines.join('\n');
   }
 
@@ -1100,6 +1197,7 @@
       var changes = reg.ws.changes(cp0);
       var report = buildReport(run, { status: status, summary: text, changes: changes, reg: reg, turns: turnsUsed, ms: Date.now() - t0, budgets: B, claim: lastClaim });
       run.result = { status: status, summary: text }; machine.save();
+      if (!opts.noMemory) rememberOutcome(env, run, status, text, changes, opts.goal);
       return { run: run, report: report, registry: reg, changes: changes };
     }
     function stopped(reason) { return reason === 'budget' ? 'the tool-call budget ran out' : reason === 'time' ? 'the time budget ran out' : reason === 'max-turns' ? 'the turn limit was reached' : reason === 'repeat' ? 'the model kept repeating the same call' : reason; }
@@ -1147,6 +1245,17 @@
       reg.ws.changes(cp0).filter(function (c) { return c.status !== 'deleted' && !TEST_FILE.test(c.path); }).slice(0, 2).forEach(function (c) {
         parts.push('Current content of ' + c.path + ' (changed by you):\n' + clip(reg.current(c.path) || '', 1800));
       });
+      // what else the change can reach: files that import what was changed, and the code the failing tests load
+      if (reg.intel) {
+        try {
+          var chPaths = reg.ws.changes(cp0).map(function (c) { return c.path; });
+          var imp = reg.intel.impacted(chPaths).filter(function (x) { return !x.test; }).slice(0, 4);
+          if (imp.length) parts.push('Linked files you have NOT changed: ' + imp.map(function (x) { return x.path + ' (imports ' + x.because.join(', ') + ')'; }).join('; ') + '. If your change affects what the first file provides, these may need the matching change.');
+          var linked = [];
+          fs.forEach(function (f) { if (f.file) { var tp = toProjectPath(f.file, env.root, reg.allPaths()); if (tp) reg.intel.deps(tp).imports.forEach(function (i) { if (i.path && linked.indexOf(i.path) < 0 && !TEST_FILE.test(i.path)) linked.push(i.path); }); } });
+          if (linked.length) parts.push('The failing test loads: ' + linked.slice(0, 5).join(', ') + '. The cause is in one of these or in what they import.');
+        } catch (_) { /* hints only */ }
+      }
       var done = run.attempts.filter(function (a) { return a.outcome !== 'running'; });
       if (done.length) parts.push('Earlier attempts:\n' + done.map(function (a) { return '- attempt ' + a.n + ' changed ' + (a.changed.join(', ') || 'nothing') + ' → ' + a.outcome; }).join('\n'));
       var claimed = unbackedClaims(lastClaim, reg.ws.changes(cp0).map(function (c) { return c.path; }), reg.allPaths());
@@ -1210,13 +1319,25 @@
 
     /* ---- the machine ---- */
     // the goal plus any context the user attached (@selection, @file, @problems)
-    function goalText() { return 'Goal: ' + opts.goal + (opts.context ? '\n\nAttached context:\n' + String(opts.context).slice(0, 12000) : ''); }
+    // earlier tasks' recorded facts that matter for this goal (and the files it is likely to touch)
+    function memoryBlock() {
+      if (!env.memory || opts.noMemory) return '';
+      try {
+        var files = reg.intel ? reg.intel.rank(opts.goal, { limit: 6 }).map(function (r) { return r.path; }) : [];
+        return memoryText(selectMemories(env.memory.all() || [], opts.goal, files, 4), 1100);
+      } catch (_) { return ''; }
+    }
+    var memoText = null;                       // computed once per run: the memory does not change while it works
+    function goalText() {
+      if (memoText == null) memoText = memoryBlock();
+      return 'Goal: ' + opts.goal + (opts.context ? '\n\nAttached context:\n' + String(opts.context).slice(0, 12000) : '') + (memoText ? '\n\n' + memoText : '');
+    }
     function autonomyAllows(a) { return a === 'repair' ? (env.canRepair ? !!env.canRepair() : true) : true; }
     var system = BASE_RULES + (toolset === 'compact' ? SMALL_MODEL_RULES : '');
 
     function plan() {
       machine.transition('PLANNING', 'start');
-      var user = goalText() + '\n\n' + projectSummary(env, reg) + '\n\nLook at what you need (briefly), then call create_plan with 3 to 7 concrete steps that name the files to change and how the result will be verified. Do not edit anything yet.';
+      var user = goalText() + '\n\n' + projectSummary(env, reg, opts.goal, [], toolset) + '\n\nLook at what you need (briefly), then call create_plan with 3 to 7 concrete steps that name the files to change and how the result will be verified. Do not edit anything yet.';
       return loop('plan', system + '\nYou are in the PLANNING step: read-only.', user, 'plan').then(function (lr) {
         if (lr.reason === 'aborted') { machine.transition('CANCELLED', 'cancelled'); return finish('cancelled', 'Cancelled by the user.'); }
         if (!run.plan.length) {
@@ -1239,7 +1360,7 @@
 
     function execute(nudge) {
       reg.reported = null;
-      var user = goalText() + '\n\nPlan:\n' + planText(run.plan) + '\n\n' + projectSummary(env, reg) +
+      var user = goalText() + '\n\nPlan:\n' + planText(run.plan) + '\n\n' + projectSummary(env, reg, opts.goal + '\n' + planText(run.plan), reg.ws.changes(cp0).map(function (c) { return c.path; }), toolset) +
         '\n\nCarry out the plan with the tools. When the change is made, call report_result. The harness will run the project\'s tests itself afterwards, so you do not need to.' +
         (nudge ? '\n\n' + nudge : '');
       return loop(toolset, system + '\nYou are EXECUTING the plan.', user, nudge ? 'execute (retry ' + nudges + ')' : 'execute').then(function (lr) {
@@ -1347,6 +1468,6 @@
     decide: decide, classifyCommand: classifyCommand, validateArgs: validateArgs,
     createRegistry: createRegistry, createRun: createRun, loadRun: loadRun, runTask: runTask, buildReport: buildReport,
     parseTestOutput: parseTestOutput, parseStackFrames: parseStackFrames, toProjectPath: toProjectPath, failureSignature: failureSignature,
-    parsePatch: parsePatch, applyHunks: applyHunks, nearestLines: nearestLines, unbackedClaims: unbackedClaims, compactConvo: compactConvo, verificationPlan: verificationPlan, stepsFromText: stepsFromText, simpleDiff: simpleDiff
+    parsePatch: parsePatch, applyHunks: applyHunks, nearestLines: nearestLines, unbackedClaims: unbackedClaims, compactConvo: compactConvo, verificationPlan: verificationPlan, stepsFromText: stepsFromText, simpleDiff: simpleDiff, selectMemories: selectMemories, memoryText: memoryText, remember: remember
   };
 })();

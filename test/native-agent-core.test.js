@@ -16,7 +16,7 @@ function load(extra) {
   }, extra || {});
   win.window = win;
   const ctx = vm.createContext(win);
-  for (const f of ['app.chat.agent.js', 'engine.nagent.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'dist', f), 'utf8'), ctx, { filename: f });
+  for (const f of ['app.chat.agent.js', 'engine.repointel.js', 'engine.nagent.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'dist', f), 'utf8'), ctx, { filename: f });
   return win.Engine.NativeAgent;
 }
 

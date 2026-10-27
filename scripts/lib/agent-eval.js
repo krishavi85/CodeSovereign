@@ -33,7 +33,7 @@ function loadRuntime(opts) {
   };
   win.window = win;
   const ctx = vm.createContext(win);
-  for (const f of ['vendor/acorn.js', 'engine.js', 'engine.llm.js', 'app.chat.agent.js', 'engine.nagent.js']) {
+  for (const f of ['vendor/acorn.js', 'engine.js', 'engine.llm.js', 'app.chat.agent.js', 'engine.repointel.js', 'engine.nagent.js']) {
     vm.runInContext(fs.readFileSync(path.join(DIST, f), 'utf8'), ctx, { filename: f });
   }
   if (opts.model) {
