@@ -1391,9 +1391,40 @@
       if (trackDone) trackDone(c, res);
     } });
 
+    // The failing tests are the most concrete statement of the task there is. Before the model edits anything the
+    // harness runs the project's tests once and shows what fails (names, messages, the source they point at), so the
+    // model works from facts instead of guessing from the goal's wording. Once per run; nothing changes if the tests
+    // already pass, if there is no runner, or in a mode that may not run commands.
+    var baselineBlock = null;
+    function baseline() {
+      if (baselineBlock != null) return Promise.resolve(baselineBlock);
+      baselineBlock = '';
+      var steps = verificationPlan(env).filter(function (st) { return st.label === 'tests'; });
+      if (!steps.length || mode === 'plan') return Promise.resolve('');
+      return reg.execute(steps[0].spec, { signal: opts.signal }).then(function (e) {
+        if (!e || e.skipped || aborted()) return '';
+        var parsed = parseTestOutput(e.output);
+        if (e.code === 0 && !((parsed.fail || 0) > 0)) return '';
+        var v = { results: [{ label: 'tests', ok: false, failures: parsed.failures, fail: parsed.fail, outputTail: tail(e.output, 1500) }] };
+        var parts = ['The project\'s tests were run BEFORE any change and FAIL (' + (parsed.pass != null ? parsed.pass + ' pass / ' + parsed.fail + ' fail' : 'exit ' + e.code) + '). This is what has to be made to work:'];
+        allFailures(v).slice(0, 4).forEach(function (f, i) {
+          parts.push((i + 1) + '. ' + f.name + '\n' + String(f.message).split('\n').slice(0, 6).join('\n'));
+          var at = reg.analyze((f.frames || []).map(function (x) { return 'at ' + x.file + ':' + x.line; }).join('\n') + (f.file ? '\nat ' + f.file + ':' + (f.line || 1) : ''));
+          at.slice(0, 2).forEach(function (x) { parts.push('   in ' + x.path + ':' + x.line + '\n' + x.snippet); });
+        });
+        baselineBlock = parts.join('\n');
+        return baselineBlock;
+      }, function () { return ''; });
+    }
+
     function execute(nudge) {
       reg.reported = null;
+      return baseline().then(function (base) { return executeWith(nudge, base); });
+    }
+
+    function executeWith(nudge, base) {
       var user = goalText() + '\n\nPlan:\n' + planText(run.plan) + '\n\n' + projectSummary(env, reg, opts.goal + '\n' + planText(run.plan), reg.ws.changes(cp0).map(function (c) { return c.path; }), toolset) +
+        (base ? '\n\n' + base : '') +
         '\n\nCarry out the plan with the tools. When the change is made, call report_result. The harness will run the project\'s tests itself afterwards, so you do not need to.' +
         (nudge ? '\n\n' + nudge : '');
       return loop(toolset, system + '\nYou are EXECUTING the plan.', user, nudge ? 'execute (retry ' + nudges + ')' : 'execute').then(function (lr) {

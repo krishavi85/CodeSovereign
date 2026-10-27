@@ -418,11 +418,11 @@ module.exports = async function (t) {
     // 8. cancellation
     const ac = new AbortController();
     r = await task({ opts: { signal: ac.signal }, steps: [planStep(), planDone, (msgs, o) => { ac.abort(); return Promise.resolve({ text: 'partial', toolCalls: [], aborted: true }); }] });
-    t.ok('cancelling mid-run ends CANCELLED and no verification runs', r.report.status === 'cancelled' && r.states[r.states.length - 1] === 'CANCELLED' && r.env.execs.length === 0);
+    t.ok('cancelling mid-run ends CANCELLED and no verification runs', r.report.status === 'cancelled' && r.states[r.states.length - 1] === 'CANCELLED' && r.run.verification.length === 0);
 
     // 9. no changes
     r = await task({ steps: [planStep(), planDone, report('nothing to do')] });
-    t.ok('finishing without changing anything is reported as such, not as success', r.report.status === 'no-changes' && r.env.execs.length === 0);
+    t.ok('finishing without changing anything is reported as such, not as success', r.report.status === 'no-changes' && r.run.verification.length === 0);
 
     // 9b. a model that gives up after a failed edit is pushed back, with the error quoted
     const badEdit = { calls: [{ name: 'edit_file', args: { path: '/sum.js', old_text: 'return a minus b;', new_text: 'return a + b;' } }] };
@@ -508,6 +508,24 @@ module.exports = async function (t) {
     const mCtx = scripted([planStep(), planDone, fixSum, report()]);
     await task({ opts: { chatStream: mCtx, context: '--- selection of /sum.js ---\nSELECTED_TEXT_MARKER' }, steps: [] });
     t.ok('the attached context is part of the prompts', mCtx.seen.length >= 3 && mCtx.seen.every((c) => c.msgs.some((m) => /SELECTED_TEXT_MARKER/.test(String(m.content)))));
+
+    // 12a. the model sees the failing tests (from a run BEFORE any change) before it edits anything
+    const mBase = scripted([planStep(), planDone, fixSum, report('fixed')]);
+    r = await task({ opts: { chatStream: mBase }, steps: [] });
+    const execPromptB = mBase.seen[2].msgs[1].content;
+    t.ok('the execute prompt carries the baseline: that the tests fail, which, and why', /tests were run BEFORE any change and FAIL \(0 pass \/ 2 fail\)/.test(execPromptB) && /adds[\s\S]*Expected 3 but got -1/.test(execPromptB));
+    t.ok('the baseline run is not counted as a verification run (there is still exactly one, after the edit)', r.run.verification.length === 1 && r.report.status === 'verified' && r.env.execs.length === 2);
+    const mBase2 = scripted([planStep(), planDone, fixSum, report('fixed')]);
+    r = await task({ env: makeEnv(sumProject('function sum(a, b) { return a + b; }\n'), { runner: sumRunner }), opts: { chatStream: mBase2 }, steps: [] });
+    t.ok('passing tests at the start add nothing to the prompt', !/BEFORE any change/.test(mBase2.seen[2].msgs[1].content));
+    const mBase3 = scripted([planStep(), planDone, report('x')]);
+    const envNoRun = makeEnv({ '/sum.js': 'x\n' }, { runner: sumRunner });
+    await task({ env: envNoRun, opts: { chatStream: mBase3 }, steps: [] });
+    t.ok('no test command means no baseline run and no mention of one', envNoRun.execs.length === 0 && !/BEFORE any change/.test(mBase3.seen[2].msgs[1].content));
+    const mBase4 = scripted([planStep(), planDone]);
+    const envPlan = makeEnv(sumProject(), { runner: sumRunner });
+    await task({ env: envPlan, opts: { chatStream: mBase4, mode: 'plan' }, steps: [] });
+    t.ok('plan mode never runs the tests', envPlan.execs.length === 0);
 
     // 12e. repository intelligence: the prompts carry the relevant files and how they connect
     const filesI = { '/package.json': PKG, '/src/text.js': 'function slugify(t) { return t; }\nmodule.exports = { slugify };\n', '/src/format.js': "const { slugify } = require('./text');\nfunction makeUrl(t) { return t; }\nmodule.exports = { makeUrl };\n", '/test/format.test.js': "const { makeUrl } = require('../src/format');\ntest('u', () => makeUrl('x'));\n", '/README.md': 'x' };
