@@ -98,6 +98,29 @@ module.exports = async function (t) {
     t.ok('huge files are skipped, not parsed', idx.findSymbol('hugeFn').length === 0);
   }
 
+  /* ---------- imports that do not line up ---------- */
+  {
+    const half = mk({
+      '/src/text.js': "function capitalize(s) { return s; }\nfunction slugify(t) { return t; }\nmodule.exports = { capitalize };\n",
+      '/src/format.js': "const { capitalize, slugify } = require('./text');\nmodule.exports = { f: () => slugify(capitalize('x')) };\n"
+    });
+    let p = RI.create(half).importProblems();
+    t.deepEqual('a helper defined in one file but not exported, imported by another, is found', p.map((x) => [x.from, x.to, x.name, x.why]), [['/src/format.js', '/src/text.js', 'slugify', 'declared-not-exported']]);
+    half._d['/src/text.js'] = half._d['/src/text.js'].replace('{ capitalize }', '{ capitalize, slugify }');
+    t.deepEqual('...and gone once it is exported', RI.create(half).importProblems(), []);
+    const ex = mk({ '/a.js': "module.exports = { one };\nfunction one() {}\n", '/b.js': "const { one, two } = require('./a');\n" });
+    t.deepEqual('a name the target does not provide at all (explicit export list) is found', RI.create(ex).importProblems().map((x) => [x.name, x.why]), [['two', 'not-provided']]);
+    const dotted = mk({ '/a.js': "function one() {}\nfunction two() {}\nmodule.exports.one = one;\nmodule.exports.two = two;\n", '/b.js': "const { one, two } = require('./a');\n" });
+    t.deepEqual('module.exports.x = ... counts as exporting', RI.create(dotted).importProblems(), []);
+    const opaque = [
+      "module.exports = require('./impl');\n", "export * from './impl';\n", "module.exports = { ...require('./impl'), a };\nfunction a() {}\n", "Object.assign(module.exports, require('./impl'));\nfunction a() {}\n"
+    ];
+    t.ok('anything that can supply names we cannot see is left alone (no false alarm)', opaque.every((src) => RI.create(mk({ '/a.js': src, '/impl.js': 'exports.zzz = 1;\n', '/b.js': "const { zzz } = require('./a');\n" })).importProblems().filter((x) => x.why === 'not-provided').length === 0));
+    t.ok('importProblems can be limited to given files', RI.create(half).importProblems(['/src/text.js']).length === 0 && (() => { half._d['/src/text.js'] = half._d['/src/text.js'].replace('{ capitalize, slugify }', '{ capitalize }'); return RI.create(half).importProblems(['/src/format.js']).length === 1; })());
+    const esm = mk({ '/a.js': "export function one() {}\nfunction hidden() {}\n", '/b.js': "import { one, hidden } from './a';\n" });
+    t.deepEqual('ES modules: a declared but un-exported name is found', RI.create(esm).importProblems().map((x) => x.name), ['hidden']);
+  }
+
   /* ---------- ranking and context ---------- */
   {
     const idx = RI.create(mk(SHOP));

@@ -76,7 +76,7 @@
         add(m[2], m[4] ? 'function' : 'variable', n, !!m[1]); if (m[1]) exported[m[2]] = 1;
       }
       else if ((m = /^\s+(?:static\s+)?(?:async\s+)?([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*(?::\s*[\w<>\[\]|. ]+)?\s*\{/.exec(ln)) && !/^\s*(if|for|while|switch|catch|function|return)\b/.test(ln)) add(m[1], 'method', n, false);
-      if ((m = /^\s*exports\.([A-Za-z_$][\w$]*)\s*=/.exec(ln))) exported[m[1]] = 1;
+      if ((m = /^\s*(?:module\.)?exports\.([A-Za-z_$][\w$]*)\s*=/.exec(ln))) exported[m[1]] = 1;
     });
     var me = /module\.exports\s*=\s*\{([\s\S]*?)\}\s*;?/.exec(text);
     if (me) me[1].split(',').forEach(function (p) { var k = /^\s*([A-Za-z_$][\w$]*)/.exec(p); if (k) exported[k[1]] = 1; });
@@ -232,6 +232,37 @@
 
     function exportsOf(path) { return ((cache[path] && cache[path].symbols) || []).filter(function (s) { return s.exported; }).map(function (s) { return s.name; }); }
 
+    // Named imports of project files that the target does not provide. High precision on purpose:
+    //  - "declared but not exported": the target defines the name (function/class/const) yet does not export it
+    //    (the classic half-finished change: a helper added to one file, used from another)
+    //  - "not provided": the target has an explicit export list that lacks the name and no re-export / spread
+    //    / dynamic module.exports that could supply it
+    // -> [{ from, to, name, line, why: 'declared-not-exported' | 'not-provided' }]
+    function importProblems(only) {
+      refresh();
+      var out = [], want = only ? {} : null;
+      (only || []).forEach(function (p) { want[p] = 1; });
+      paths.forEach(function (p) {
+        if (want && !want[p]) return;
+        var c = cache[p]; if (!c || c.lang !== 'js') return;
+        (graph.out[p] || []).forEach(function (e) {
+          if (!e.path || !e.names.length) return;
+          var tc = cache[e.path]; if (!tc || tc.lang !== 'js' || /\.json$/.test(e.path)) return;
+          var exp = {}; exportsOf(e.path).forEach(function (n) { exp[n] = 1; });
+          var declared = {}; (tc.symbols || []).forEach(function (s) { if (s.kind !== 'method') declared[s.name] = 1; });
+          var text = ''; try { text = env.read(e.path) || ''; } catch (_) {}
+          // anything that can supply names we cannot see: leave it alone
+          var opaque = /export\s*\*|module\.exports\s*=\s*(?![\s{])|module\.exports\s*=\s*\{[^}]*\.\.\.|Object\.assign\(\s*(?:module\.)?exports|exports\s*\[|export\s+default\b/.test(text);
+          e.names.forEach(function (n) {
+            if (exp[n] || n === 'default') return;
+            if (declared[n]) out.push({ from: p, to: e.path, name: n, line: e.line, why: 'declared-not-exported' });
+            else if (!opaque && Object.keys(exp).length) out.push({ from: p, to: e.path, name: n, line: e.line, why: 'not-provided' });
+          });
+        });
+      });
+      return out;
+    }
+
     // which other files depend on the files that were changed (and were not changed themselves)?
     function impacted(changed) {
       refresh();
@@ -309,7 +340,7 @@
 
     function stats() { return Object.assign({ symbols: paths.reduce(function (n, p) { return n + ((cache[p] && cache[p].symbols) || []).length; }, 0), edges: Object.keys(graph.out).reduce(function (n, k) { return n + graph.out[k].filter(function (e) { return e.path; }).length; }, 0) }, lastStats); }
 
-    return { refresh: refresh, findSymbol: findSymbol, references: references, deps: deps, exportsOf: exportsOf, impacted: impacted, rank: rank, contextBlock: contextBlock, stats: stats };
+    return { refresh: refresh, findSymbol: findSymbol, references: references, deps: deps, exportsOf: exportsOf, impacted: impacted, importProblems: importProblems, rank: rank, contextBlock: contextBlock, stats: stats };
   }
 
   Engine.RepoIntel = { create: create, extractJS: extractJS, extractPy: extractPy, words: words, TEST_FILE: TEST_FILE };

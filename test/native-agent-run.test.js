@@ -534,6 +534,28 @@ module.exports = async function (t) {
     q = await fullTools.call('file_dependencies', { path: '/nope.js' }, {});
     t.ok('and refuses a file that does not exist', q.ok === false);
 
+    // 12e2. the half-finished multi-file change: a helper added but not exported, used from another file
+    const filesH = { '/package.json': PKG, '/src/text.js': 'function cap(s) { return s; }\nmodule.exports = { cap };\n', '/src/format.js': "const { cap } = require('./text');\nfunction makeUrl(t) { return t; }\nmodule.exports = { makeUrl };\n", '/test/format.test.js': "test('u', () => {});\n" };
+    const regH = NA.createRegistry({ env: makeEnv(filesH), mode: 'agent', profile: 'full', planApproved: true });
+    let eh = await regH.call('edit_file', { path: '/src/text.js', old_text: 'function cap(s) { return s; }', new_text: 'function cap(s) { return s; }\nfunction slugify(t) { return String(t).toLowerCase(); }' }, {});
+    t.ok('adding a helper alone raises no alarm', eh.ok && !/Heads-up/.test(eh.text));
+    eh = await regH.call('write_file', { path: '/src/format.js', content: "const { cap, slugify } = require('./text');\nfunction makeUrl(t) { return '/p/' + slugify(t); }\nmodule.exports = { makeUrl };\n" }, {});
+    t.ok('using it from another file without exporting it is flagged in the very result of that edit', eh.ok && /Heads-up from the project index/.test(eh.text) && /src\/format\.js imports "slugify" from \/src\/text\.js, which defines it but does NOT export it/.test(eh.text));
+    eh = await regH.call('edit_file', { path: '/src/text.js', old_text: 'module.exports = { cap };', new_text: 'module.exports = { cap, slugify };' }, {});
+    t.ok('and the hint disappears once the export is added', eh.ok && !/Heads-up/.test(eh.text));
+    // the harness repairs with it in the brief when the model does not fix it itself
+    const filesH2 = Object.assign({}, filesH);
+    const runnerH = (spec, d) => (/slugify \}/.test(d['/src/text.js']) ? { code: 0, output: specOut(1, []) } : { code: 1, output: specOut(0, [{ name: 'u', message: 'slugify is not a function' }]) });
+    const mH = scripted([planStep(), planDone,
+      { calls: [{ name: 'write_file', args: { path: '/src/text.js', content: 'function cap(s) { return s; }\nfunction slugify(t) { return String(t).toLowerCase(); }\nmodule.exports = { cap };\n' } }] },
+      { calls: [{ name: 'write_file', args: { path: '/src/format.js', content: "const { cap, slugify } = require('./text');\nfunction makeUrl(t) { return '/p/' + slugify(t); }\nmodule.exports = { makeUrl };\n" } }] },
+      report('done'),
+      { calls: [{ name: 'edit_file', args: { path: '/src/text.js', old_text: 'module.exports = { cap };', new_text: 'module.exports = { cap, slugify };' } }] }, report('exported')]);
+    r = await task({ env: makeEnv(filesH2, { runner: runnerH }), opts: { chatStream: mH, goal: 'Add slugify to src/text.js and use it in makeUrl' }, steps: [] });
+    const repairH = mH.seen.filter((c) => /Verification failed/.test(String(c.msgs[1].content)))[0];
+    t.ok('the repair brief names the missing export as the likely cause', !!repairH && /Import problems found by the project index \(likely the cause\): \/src\/format\.js imports "slugify" from \/src\/text\.js, which defines it but does NOT export it/.test(repairH.msgs[1].content));
+    t.ok('and the run ends verified', r.report.status === 'verified');
+
     // 12f. project memory (M6): a task records evidence-backed facts; a later task is shown the relevant ones
     const memStore = []; // newest last, like ProjectBrain
     const memory = { all: () => memStore.slice(), remember: (k, ti, b, m) => { memStore.push({ kind: k, title: ti, body: b, meta: m || {}, at: Date.now() }); } };

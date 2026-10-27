@@ -912,6 +912,23 @@
       return names().filter(function (n) { return T[n]; }).map(function (n) { return { name: n, description: T[n].description, parameters: T[n].parameters }; });
     }
 
+    // "src/format.js imports slugify from src/text.js, which does not export it": caught the moment it is written
+    function importNotes(only) {
+      if (!intel) return [];
+      var probs = intel.importProblems(only);
+      return probs.slice(0, 3).map(function (x) {
+        return x.from + ' imports "' + x.name + '" from ' + x.to + (x.why === 'declared-not-exported' ? ', which defines it but does NOT export it (add it to the exports there)' : ', which does not provide it');
+      });
+    }
+    function withImportNotes(res, args) {
+      try {
+        var p = args && args.path ? normPath(args.path) : null;
+        var notes = importNotes(null).filter(function (n) { return !p || n.indexOf(p) >= 0; });
+        if (notes.length) return Object.assign({}, res, { text: String(res.text || '') + '\n\nHeads-up from the project index — this will fail when the code runs:\n- ' + notes.join('\n- ') });
+      } catch (_) { /* a hint, never a failure */ }
+      return res;
+    }
+
     function call(name, args, hooks) {
       hooks = hooks || {};
       var d = T[name];
@@ -924,7 +941,9 @@
       if (!v.ok) return Promise.resolve(fail('Bad arguments for ' + name + ': ' + v.error + '.'));
       args = v.args;
       if (++budget.toolCalls > budget.maxToolCalls) return Promise.resolve(fail('The tool-call budget (' + budget.maxToolCalls + ') is used up. Finish with report_result.', 'blocked'));
+      var EDIT_TOOLS = { edit_file: 1, write_file: 1, create_file: 1, apply_patch: 1, rename_file: 1 };
       var t0 = Date.now(), finish = function (res) {
+        if (intel && res && res.ok && EDIT_TOOLS[name]) res = withImportNotes(res, args);
         history.push({ at: t0, name: name, status: res.status, ms: Date.now() - t0, summary: res.summary });
         if (history.length > 400) history.shift();
         return res;
@@ -960,7 +979,7 @@
       defs: Object.keys(T).map(function (n) { return { name: n, description: T[n].description, parameters: T[n].parameters }; }),
       activeDefs: activeDefs,
       parallelSafe: function (n) { return !!(T[n] && T[n].parallel) && names().indexOf(n) >= 0; },
-      call: call, proposals: proposals, ws: ws, history: history, budget: budget,
+      importNotes: importNotes, call: call, proposals: proposals, ws: ws, history: history, budget: budget,
       get plan() { return plan; }, set plan(v) { plan = v; },
       get reported() { return reported; }, set reported(v) { reported = v; },
       get lastExec() { return lastExec; }, get procs() { return procs; }, get intel() { return intel; },
@@ -1253,6 +1272,8 @@
           if (imp.length) parts.push('Linked files you have NOT changed: ' + imp.map(function (x) { return x.path + ' (imports ' + x.because.join(', ') + ')'; }).join('; ') + '. If your change affects what the first file provides, these may need the matching change.');
           var linked = [];
           fs.forEach(function (f) { if (f.file) { var tp = toProjectPath(f.file, env.root, reg.allPaths()); if (tp) reg.intel.deps(tp).imports.forEach(function (i) { if (i.path && linked.indexOf(i.path) < 0 && !TEST_FILE.test(i.path)) linked.push(i.path); }); } });
+          var inotes = reg.importNotes(null);
+          if (inotes.length) parts.push('Import problems found by the project index (likely the cause): ' + inotes.join('; ') + '.');
           if (linked.length) parts.push('The failing test loads: ' + linked.slice(0, 5).join(', ') + '. The cause is in one of these or in what they import.');
         } catch (_) { /* hints only */ }
       }
