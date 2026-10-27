@@ -115,19 +115,23 @@ function install(onStatus) {
 }
 
 /* ---- the terminal wizard: choosing a provider and model is interactive ---- */
+// Resolves once the terminal has really started, or with the spawn error: a missing terminal emulator is reported
+// asynchronously by the child process, after any try/catch has already returned.
 function openSetup() {
   const b = bin();
-  try {
-    if (process.platform === 'win32') {
-      spawn('cmd.exe', ['/c', 'start', '""', 'cmd.exe', '/k', (/\s/.test(b) ? '"' + b + '"' : b) + ' setup'], { windowsHide: false, detached: true, stdio: 'ignore' }).unref();
-    } else if (process.platform === 'darwin') {
-      spawn('osascript', ['-e', 'tell application "Terminal" to do script "' + b.replace(/"/g, '') + ' setup"'], { detached: true, stdio: 'ignore' }).unref();
-    } else {
-      const term = process.env.TERMINAL || 'x-terminal-emulator';
-      spawn(term, ['-e', b + ' setup'], { detached: true, stdio: 'ignore' }).unref();
-    }
-    return { ok: true };
-  } catch (e) { return { ok: false, error: String(e && e.message || e) }; }
+  let cmd, args;
+  if (process.platform === 'win32') { cmd = 'cmd.exe'; args = ['/c', 'start', '""', 'cmd.exe', '/k', (/\s/.test(b) ? '"' + b + '"' : b) + ' setup']; }
+  else if (process.platform === 'darwin') { cmd = 'osascript'; args = ['-e', 'tell application "Terminal" to do script "' + b.replace(/"/g, '') + ' setup"']; }
+  else { cmd = process.env.TERMINAL || 'x-terminal-emulator'; args = ['-e', b + ' setup']; }
+  return new Promise((resolve) => {
+    let child, settled = false, timer = null;
+    const done = (v) => { if (!settled) { settled = true; if (timer) clearTimeout(timer); resolve(v); } };
+    try { child = spawn(cmd, args, { windowsHide: false, detached: true, stdio: 'ignore' }); }
+    catch (e) { done({ ok: false, error: String(e && e.message || e) }); return; }
+    child.once('error', (e) => done({ ok: false, error: 'Could not open a terminal (' + cmd + '): ' + String(e && (e.code || e.message) || e) + '. Run "hermes setup" in a terminal yourself.' }));
+    child.once('spawn', () => { try { child.unref(); } catch (_) { /* already detached */ } done({ ok: true }); });
+    timer = setTimeout(() => done({ ok: true }), 3000);      // a 'spawn' event that never comes must not hang the button
+  });
 }
 
 /* ---- the API server: enabled with a random key through the documented `hermes config set` ---- */

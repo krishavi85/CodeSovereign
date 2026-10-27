@@ -602,6 +602,13 @@ module.exports = async function (t) {
     r = await task({ env: makeEnv(filesG, { runner: allGreen }), opts: { chatStream: mG2, goal: 'Rename calc to calculateTotal', budgets: { maxRepairs: 2 } }, steps: [] });
     t.ok('if the model never fixes the caller the run is BLOCKED, never "verified"', r.report.status === 'blocked');
 
+    // 12e5. an unchanged namespace require is not an import defect (it must not consume repair attempts)
+    const filesNs = { '/package.json': PKG, '/math.js': 'function sum(a, b) { return a - b; }\nmodule.exports = { sum };\n', '/use.js': "const math = require('./math');\nmodule.exports = { three: () => math.sum(1, 2) };\n", '/t.test.js': "test('t', () => {});\n" };
+    const runnerNs = (spec, d) => (/a \+ b/.test(d['/math.js']) ? { code: 0, output: specOut(1, []) } : { code: 1, output: specOut(0, [{ name: 'sums', message: 'Expected 3 but got -1' }]) });
+    const mNs = scripted([planStep(), planDone, { calls: [{ name: 'write_file', args: { path: '/math.js', content: 'function sum(a, b) { return a + b; }\nmodule.exports = { sum };\n' } }] }, report('fixed sum')]);
+    r = await task({ env: makeEnv(filesNs, { runner: runnerNs }), opts: { chatStream: mNs, goal: 'Fix sum' }, steps: [] });
+    t.ok('fixing sum in a project with a namespace require is VERIFIED, with no repair attempt spent on an imaginary import problem', r.report.status === 'verified' && r.run.attempts.length === 0);
+
     // 12f. project memory (M6): a task records evidence-backed facts; a later task is shown the relevant ones
     const memStore = []; // newest last, like ProjectBrain
     const memory = { all: () => memStore.slice(), remember: (k, ti, b, m) => { memStore.push({ kind: k, title: ti, body: b, meta: m || {}, at: Date.now() }); } };

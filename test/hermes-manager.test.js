@@ -13,6 +13,7 @@ const Module = require('module');
 function makeChild(script) {
   const c = new EE();
   c.stdout = new EE(); c.stderr = new EE(); c.pid = undefined; c.exitCode = null; c.killed = false;
+  c.unref = () => {};
   c.kill = () => { c.killed = true; c.exitCode = 1; setImmediate(() => c.emit('close', 1)); return true; };
   setImmediate(() => script(c));
   return c;
@@ -45,7 +46,12 @@ module.exports = async function (t) {
     spawn: (cmd, args) => {
       calls.sp.push({ cmd, args });
       const b = spBehaviour(cmd, args) || {};
-      return makeChild((c) => { if (b.out) c.stdout.emit('data', b.out); c.emit('close', b.code == null ? 0 : b.code); });
+      return makeChild((c) => {
+        if (b.spawnError) { const e = new Error('spawn ' + cmd + ' ENOENT'); e.code = 'ENOENT'; c.emit('error', e); return; }
+        c.emit('spawn');
+        if (b.out) c.stdout.emit('data', b.out);
+        if (!b.stayOpen) c.emit('close', b.code == null ? 0 : b.code);
+      });
     }
   });
 
@@ -112,6 +118,17 @@ module.exports = async function (t) {
     csBehaviour = () => ({ enoent: true });
     r = await mgr.install(() => {});
     t.ok('installed but not yet visible to this app: it says to restart (not a false failure)', r.ok === true && r.installedButNotFound === true && /Restart CodeSovereign/.test(r.note));
+
+    /* ---- the setup terminal: a missing terminal emulator is an asynchronous spawn error ---- */
+    mgr._reset(); setPlatform('linux');
+    process.env.TERMINAL = 'definitely-not-a-terminal';
+    spBehaviour = () => ({ spawnError: true });
+    r = await mgr.openSetup();
+    t.ok('a terminal that cannot start is reported as a recoverable error naming what to do, not an unhandled exception', r.ok === false && /Could not open a terminal/.test(r.error) && /hermes setup/.test(r.error));
+    spBehaviour = () => ({ stayOpen: true });
+    r = await mgr.openSetup();
+    t.ok('and when it starts the button reports success only after the process really spawned', r.ok === true);
+    delete process.env.TERMINAL; Object.defineProperty(process, 'platform', platform);
 
     /* ---- API server setup ---- */
     mgr._reset(); calls.cs.length = 0;

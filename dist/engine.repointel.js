@@ -91,7 +91,8 @@
       var clause = m2[1] || m2[3] || '';
       var br = /\{([^}]*)\}/.exec(clause);
       if (br) br[1].split(',').forEach(function (p) { var k = /^\s*([A-Za-z_$][\w$]*)/.exec(p.replace(/^\s*type\s+/, '')); if (k) names.push(k[1]); });
-      else if (clause && /^[A-Za-z_$][\w$]*$/.test(clause.trim())) names.push(clause.trim());
+      // a bare identifier (const math = require('./math'), import math from './math') binds the whole module or its
+      // default: it names nothing the target must export, so it is not a named import
       if (spec && !imports.some(function (x) { return x.spec === spec && x.line === lineOf(text, m2.index); })) imports.push({ spec: spec, names: names, line: lineOf(text, m2.index) });
     }
     return { symbols: symbols, imports: imports };
