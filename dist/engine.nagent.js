@@ -391,7 +391,8 @@
 
   // node:test output (spec or TAP reporter) -> counts and structured failures.
   function parseTestOutput(output) {
-    var out = String(output == null ? '' : output).replace(/\r\n/g, '\n');
+    // the desktop runner keeps the colour codes node:test prints when run through npm
+    var out = String(output == null ? '' : output).replace(/\u001b\[[0-9;]*m/g, '').replace(/\r\n/g, '\n');
     var res = { framework: 'unknown', pass: null, fail: null, total: null, failures: [] };
     if (/(?:ℹ|#) tests \d+|TAP version/.test(out)) res.framework = 'node:test';
     var g = function (re) { var m = re.exec(out); return m ? parseInt(m[1], 10) : null; };

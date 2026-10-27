@@ -147,6 +147,10 @@ module.exports = async function (t) {
     const tap = NA.parseTestOutput(TAP_FAIL);
     t.ok('TAP output: counts and failure', tap.pass === 1 && tap.fail === 1 && tap.failures.length === 1 && tap.failures[0].name === 'adds' && /-1 !== 3/.test(tap.failures[0].message));
     t.equal('TAP location is parsed', tap.failures[0].line, 4);
+    // the real desktop runner (npm -> node --test) keeps ANSI colour codes in the output
+    const ESC = String.fromCharCode(27), col = (c, s) => ESC + '[' + c + 'm' + s + ESC + '[39m';
+    const colored = NA.parseTestOutput(col(32, '✔ ok (1ms)') + '\n' + col(34, 'ℹ tests 2') + '\n' + col(34, 'ℹ pass 1') + '\n' + col(34, 'ℹ fail 1') + '\n');
+    t.ok('colour codes in real runner output do not hide the counts', colored.pass === 1 && colored.fail === 1 && colored.total === 2 && colored.framework === 'node:test');
     const passing = NA.parseTestOutput('✔ a (1ms)\nℹ tests 1\nℹ pass 1\nℹ fail 0\n');
     t.ok('a passing run has no failures', passing.fail === 0 && passing.failures.length === 0);
     const syntax = NA.parseTestOutput('/x/a.js:3\nSyntaxError: Unexpected token }\n    at wrapSafe (node:internal/modules/cjs/loader:1:1)');
