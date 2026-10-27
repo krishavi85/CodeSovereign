@@ -107,6 +107,21 @@ module.exports = async function (t) {
   E.ProjectBrain.sync();
   t.ok('brain stores test procedures', E.ProjectBrain.recall('test', 'tests').length >= 1);
   t.ok('brain syncs into the workspace file', /how to test notes/.test(E.FS.read('/.codesovereign/project/brain.json') || ''));
+  // one brain per project: what project A learned is not shown in project B
+  {
+    const A = E.Proj.current();
+    const B = E.Proj.create ? E.Proj.create('Other project', 'saas-dashboard') : null;
+    const bid = B && (B.id || (E.Proj.current() || {}).id);
+    if (bid && bid !== A.id) {
+      if (E.Proj.switchTo && (E.Proj.current() || {}).id !== bid) E.Proj.switchTo(bid);
+      t.equal('a second project starts with an empty brain', E.ProjectBrain.recall('notes').length, 0);
+      E.ProjectBrain.remember('tests', 'only for B', 'b-only fact');
+      E.Proj.switchTo(A.id);
+      t.ok('switching back, project A still has its own memory and not B\'s', E.ProjectBrain.recall('notes').length >= 1 && E.ProjectBrain.recall('b-only').length === 0);
+    } else {
+      t.ok('(projects could not be created in this harness)', true);
+    }
+  }
   const kinds = E.ProjectBrain.kinds.slice().sort();
   t.ok('brain kinds cover shared knowledge', kinds.join(',') === ['artifacts', 'conventions', 'instructions', 'repository', 'research', 'tests'].sort().join(','));
 

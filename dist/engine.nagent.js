@@ -1107,6 +1107,8 @@
       for (var i = all.length - 1; i >= 0; i--) if (all[i] && all[i].title === title) { last = all[i]; break; }
       if (last && last.body === body) return false;                       // no duplicates of the same fact
       env.memory.remember(kind, title, body, Object.assign({ agent: true }, meta || {}));
+      // the brain also lives in a file inside the project: make sure that file reaches the disk
+      if (env.flush) { try { Promise.resolve(env.flush()).catch(function () {}); } catch (_) {} }
       return true;
     } catch (_) { return false; }                                         // memory is an aid; it must never break a run
   }
