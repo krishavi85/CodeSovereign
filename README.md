@@ -124,7 +124,7 @@ Generation goes to the model you connect in **Settings → AI & Models** (a loca
 |---|---|---|
 | Direct | Calls your configured model over HTTP. | Yes, against a real local model (`npm run eval:agent`, `npm run acceptance:agent`). |
 | OpenClaw | Local OpenClaw agent: install, onboarding, gateway lifecycle and sessions through its CLI and gateway (`127.0.0.1:18789`). | Lifecycle verified live against OpenClaw 2026.7.x; the in-app status reads the real CLI and gateway. Needs OpenClaw installed and its gateway running. |
-| Hermes Agent | Local Hermes Agent (Nous Research) through its OpenAI-compatible API server (`127.0.0.1:8642`). The status is a real `GET /v1/models`. | Protocol tested against a spec-shaped test server; **not yet run against a live Hermes Agent** (not installed on the development machine). |
+| Hermes Agent | Local Hermes Agent (Nous Research) through its OpenAI-compatible API server (`127.0.0.1:8642`). **Settings → Agents installs and runs it in four steps** (each asks first): run the vendor's installer, choose a model in a terminal (`hermes setup`), enable the API server with a random key (kept in the OS keychain), start the gateway. The status is a real `GET /v1/models`. | Lifecycle and protocol tested with scripted fakes and a local HTTP server; **never run against a real Hermes Agent install** (none on the development machine). The installer is the vendor's own script, so it is as trustworthy as that script. |
 | Hermes models | Nous Research's Hermes *models* hosted on OpenRouter (your OpenRouter key, kept in the OS keychain). | Same request path as Direct. These are models, not the Hermes Agent. |
 
 ## Deploy

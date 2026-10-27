@@ -22,6 +22,7 @@ const trust = require('./lib/trust');
 const hardware = require('./lib/hardware');
 const aihost = require('./lib/aihost');
 const openclawManager = require('./lib/openclaw-manager');
+const hermesManager = require('./lib/hermes-manager');
 const terminalManager = require('./lib/terminal-manager');
 const git = require('./lib/git');
 const creds = require('./lib/creds');
@@ -720,6 +721,71 @@ function registerIpc() {
      itself. No command sandboxing here by design: once a terminal is open
      it behaves like a real terminal window; the IPC surface itself
      (create/input/resize/kill only) is the security boundary. ---- */
+  /* ---- Hermes Agent: one-click install and run (electron/lib/hermes-manager.js). Every action is fixed: the renderer
+     never supplies a command, a URL or a path, and each step that installs or starts software asks in a native
+     dialog first. ---- */
+  const hermesStream = (s) => { if (win && !win.isDestroyed()) win.webContents.send('proc:data', { id: 'hermes', stream: 'stdout', data: s + '\n' }); };
+  const hermesKey = (k) => (typeof k === 'string' && /^[A-Za-z0-9_.-]{8,200}$/.test(k) ? k : undefined);
+  ipcMain.handle('hermes:status', async (_e, key) => {
+    try { return ok(await hermesManager.getStatus({ key: hermesKey(key) })); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('hermes:install', async () => {
+    try {
+      const c = hermesManager.installCommand();
+      const r = await dialog.showMessageBox(win, {
+        type: 'warning', noLink: true,
+        title: 'Install Hermes Agent?',
+        message: 'Download and run the official Hermes Agent installer?',
+        detail: 'This runs the vendor\'s documented installer, which downloads a script from ' + c.url + ' and runs it with your account\'s permissions:\n\n    ' + c.shown + '\n\nIt installs Hermes Agent (Nous Research, open source) and the tools it needs under your user profile. Review the script first if you want to: open that address in a browser.\n\nNothing is installed system-wide and nothing starts automatically.',
+        buttons: ['Download and install', 'Open the download page instead', 'Cancel'], defaultId: 2, cancelId: 2
+      });
+      if (r.response === 1) { await shell.openExternal(hermesManager.DOWNLOAD_PAGE); return { ok: false, error: 'opened the download page' }; }
+      if (r.response !== 0) return { ok: false, error: 'declined' };
+      trust.audit({ kind: 'hermes-install', cmd: c.shown, cwd: workspace.getRoot() || '' });
+      return await hermesManager.install(hermesStream);
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('hermes:openSetup', async () => {
+    try { return hermesManager.openSetup(); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('hermes:setupApiServer', async () => {
+    try {
+      const r = await dialog.showMessageBox(win, {
+        type: 'warning', noLink: true,
+        title: 'Enable the Hermes API server?',
+        message: 'Let CodeSovereign use your Hermes Agent through its local API server?',
+        detail: 'This runs `hermes config set API_SERVER_ENABLED true` and sets a random API key. The server listens on 127.0.0.1:8642 only and requires that key; CodeSovereign keeps the key in your operating system\'s credential store.\n\nThe API server gives Hermes Agent its full toolset, including running terminal commands, to anything that holds the key.',
+        buttons: ['Enable', 'Cancel'], defaultId: 1, cancelId: 1
+      });
+      if (r.response !== 0) return { ok: false, error: 'declined' };
+      trust.audit({ kind: 'hermes-api-server', cmd: 'hermes config set API_SERVER_ENABLED/API_SERVER_KEY', cwd: workspace.getRoot() || '' });
+      return await hermesManager.setupApiServer();
+    } catch (e) { return fail(e); }
+  });
+  let _hermesGatewayOkd = false;
+  ipcMain.handle('hermes:startGateway', async (_e, key) => {
+    try {
+      if (!_hermesGatewayOkd) {
+        const r = await dialog.showMessageBox(win, {
+          type: 'info', noLink: true,
+          title: 'Start the Hermes gateway?',
+          message: 'Start `hermes gateway` in the background?',
+          detail: 'This starts the Hermes Agent gateway as a process owned by CodeSovereign. It serves the API on 127.0.0.1:8642 and stops when you stop it here or quit the app.',
+          buttons: ['Start', 'Cancel'], defaultId: 0, cancelId: 1
+        });
+        if (r.response !== 0) return { ok: false, error: 'declined' };
+        _hermesGatewayOkd = true;
+      }
+      return await hermesManager.startGateway(hermesStream, { key: hermesKey(key) });
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('hermes:stopGateway', async () => {
+    try { return await hermesManager.stopGateway(); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('hermes:openDownloadPage', async () => {
+    try { await shell.openExternal(hermesManager.DOWNLOAD_PAGE); return { ok: true }; } catch (e) { return fail(e); }
+  });
+
   ipcMain.handle('terminal:listShells', async () => {
     try { return ok({ shells: await terminalManager.detectShells() }); } catch (e) { return fail(e); }
   });
@@ -835,7 +901,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { proc.killAllSync(); observer.stop(); terminalManager.killAll(); });
+  app.on('before-quit', () => { proc.killAllSync(); observer.stop(); terminalManager.killAll(); try { hermesManager.stopGateway(); } catch (_) {} });
 }
 
 /* -------- observer integration check: serve a fixture page, crawl it -------- */
