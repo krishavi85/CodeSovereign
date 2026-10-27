@@ -511,12 +511,17 @@ module.exports = async function (t) {
 
     // 12a. the model sees the failing tests (from a run BEFORE any change) before it edits anything
     const mBase = scripted([planStep(), planDone, fixSum, report('fixed')]);
-    r = await task({ opts: { chatStream: mBase }, steps: [] });
+    r = await task({ opts: { chatStream: mBase, goal: 'The sum tests are failing: find the cause and fix it' }, steps: [] });
     const execPromptB = mBase.seen[2].msgs[1].content;
     t.ok('the execute prompt carries the baseline: that the tests fail, which, and why', /tests were run BEFORE any change and FAIL \(0 pass \/ 2 fail\)/.test(execPromptB) && /adds[\s\S]*Expected 3 but got -1/.test(execPromptB));
     t.ok('the baseline run is not counted as a verification run (there is still exactly one, after the edit)', r.run.verification.length === 1 && r.report.status === 'verified' && r.env.execs.length === 2);
+    // a feature goal (nothing is described as failing) gets no baseline run: it was not shown to help there
+    const mFeat = scripted([planStep(), planDone, fixSum, report('done')]);
+    const envFeat = makeEnv(sumProject(), { runner: sumRunner });
+    await task({ env: envFeat, opts: { chatStream: mFeat, goal: 'Add a sum function that adds two numbers' }, steps: [] });
+    t.ok('a feature goal is not given a baseline test run (only the verification after the edit)', envFeat.execs.length === 1 && !/BEFORE any change/.test(mFeat.seen[2].msgs[1].content));
     const mBase2 = scripted([planStep(), planDone, fixSum, report('fixed')]);
-    r = await task({ env: makeEnv(sumProject('function sum(a, b) { return a + b; }\n'), { runner: sumRunner }), opts: { chatStream: mBase2 }, steps: [] });
+    r = await task({ env: makeEnv(sumProject('function sum(a, b) { return a + b; }\n'), { runner: sumRunner }), opts: { chatStream: mBase2, goal: 'The sum tests are failing: find the cause and fix it' }, steps: [] });
     t.ok('passing tests at the start add nothing to the prompt', !/BEFORE any change/.test(mBase2.seen[2].msgs[1].content));
     const mBase3 = scripted([planStep(), planDone, report('x')]);
     const envNoRun = makeEnv({ '/sum.js': 'x\n' }, { runner: sumRunner });
@@ -581,6 +586,21 @@ module.exports = async function (t) {
     const mS = scripted([planStep(), planDone, { calls: [{ name: 'start_dev_server', args: {} }] }, fixSum, report('ok')]);
     r = await task({ env: envS, opts: { chatStream: mS, mode: 'auto', toolset: 'full' }, steps: [] });
     t.ok('a dev server started by the agent is stopped at the end of the task', stopped12 === 1 && r.report.status === 'verified');
+
+    // 12e4. passing tests are not enough when the imports do not line up (a rename that leaves a caller behind)
+    const filesG = { '/package.json': PKG, '/src/pricing.js': 'function calc(i) { return i; }\nmodule.exports = { calc };\n', '/src/invoice.js': "const { calc } = require('./pricing');\nmodule.exports = { total: (i) => calc(i) };\n", '/test/p.test.js': "test('t', () => {});\n" };
+    const allGreen = () => ({ code: 0, output: specOut(1, []) });
+    const renamePricing = { calls: [{ name: 'write_file', args: { path: '/src/pricing.js', content: 'function calculateTotal(i) { return i; }\nmodule.exports = { calculateTotal };\n' } }] };
+    const fixInvoice = { calls: [{ name: 'write_file', args: { path: '/src/invoice.js', content: "const { calculateTotal } = require('./pricing');\nmodule.exports = { total: (i) => calculateTotal(i) };\n" } }] };
+    const mG = scripted([planStep(), planDone, renamePricing, report('renamed'), fixInvoice, report('updated the caller')]);
+    r = await task({ env: makeEnv(filesG, { runner: allGreen }), opts: { chatStream: mG, goal: 'Rename calc to calculateTotal' }, steps: [] });
+    t.ok('tests that pass but leave a broken import are NOT reported verified at first: the first verification names the import', r.run.verification[0].ok === false && r.run.verification[0].steps.some((x) => x.label === 'imports'));
+    const repairG = mG.seen.filter((c) => /Verification failed/.test(String(c.msgs[1].content)))[0];
+    t.ok('the repair brief says which import is broken', !!repairG && /src\/invoice\.js imports "calc" from \/src\/pricing\.js/.test(repairG.msgs[1].content));
+    t.ok('and once the caller is updated the run is verified', r.report.status === 'verified' && r.run.verification[r.run.verification.length - 1].ok === true);
+    const mG2 = scripted([planStep(), planDone, renamePricing, report('renamed'), report('x'), report('y'), report('z')]);
+    r = await task({ env: makeEnv(filesG, { runner: allGreen }), opts: { chatStream: mG2, goal: 'Rename calc to calculateTotal', budgets: { maxRepairs: 2 } }, steps: [] });
+    t.ok('if the model never fixes the caller the run is BLOCKED, never "verified"', r.report.status === 'blocked');
 
     // 12f. project memory (M6): a task records evidence-backed facts; a later task is shown the relevant ones
     const memStore = []; // newest last, like ProjectBrain

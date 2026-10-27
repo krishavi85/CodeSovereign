@@ -913,10 +913,10 @@
     }
 
     // "src/format.js imports slugify from src/text.js, which does not export it": caught the moment it is written
-    function importNotes(only) {
+    function importNotes(only, max) {
       if (!intel) return [];
       var probs = intel.importProblems(only);
-      return probs.slice(0, 3).map(function (x) {
+      return probs.slice(0, max || 3).map(function (x) {
         return x.from + ' imports "' + x.name + '" from ' + x.to + (x.why === 'declared-not-exported' ? ', which defines it but does NOT export it (add it to the exports there)' : ', which does not provide it');
       });
     }
@@ -1251,6 +1251,12 @@
         });
       });
       return chain.then(function () {
+        // Tests only cover what they cover: a rename that leaves other files importing the old name can pass them all.
+        // The project index checks the imports; if they do not line up, that is a failure like any other.
+        if (results.length && results.every(function (r) { return r.ok || r.skipped || r.empty; })) {
+          var imp = []; try { imp = reg.importNotes(null, 6); } catch (_) {}
+          if (imp.length) results.push({ label: 'imports', cmd: 'project index', code: 1, ms: 0, ok: false, failures: [{ name: 'imports do not line up', message: imp.join('\n'), file: null, line: null, frames: [] }], pass: null, fail: imp.length, total: null, outputTail: imp.join('\n') });
+        }
         var failed = results.filter(function (r) { return !r.ok && !r.skipped && !r.empty; });
         var skipped = results.length && results.every(function (r) { return r.skipped || r.empty; });
         var v = { ran: true, ok: failed.length ? false : (skipped ? null : true), results: results, at: Date.now(),
@@ -1395,12 +1401,13 @@
     // harness runs the project's tests once and shows what fails (names, messages, the source they point at), so the
     // model works from facts instead of guessing from the goal's wording. Once per run; nothing changes if the tests
     // already pass, if there is no runner, or in a mode that may not run commands.
+    var BROKEN_GOAL = /\b(fail(s|ed|ing|ure)?|broken|breaks?|bug|bugs|error|errors|crash(es|ed|ing)?|exception|wrong|incorrect|not working|doesn't work|does not work|regress(ion|ed)?|started failing)\b/i;
     var baselineBlock = null;
     function baseline() {
       if (baselineBlock != null) return Promise.resolve(baselineBlock);
       baselineBlock = '';
       var steps = verificationPlan(env).filter(function (st) { return st.label === 'tests'; });
-      if (!steps.length || mode === 'plan') return Promise.resolve('');
+      if (!steps.length || mode === 'plan' || !BROKEN_GOAL.test(String(opts.goal || ''))) return Promise.resolve('');
       return reg.execute(steps[0].spec, { signal: opts.signal }).then(function (e) {
         if (!e || e.skipped || aborted()) return '';
         var parsed = parseTestOutput(e.output);
