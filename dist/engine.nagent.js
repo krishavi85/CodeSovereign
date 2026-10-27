@@ -491,6 +491,7 @@
       if (a === 'write') return env.canWrite ? !!env.canWrite() : true;
       if (a === 'command') return env.canCommand ? !!env.canCommand() : true;
       if (a === 'network') return env.canNetwork ? !!env.canNetwork() : true;
+      if (a === 'repair') return env.canRepair ? !!env.canRepair() : true;
       return true;
     } };
     var self = { onPlan: null };
@@ -1167,7 +1168,7 @@
         run.attempts.push(rec); machine.save();
         if (hooks.onAttempt) hooks.onAttempt(rec);
         var sys = system + '\nYou are repairing a failing project. The plan and goal are context; the failing output is what matters now.';
-        var user = 'Goal: ' + opts.goal + '\n\n' + repairBrief(v, n);
+        var user = goalText() + '\n\n' + repairBrief(v, n);
         return loop('repair', sys, user, 'repair ' + n).then(function (lr) {
           rec.changed = reg.ws.changes(mark).map(function (c) { return c.path; });
           if (lr.reason === 'aborted') { machine.transition('CANCELLED', 'cancelled'); rec.outcome = 'cancelled'; return finish('cancelled', 'Cancelled by the user.'); }
@@ -1207,11 +1208,14 @@
     }
 
     /* ---- the machine ---- */
+    // the goal plus any context the user attached (@selection, @file, @problems)
+    function goalText() { return 'Goal: ' + opts.goal + (opts.context ? '\n\nAttached context:\n' + String(opts.context).slice(0, 12000) : ''); }
+    function autonomyAllows(a) { return a === 'repair' ? (env.canRepair ? !!env.canRepair() : true) : true; }
     var system = BASE_RULES + (toolset === 'compact' ? SMALL_MODEL_RULES : '');
 
     function plan() {
       machine.transition('PLANNING', 'start');
-      var user = 'Goal: ' + opts.goal + '\n\n' + projectSummary(env, reg) + '\n\nLook at what you need (briefly), then call create_plan with 3 to 7 concrete steps that name the files to change and how the result will be verified. Do not edit anything yet.';
+      var user = goalText() + '\n\n' + projectSummary(env, reg) + '\n\nLook at what you need (briefly), then call create_plan with 3 to 7 concrete steps that name the files to change and how the result will be verified. Do not edit anything yet.';
       return loop('plan', system + '\nYou are in the PLANNING step: read-only.', user, 'plan').then(function (lr) {
         if (lr.reason === 'aborted') { machine.transition('CANCELLED', 'cancelled'); return finish('cancelled', 'Cancelled by the user.'); }
         if (!run.plan.length) {
@@ -1234,7 +1238,7 @@
 
     function execute(nudge) {
       reg.reported = null;
-      var user = 'Goal: ' + opts.goal + '\n\nPlan:\n' + planText(run.plan) + '\n\n' + projectSummary(env, reg) +
+      var user = goalText() + '\n\nPlan:\n' + planText(run.plan) + '\n\n' + projectSummary(env, reg) +
         '\n\nCarry out the plan with the tools. When the change is made, call report_result. The harness will run the project\'s tests itself afterwards, so you do not need to.' +
         (nudge ? '\n\n' + nudge : '');
       return loop(toolset, system + '\nYou are EXECUTING the plan.', user, nudge ? 'execute (retry ' + nudges + ')' : 'execute').then(function (lr) {
@@ -1265,29 +1269,40 @@
       machine.transition('VERIFYING', 'after execution');
       return verify().then(function (v) {
         if (aborted()) { machine.transition('CANCELLED', 'cancelled'); return finish('cancelled', 'Cancelled by the user.'); }
-        return v.ok === false ? repairLoop(v) : afterVerified(v);
+        if (v.ok !== false) return afterVerified(v);
+        // Autonomy decides whether failures may be fixed automatically (Build level: no)
+        if (!autonomyAllows('repair')) {
+          machine.transition('BLOCKED', 'automatic repair is turned off');
+          return finish('blocked', 'Verification failed, and automatic repair is turned off at the current autonomy level, so no further edits were made.', { verification: v });
+        }
+        return repairLoop(v);
       });
     }
 
     function start() {
-      if (opts.resumeFrom) {      // an interrupted run: keep the plan and what it already did
+      if (opts.resumeFrom && run.plan.length) {      // an interrupted run: keep the plan and what it already did
         reg.plan = run.plan;
-        if ((opts.resumeFrom.history || []).some(function (h) { return h.reason === 'plan approved'; })) { reg.setMode('agent'); reg.setPlanApproved(true); }
-        machine.transition('EXECUTING', 'resumed');
-        return execute();
+        var approvedBefore = mode === 'auto' || (opts.resumeFrom.history || []).some(function (h) { return h.reason === 'plan approved'; });
+        if (approvedBefore) { reg.setMode('agent'); reg.setPlanApproved(true); machine.transition('EXECUTING', 'resumed'); return execute(); }
+        // the plan was never approved before the interruption: ask now, as at the start
+        return approveThenExecute();
       }
       return plan().then(function (done) {
         if (done) return done;
         if (mode === 'plan') { machine.transition('COMPLETED', 'plan only'); return finish('planned', 'Plan ready (nothing was changed).'); }
         if (mode === 'auto') { machine.transition('EXECUTING', 'autonomous: no plan approval'); return execute(); }
-        machine.transition('WAITING_APPROVAL', 'plan approval');
-        var info = { verify: verificationPlan(env).map(function (s) { return s.label; }) };
-        return Promise.resolve(hooks.approvePlan ? hooks.approvePlan(run.plan, info) : false).then(function (yes) {
-          if (!yes) { machine.transition('CANCELLED', 'plan not approved'); return finish('cancelled', 'The plan was not approved, so nothing was changed.'); }
-          reg.setPlanApproved(true);
-          machine.transition('EXECUTING', 'plan approved');
-          return execute();
-        });
+        return approveThenExecute();
+      });
+    }
+
+    function approveThenExecute() {
+      machine.transition('WAITING_APPROVAL', 'plan approval');
+      var info = { verify: verificationPlan(env).map(function (s) { return s.label; }) };
+      return Promise.resolve(hooks.approvePlan ? hooks.approvePlan(run.plan, info) : false).then(function (yes) {
+        if (!yes) { machine.transition('CANCELLED', 'plan not approved'); return finish('cancelled', 'The plan was not approved, so nothing was changed.'); }
+        reg.setPlanApproved(true);
+        machine.transition('EXECUTING', 'plan approved');
+        return execute();
       });
     }
 

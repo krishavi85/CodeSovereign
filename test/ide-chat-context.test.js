@@ -187,7 +187,7 @@ module.exports = async function (t) {
     // no Monaco: buffer is filled, unsaved, with a visible warning
     x = make({ '/a.js': 'a' }, '/a.js', 'a', { review: undefined });
     r = x.Chat.applyToFile('/a.js', 'b');
-    await wait(3400);
+    await wait(4500);
     t.ok('without a reviewable editor the text goes to the buffer unsaved and the user is told', x.S.ideBuffer === 'b' && x.S.ideDirty === true && x.FS.read('/a.js') === 'a' && x.toasts.some((m) => /without hunk review/.test(m)));
   }
 

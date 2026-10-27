@@ -70,7 +70,7 @@
     };
 
     return Nat.runTask({
-      goal: o.goal, mode: mode, env: x.agentEnv(), signal: ctrl && ctrl.signal, resumeFrom: o.resume || null,
+      goal: o.goal, context: o.context || '', mode: mode, env: x.agentEnv(), signal: ctrl && ctrl.signal, resumeFrom: o.resume || null,
       chatStream: function (m, co) { return AI.chatStream(m, co); }, chatOptions: x.chatOptions(), toolset: x.toolset(),
       hooks: {
         onTurnStart: hk.onTurnStart, onText: hk.onText, onTurnEnd: hk.onTurnEnd, onNoTools: hk.onNoTools,
@@ -92,6 +92,14 @@
       task.report = res.report; task.reg = res.registry; task.changes = res.changes || []; task.state = res.run.state;
       t.messages.push({ id: x.uid(), role: 'assistant', content: res.report.text, report: true, status: res.report.status, error: res.report.status === 'failed', at: Date.now() });
       var last = finish();
+      // edits to files with unsaved editor changes come back as proposals: hand them to the chat's review tray
+      try {
+        var tb = x.toolbox();
+        if (res.registry && res.registry.proposals && tb && tb.proposals && tb.proposals !== res.registry.proposals) {
+          res.registry.proposals.forEach(function (p, k) { tb.proposals.set(k, p); });
+          x.mount();
+        }
+      } catch (_) {}
       if (task.changes.length) {
         try { if (w.beginAgentReview && before) w.beginAgentReview(before); } catch (_) {}
         if (w.renderAll) w.renderAll();
@@ -104,7 +112,11 @@
   }
 
   function send(mode) {
-    return function (o) { return begin(mode, { t: o.t, AI: o.AI, goal: o.text }); };
+    return function (o) {
+      var blocks = (o.att && o.att.blocks) || [];
+      var context = blocks.map(function (b) { return '--- ' + b.label + ' ---\n' + b.body; }).join('\n\n');
+      return begin(mode, { t: o.t, AI: o.AI, goal: o.text, context: context });
+    };
   }
   ext.modeSend.plan = send('plan');
   ext.modeSend.agent = send('agent');

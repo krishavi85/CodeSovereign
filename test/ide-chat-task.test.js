@@ -260,4 +260,24 @@ module.exports = async function (t) {
     await z.Chat.send('hello');
     t.ok('Ask mode is untouched: no tools, no task', z.seen[0].tools.length === 0 && z.task() === null);
   }
+
+  /* ---------- attached context reaches task modes ---------- */
+  {
+    const x = setup({ files: { '/util.js': 'const MARKER_IN_UTIL = 1;\n' } });
+    x.Chat.setMode('auto');
+    x.script.push(planStep, planDone, fixSum, report);
+    await x.Chat.send('use the helper in @util.js to fix sum');
+    t.ok('an @-mentioned file is part of the task prompts', x.seen.length >= 2 && x.seen.every((c) => c.msgs.some((m) => /MARKER_IN_UTIL/.test(String(m.content)))));
+  }
+
+  /* ---------- an edit to a file with unsaved changes becomes a reviewable proposal ---------- */
+  {
+    const x = setup();
+    x.S.ideDirty = true; x.S.ideBuffer = 'function sum(a, b) { return a - b; } // unsaved\n';
+    x.Chat.setMode('auto');
+    x.script.push(planStep, planDone, fixSum, report);
+    await x.Chat.send('make sum add the numbers');
+    t.ok('the unsaved file is not overwritten', x.files['/sum.js'] === 'function sum(a, b) { return a - b; }\n' && x.S.ideBuffer.indexOf('unsaved') >= 0);
+    t.ok('the queued edit shows up in the chat review controls', x.Chat.proposals().length === 1 && x.Chat.proposals()[0].path === '/sum.js');
+  }
 };

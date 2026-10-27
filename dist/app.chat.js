@@ -450,6 +450,7 @@
       canWrite: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('write'); },
       canCommand: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('command'); },
       canNetwork: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('network'); },
+      canRepair: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('repair'); },
       jobsAvailable: function () { var X = win().CSExec; try { return !!(X && X.available && X.available()); } catch (_) { return false; } },
       runJob: function (job) { var X = win().CSExec; return X && typeof X[job] === 'function' ? X[job]() : Promise.reject(new Error('no runner for ' + job)); },
       // writes go through the project FS (disk-backed in the desktop app)
@@ -1113,7 +1114,7 @@
     applyToFile: applyToFile, applyBlock: applyBlock,
     setMode: setMode, get mode() { return state.mode; }, MODES: MODES,
     _x: { state: state, ext: ext, uid: uid, esc: esc, mount: mount, thread: thread, saveStore: saveStore, pushNote: pushNote, loopHooks: loopHooks,
-      agentEnv: agentEnv, chatOptions: chatOptions, toolset: toolset, askApproval: askApproval, settleApprovals: settleApprovals, focusFile: focusFile, toast: toast, normPath: normPath },
+      agentEnv: agentEnv, chatOptions: chatOptions, toolset: toolset, askApproval: askApproval, settleApprovals: settleApprovals, focusFile: focusFile, toast: toast, normPath: normPath, toolbox: toolbox },
     reviewProposal: reviewProposal, reviewAll: reviewNext, discardProposal: discardProposal, discardAll: discardAll,
     proposals: proposalList,
     get busy() { return state.busy; },

@@ -29,16 +29,16 @@ module.exports = async function (t) {
     // 1. the task really is broken at the start (visible tests fail)
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-evalchk-'));
     writeTree(dir, task.files);
-    const before = await sh(dir, 'node', ['--test'], 60000);
+    const before = await sh(dir, 'node', ['--test', '--test-reporter=spec'], 60000);
     t.ok(task.id + ': the visible tests fail before the agent does anything', before.code !== 0 && /ℹ fail [1-9]/.test(before.output));
     // 2. the reference solution passes visible AND hidden tests
     writeTree(dir, task.reference); writeTree(dir, task.hidden);
-    const after = await sh(dir, 'node', ['--test'], 60000);
+    const after = await sh(dir, 'node', ['--test', '--test-reporter=spec'], 60000);
     t.ok(task.id + ': the reference solution passes visible and hidden tests', after.code === 0 && /ℹ fail 0/.test(after.output));
     // 3. hidden tests are NOT enough to pass without the real fix
     const dir2 = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-evalchk-'));
     writeTree(dir2, task.files); writeTree(dir2, task.hidden);
-    t.ok(task.id + ': the hidden tests also fail on the broken project', (await sh(dir2, 'node', ['--test'], 60000)).code !== 0);
+    t.ok(task.id + ': the hidden tests also fail on the broken project', (await sh(dir2, 'node', ['--test', '--test-reporter=spec'], 60000)).code !== 0);
     [dir, dir2].forEach((d) => { try { fs.rmSync(d, { recursive: true, force: true }); } catch (_) {} });
   }
 

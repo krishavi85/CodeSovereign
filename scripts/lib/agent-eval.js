@@ -131,7 +131,7 @@ async function runTrial(opts) {
 
   // INDEPENDENT judgement: hidden tests + the visible ones, run fresh by the harness
   writeTree(dir, task.hidden || {});
-  const judge = await sh(dir, 'node', ['--test'], 120000);
+  const judge = await sh(dir, 'node', ['--test', '--test-reporter=spec'], 120000);
   const m = /ℹ pass (\d+)/.exec(judge.output), f = /ℹ fail (\d+)/.exec(judge.output);
   const out = {
     task: task.id, status: result ? result.report.status : 'crashed', success: judge.code === 0 && !!m && Number(m[1]) > 0,

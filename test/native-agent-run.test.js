@@ -484,6 +484,31 @@ module.exports = async function (t) {
     t.ok('resuming keeps the plan, goes straight to execution, and verifies', r.report.status === 'verified' && r.run.plan.length === 3 && r.run.history.some((h) => h.reason === 'resumed'));
     t.ok('the resumed work was verified by the harness, not assumed', r.run.verification.length >= 1 && /a \+ b/.test(env12._d['/sum.js']));
 
+    // 12b. interrupted while the plan was still waiting for approval: resume asks again, and nothing is edited before the yes
+    const env12b = makeEnv(sumProject(), { runner: sumRunner });
+    NA.runTask({ goal: 'Fix sum', mode: 'agent', env: env12b, chatStream: scripted([planStep(), planDone]), hooks: { approvePlan: () => new Promise(() => {}) } });
+    await wait(80);
+    const back12b = NA.loadRun(env12b.store);
+    t.ok('a run interrupted at plan approval is resumable', back12b && back12b.resumable === true && back12b.plan.length === 3);
+    let asked12b = 0;
+    r = await NA.runTask({ goal: 'Fix sum', mode: 'agent', env: env12b, resumeFrom: back12b, chatStream: scripted([fixSum, report()]), hooks: { approvePlan: () => { asked12b++; return false; } } });
+    t.ok('resuming an unapproved plan asks for approval, and a no changes nothing', asked12b === 1 && r.report.status === 'cancelled' && /a - b/.test(env12b._d['/sum.js']));
+    r = await NA.runTask({ goal: 'Fix sum', mode: 'agent', env: env12b, resumeFrom: back12b, chatStream: scripted([fixSum, report()]), hooks: { approvePlan: () => true } });
+    t.ok('and after a yes it carries on and verifies', r.report.status === 'verified');
+
+    // 12c. autonomy without the repair capability: a failed verification is reported, not fixed
+    const envNR = makeEnv(sumProject(), { runner: sumRunner });
+    envNR.canRepair = () => false;
+    const wrongFix = { calls: [{ name: 'edit_file', args: { path: '/sum.js', old_text: 'a - b', new_text: 'a * b' } }] };
+    const mNR = scripted([planStep(), planDone, wrongFix, report('tried'), fixSum, report()]);
+    r = await task({ env: envNR, opts: { chatStream: mNR }, steps: [] });
+    t.ok('with repair turned off a failing verification is BLOCKED and no repair edit is made', r.report.status === 'blocked' && /repair is turned off/.test(r.report.text) && /a \* b/.test(envNR._d['/sum.js']) && !r.run.attempts.length);
+
+    // 12d. attached context reaches the model in every phase
+    const mCtx = scripted([planStep(), planDone, fixSum, report()]);
+    await task({ opts: { chatStream: mCtx, context: '--- selection of /sum.js ---\nSELECTED_TEXT_MARKER' }, steps: [] });
+    t.ok('the attached context is part of the prompts', mCtx.seen.length >= 3 && mCtx.seen.every((c) => c.msgs.some((m) => /SELECTED_TEXT_MARKER/.test(String(m.content)))));
+
     // 13. tool budget
     r = await task({ opts: { budgets: { maxToolCalls: 3 } }, steps: [planStep(), planDone, { calls: [{ name: 'read_file', args: { path: '/sum.js' } }] }, fixSum, { calls: [{ name: 'list_dir', args: {} }] }, { calls: [{ name: 'list_dir', args: { path: '/' } }] }, report()] });
     t.ok('when the tool budget runs out the run stops, notes why, and still verifies what exists', /budget/.test(r.run.note || '') && r.run.verification.length >= 1);
