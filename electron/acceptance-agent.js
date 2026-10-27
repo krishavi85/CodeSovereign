@@ -415,6 +415,7 @@ async function run() {
     const j4 = await judge(dir4);
     const judge4Ok = j4.code === 0 && j4.fail === 0;
     evid('S4-independent-judge.txt', j4.out);
+    check('S4: the agent REPAIRED the deliberate error (it reports verified and the independent judge agrees)', r4.status === 'verified' && judge4Ok, 'agent=' + r4.status + ' judge ' + (judge4Ok ? 'PASS' : 'FAIL'));
     check('S4: no false "verified" on the repair', !(r4.status === 'verified' && !judge4Ok), 'agent=' + r4.status + ' judge ' + (judge4Ok ? 'PASS' : 'FAIL') + ' (' + j4.pass + ' pass / ' + j4.fail + ' fail)');
     check('S4: the completion report is evidence-based (status, plan, changed files, verification runs with counts)', /VERIFIED|NOT VERIFIED|BLOCKED|FAILED/.test(String(r4.reportText || '')) && /Changed files:/.test(String(r4.reportText || '')) && /Verification runs:/.test(String(r4.reportText || '')) && /Effort:/.test(String(r4.reportText || '')), String(r4.reportText || '').split('\n')[0]);
     console.log('[acceptance-agent] S4 outcome: agent=' + r4.status + ' judge=' + (judge4Ok ? 'PASS' : 'FAIL') + ' attempts=' + r4.attempts);
