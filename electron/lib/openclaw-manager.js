@@ -59,7 +59,7 @@ function runJSON(args, timeoutMs) {
     // the real answer, so try to parse it before treating this as a failure.
     try { return { ok: true, json: JSON.parse(r.stdout) }; }
     catch (_) {
-      return { ok: false, error: (r.stderr || (r.err && r.err.message) || 'openclaw produced no JSON output').trim() };
+      return { ok: false, timedOut: !!r.timedOut, error: (r.stderr || (r.err && r.err.message) || 'openclaw produced no JSON output').trim() };
     }
   });
 }
@@ -71,7 +71,14 @@ function runJSON(args, timeoutMs) {
 // parsing ("no command \"with\""), and shell metacharacters in a prompt
 // would have been a command-injection vector. cross-spawn resolves the .cmd
 // shim AND escapes each argument, with no shell involved.
+// Killing a process on timeout makes Node emit a bogus 'error' event (ENOENT, seen live with the Microsoft
+// Store build, an App Execution Alias) before 'close'. Without the guard below a slow command was reported as
+// "spawn openclaw ENOENT" (Settings showed a stale "unknown"), when the truth is "timed out".
 function runSafe(args, timeoutMs) {
+  return runOnce(args, timeoutMs);
+}
+
+function runOnce(args, timeoutMs) {
   return new Promise((resolve) => {
     let child;
     try {
@@ -81,7 +88,11 @@ function runSafe(args, timeoutMs) {
     const timer = setTimeout(() => { timedOut = true; killTree(child); }, timeoutMs || 20000);
     if (child.stdout) child.stdout.on('data', (d) => { stdout += d; });
     if (child.stderr) child.stderr.on('data', (d) => { stderr += d; });
-    child.on('error', (e) => { clearTimeout(timer); resolve({ err: e, stdout, stderr }); });
+    child.on('error', (e) => {
+      clearTimeout(timer);
+      if (timedOut) { resolve({ err: new Error('timed out'), stdout, stderr, timedOut: true }); return; }
+      resolve({ err: e, stdout, stderr });
+    });
     child.on('close', (code) => {
       clearTimeout(timer);
       const err = timedOut ? new Error('timed out') : (code !== 0 ? new Error('exit ' + code) : null);
@@ -155,8 +166,8 @@ async function getStatus() {
   const d = await detect();
   if (!d.installed) return { installed: false, phase: 'not-installed' };
 
-  const r = await runJSON(['gateway', 'status', '--json', '--timeout', '5000'], 15000);
-  if (!r.ok) return { installed: true, version: d.version, phase: 'unknown', error: r.error };
+  const r = await runJSON(['gateway', 'status', '--json', '--timeout', '5000'], 60000);
+  if (!r.ok) return { installed: true, version: d.version, phase: 'unknown', error: r.timedOut ? 'openclaw gateway status timed out' : r.error };
 
   const j = r.json;
   const configExists = !!(j.config && j.config.cli && j.config.cli.exists && j.config.cli.valid);
@@ -297,5 +308,6 @@ function openOnboarding() {
 module.exports = {
   GATEWAY_PORT, detect, install, getStatus, probe,
   gatewayInstall, gatewayStart, gatewayStop, gatewayRestart, openOnboarding,
-  runAgentTurn
+  runAgentTurn,
+  _runSafe: runSafe
 };

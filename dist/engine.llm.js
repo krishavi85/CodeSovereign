@@ -87,6 +87,20 @@
       notes: "Open-weight Hermes models from Nous Research, hosted on OpenRouter. Needs an OpenRouter API key (openrouter.ai/keys)."
     },
     {
+      id: "hermesagent",
+      label: "Hermes Agent (local API server)",
+      baseUrl: "http://127.0.0.1:8642",
+      chatPath: "/v1/chat/completions",
+      defaultModel: "hermes-agent",
+      modelOptions: ["hermes-agent"],
+      supportsJson: false,
+      keyHeader: "Authorization",
+      keyPrefix: "Bearer ",
+      keyless: true,
+      local: true,
+      notes: "Your local Hermes Agent (Nous Research) through its OpenAI-compatible API server (default 127.0.0.1:8642). Enable the API server in Hermes and run `hermes gateway`. The agent keeps its own memory, skills and tools; set an API key here only if you configured one in Hermes."
+    },
+    {
       id: "openai_compat",
       label: "OpenAI-compatible (custom base URL)",
       baseUrl: "",
@@ -224,6 +238,9 @@
     // OpenClaw doesn't go through PROVIDERS/resolveProvider at all — its
     // readiness is "the desktop bridge exists", not baseUrl/apiKey.
     if (cfg.executionBackend === "openclaw") return true;
+    // Hermes Agent is keyless by default and lives on loopback: configured means "selected";
+    // whether it is actually running is what probeHermesAgent() reports.
+    if (cfg.executionBackend === "hermesagent") return true;
     const p = provider || resolveProvider(cfg);
     if (!p.baseUrl) return false;
     return !needsApiKey(p, cfg) || !!cfg.apiKey;
@@ -700,6 +717,16 @@
     // Hermes (OpenRouter) needs its own key, separate from whatever key is
     // stored for the user's actual configured Direct provider — reusing
     // cfg.apiKey here would silently send e.g. an OpenAI key to OpenRouter.
+    if (effectiveBackend === "hermesagent") {
+      const hp = providerById("hermesagent");
+      const hcfg = Object.assign({}, cfg, { providerId: "hermesagent", model: cfg.hermesAgentModel || hp.defaultModel, baseUrl: cfg.hermesAgentUrl || hp.baseUrl, localToken: cfg.hermesAgentKey || "", apiKey: "" });
+      try {
+        return await completeDirect(prompt, ctx, opts, hcfg);
+      } catch (err) {
+        // no silent fallback to another model: the user chose their Hermes Agent, so say what is wrong with it
+        throw new Error(hermesAgentHint(err, hcfg.baseUrl));
+      }
+    }
     const effectiveCfg = effectiveBackend === "hermes"
       ? Object.assign({}, cfg, { providerId: "hermes", model: cfg.hermesModel || null, apiKey: cfg.hermesApiKey || "" })
       : effectiveBackend === "direct" && cfg.executionBackend !== "direct"
@@ -2991,6 +3018,36 @@
     }
   }
 
+  // A connection failure to the local Hermes Agent API server, in words that say what to do.
+  function hermesAgentHint(err, baseUrl) {
+    const msg = String((err && err.message) || err || "");
+    if (/401|403|unauthor|forbidden|api key/i.test(msg)) return "Hermes Agent rejected the request (" + msg.slice(0, 120) + "). Set the API key you configured in Hermes (Settings → Agents → Hermes Agent).";
+    if (/ECONNREFUSED|ENOTFOUND|fetch failed|failed to fetch|network|timed? ?out|request failed|not allowed/i.test(msg)) {
+      return "Hermes Agent is not reachable at " + baseUrl + ". Enable its API server and run `hermes gateway`, then try again. (" + msg.slice(0, 120) + ")";
+    }
+    return "Hermes Agent error: " + msg.slice(0, 300);
+  }
+
+  // Is a Hermes Agent API server really answering? GET /v1/models, never a guess.
+  // -> { reachable, ok, status, models:[ids], needsKey, url, error? }
+  async function probeHermesAgent(override) {
+    const cfg = liveConfig();
+    const hp = providerById("hermesagent");
+    const url = String((override && override.url) || cfg.hermesAgentUrl || hp.baseUrl).replace(/\/+$/, "");
+    const key = String((override && override.key != null ? override.key : cfg.hermesAgentKey) || "");
+    const headers = {};
+    if (key) headers["Authorization"] = "Bearer " + key;
+    try {
+      const res = await httpText(url + "/v1/models", { method: "GET", headers: headers, timeoutMs: 4000 });
+      const text = await res.text();
+      let models = [];
+      try { const j = JSON.parse(text); models = ((j && j.data) || []).map(function (m) { return m && m.id; }).filter(Boolean); } catch (_) {}
+      return { reachable: true, ok: !!res.ok, status: res.status, models: models, needsKey: res.status === 401 || res.status === 403, url: url };
+    } catch (e) {
+      return { reachable: false, ok: false, status: 0, models: [], needsKey: false, url: url, error: String((e && e.message) || e) };
+    }
+  }
+
   function status() {
     const cfg = liveConfig();
     const provider = resolveProvider(cfg);
@@ -3834,6 +3891,8 @@
     rememberModels,
     cachedModels,
     testConnection,
+    probeHermesAgent,
+    _hermesAgentHint: hermesAgentHint,
     listModels,
     Gguf,
     status,

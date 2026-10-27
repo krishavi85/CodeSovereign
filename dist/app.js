@@ -104,6 +104,7 @@ const I = {
    ============================================================ */
 const S = {
   screen: 'welcome',
+  ideRight: 'chat',        // the assistant is the main thing in the IDE; the preview is one click away
   env: 'Prod',
   agent: 'direct',
   prompt: '',
@@ -258,35 +259,42 @@ function injectIcons() {
 /* ============================================================
    TOP NAV + RAIL + TOP BAR
    ============================================================ */
+// What the app is really connected to right now (Engine.AI is the one source of truth).
+function modelStatus() {
+  try {
+    const st = window.Engine && Engine.AI && Engine.AI.status ? Engine.AI.status() : null;
+    const be = (window.Engine && Engine.LLM && Engine.LLM.getConfig ? Engine.LLM.getConfig() : {}).executionBackend;
+    if (st && st.connected && be === 'openclaw') return { on: true, label: 'OpenClaw', detail: 'Generation goes through your local OpenClaw agent' };
+    if (st && st.connected && be === 'hermesagent') return { on: true, label: 'Hermes Agent', detail: 'Generation goes through your local Hermes Agent' };
+    if (st && st.connected) return { on: true, label: String(st.model || st.provider || 'Model'), detail: String(st.source || '') };
+  } catch (_) { /* fall through */ }
+  return { on: false, label: 'No model connected', detail: 'Open AI settings to connect one' };
+}
+
 function renderTopNav() {
-  const envColor = S.env === 'prod' ? '#34d399' : (S.env === 'staging' ? '#f59e0b' : '#60a5fa');
-  const envLabel = (S.env || 'dev');
-  // No <nav> of screen tabs here anymore - it duplicated the left rail.
-  // renderRail() is the single source of truth for screen navigation.
+  const ms = modelStatus();
+  const dot = ms.on ? '#34d399' : '#6b7488';
+  // No <nav> of screen tabs here: renderRail() is the single source of truth for navigation.
   return '<div id="topnav"><header class="cs-top">' +
-    '<div class="cs-logo"><div class="badge">C</div><div class="name">CODESOVEREIGN</div></div>' +
+    '<div class="cs-logo"><div class="badge">C</div><div class="name">CodeSovereign</div></div>' +
     '<div class="cs-spacer"></div>' +
-    `<div class="cs-chip" id="modelChip" title="Switch agent"><span class="label">Agent:</span><span class="val" id="modelVal">${esc(agentLabel(S.agent))}</span><span style="color:#6b7488;font-size:11px">▾</span></div>` +
-    `<div class="cs-chip" id="envChip" title="Switch environment"><span class="label">Environment:</span><span class="cs-dot" id="envDot" style="background:${envColor};box-shadow:0 0 8px ${envColor}"></span><span class="val" id="envVal">${esc(envLabel)}</span><span style="color:#6b7488;font-size:11px">▾</span></div>` +
-    `<div class="cs-chip" id="backendChip" title="Backend status"><span class="label">Backend:</span><span class="cs-dot" id="backendDot" style="background:#34d399;box-shadow:0 0 8px #34d399"></span><span class="val" id="backendVal">${esc((window.Backend && window.Backend.engine) || 'init')}</span></div>` +
+    `<div class="cs-chip" id="modelChip" title="${esc(ms.detail)}"><span class="cs-dot" style="background:${dot}"></span><span class="val" id="modelVal">${esc(ms.label)}</span></div>` +
     '<button class="cs-btn cs-btn-ghost" id="runPreviewBtn" title="Run preview"><span id="icRun"></span>Run Preview</button>' +
-    `<button class="cs-btn cs-btn-primary" id="deployBtnTop" title="Deploy"><span id="icDeploy"></span><span id="deployLabel">${S.deploying ? 'Deploying…' : 'Deploy'}</span></button>` +
-    `<button class="cs-icon-btn" id="settingsBtnTop" title="Settings"><span id="icGear"></span></button>` +
-    '<div class="cs-avatar">K</div>' +
+    `<button class="cs-btn cs-btn-primary" id="deployBtnTop" title="Package this project as a downloadable bundle (nothing is published anywhere)"><span id="icDeploy"></span><span id="deployLabel">${S.deploying ? 'Exporting…' : 'Export'}</span></button>` +
     '</header></div>';
 }
 
 function renderRail() {
   const items = [
-    ['welcome','Welcome',I.home,false],
+    ['welcome','Home',I.home,false],
     ['agent','Agent',I.agent,false],
     ['ide','IDE',I.ide,false]
   ];
-  let html = items.map(([k,label,icon,badge]) =>
-    `<button data-screen="${k}" title="${label}" class="${S.screen===k?'active':''}">${badge?'<span class="badge-dot"></span>':''}<span style="display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center">${icon}</span><span style="font-size:9.5px;font-weight:500">${label}</span></button>`
-  ).join('');
+  const btn = (k, label, icon, badge) =>
+    `<button data-screen="${k}" title="${label}" aria-label="${label}" class="${S.screen===k?'active':''}">${badge?'<span class="badge-dot"></span>':''}<span style="display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center">${icon}</span></button>`;
+  let html = items.map(([k,label,icon,badge]) => btn(k,label,icon,badge)).join('');
   html += '<div style="flex:1"></div>';
-  html += `<button data-screen="settings" title="Settings" class="${S.screen==='settings'?'active':''}"><span style="display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center">${I.gear}</span><span style="font-size:9.5px;font-weight:500">Settings</span></button>`;
+  html += btn('settings', 'Settings', I.gear, false);
   return '<div id="rail"><nav class="cs-rail" id="railInner">' + html + '</nav></div>';
 }
 
@@ -298,7 +306,7 @@ function renderRail() {
 // id -> display label for the execution-backend picker (Engine.AGENTS ids:
 // 'direct' | 'openclaw' | 'hermes'). Kept separate from the id itself so
 // S.agent / cfg.executionBackend stay the plain machine-readable value.
-const AGENT_LABELS = { direct: 'Direct', openclaw: 'OpenClaw', hermes: 'Hermes' };
+const AGENT_LABELS = { direct: 'Direct', openclaw: 'OpenClaw', hermesagent: 'Hermes Agent', hermes: 'Hermes models' };
 function agentLabel(id) { return AGENT_LABELS[id] || id; }
 
 // Replaces the old cycleAgent(): a real per-row setter instead of a blind
@@ -338,6 +346,14 @@ function renderAgentStatusPill(id) {
     if (st.gateway && st.gateway.ready) return '<span class="pill" style="background:rgba(52,211,153,.15);color:#34d399;font-size:10px">Gateway ready</span>';
     return '<span class="pill" style="background:rgba(224,138,63,.15);color:#e08a3f;font-size:10px">Gateway ' + esc((st.gateway && st.gateway.serviceStatus) || 'stopped') + '</span>';
   }
+  if (id === 'hermesagent') {
+    const st = S.hermesAgentStatus;
+    if (!st) return '<span class="pill" style="background:var(--bg-2);color:var(--muted);font-size:10px">Checking…</span>';
+    if (!st.reachable) return '<span class="pill" style="background:rgba(239,68,68,.15);color:#f87171;font-size:10px">Not running</span>';
+    if (st.needsKey) return '<span class="pill" style="background:rgba(224,138,63,.15);color:#e08a3f;font-size:10px">Needs API key</span>';
+    if (st.ok) return '<span class="pill" style="background:rgba(52,211,153,.15);color:#34d399;font-size:10px">API server ready</span>';
+    return '<span class="pill" style="background:rgba(224,138,63,.15);color:#e08a3f;font-size:10px">HTTP ' + esc(st.status) + '</span>';
+  }
   if (id === 'hermes') {
     return cfg.hermesApiKey
       ? '<span class="pill" style="background:rgba(52,211,153,.15);color:#34d399;font-size:10px">Key set</span>'
@@ -345,6 +361,38 @@ function renderAgentStatusPill(id) {
   }
   const providerLabel = (Engine.LLM && Engine.LLM.providers || []).find(p => p.id === cfg.providerId);
   return '<span class="pill" style="background:var(--bg-2);color:var(--muted);font-size:10px">' + esc(providerLabel ? providerLabel.label : (cfg.providerId || 'none configured')) + '</span>';
+}
+
+// Probe the local Hermes Agent API server (a real GET /v1/models) and cache the answer on S.
+function checkHermesAgent(force) {
+  if (!window.Engine || !Engine.LLM || !Engine.LLM.probeHermesAgent) return;
+  if (S._hermesAgentChecking || (S.hermesAgentStatus && !force && Date.now() - (S.hermesAgentStatus.at || 0) < 30000)) return;
+  S._hermesAgentChecking = true;
+  Engine.LLM.probeHermesAgent().then(function (st) { st.at = Date.now(); S.hermesAgentStatus = st; S._hermesAgentChecking = false; renderAll(); })
+    .catch(function () { S._hermesAgentChecking = false; });
+}
+function renderHermesAgentRow() {
+  const cfg = (window.Engine && Engine.LLM && Engine.LLM.getConfig) ? Engine.LLM.getConfig() : {};
+  const st = S.hermesAgentStatus;
+  const note = !st ? '' : !st.reachable
+    ? 'Nothing answered at ' + esc(st.url) + '. Install Hermes Agent, enable its API server and run <code>hermes gateway</code>.'
+    : st.needsKey ? 'The server is running and wants an API key (the one set in Hermes).'
+    : st.ok ? 'Connected to ' + esc(st.url) + (st.models.length ? ' · model: ' + esc(st.models[0]) : '') : 'Unexpected answer from ' + esc(st.url) + ' (HTTP ' + esc(st.status) + ').';
+  return `<div style="display:flex;flex-direction:column;gap:8px;padding-left:56px">
+    <div style="display:flex;gap:6px;flex-wrap:wrap">
+      <input id="hermesAgentUrl" placeholder="http://127.0.0.1:8642" value="${esc(cfg.hermesAgentUrl || '')}" onchange="setHermesAgentField('hermesAgentUrl', this.value)" style="flex:1;min-width:180px;padding:6px 10px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px;color:inherit;font-size:12px">
+      <input id="hermesAgentKey" type="password" placeholder="API key (only if you set one in Hermes)" value="${esc(cfg.hermesAgentKey || '')}" onchange="setHermesAgentField('hermesAgentKey', this.value)" style="flex:1;min-width:180px;padding:6px 10px;background:var(--bg-2);border:1px solid var(--line);border-radius:6px;color:inherit;font-size:12px">
+      <button class="btn ghost" style="padding:5px 11px;font-size:12px" onclick="checkHermesAgent(true)">Check connection</button>
+    </div>
+    ${note ? '<div style="font-size:11.5px;color:var(--muted)">' + note + '</div>' : ''}
+  </div>`;
+}
+function setHermesAgentField(field, val) {
+  if (!window.Engine || !Engine.LLM || !Engine.LLM.setConfig) return;
+  const patch = {}; patch[field] = String(val || '').trim();
+  Engine.LLM.setConfig(patch);
+  S.hermesAgentStatus = null; S._hermesAgentChecking = false;
+  checkHermesAgent(true);
 }
 
 function renderHermesKeyRow() {
@@ -747,7 +795,7 @@ function deploy() {
         fileCount: bundle.manifest.fileCount,
         totalBytes: bundle.manifest.totalBytes
       };
-      toast('Deployed — ' + bundle.manifest.fileCount + ' files, ' + fmtBytes(bundle.manifest.totalBytes), '#34d399');
+      toast('Exported bundle — ' + bundle.manifest.fileCount + ' files, ' + fmtBytes(bundle.manifest.totalBytes), '#34d399');
       // Persist deploy record + bundle to backend
       try {
         await window.Backend.saveDeploy(S.lastDeploy, bundle);
@@ -884,12 +932,12 @@ function renderWelcome() {
   <div style="height:100%;overflow:auto">
     <div style="max-width:1080px;margin:0 auto;padding:52px 32px 60px">
       <div style="display:flex;align-items:center;gap:10px;font-size:12.5px;color:#8b93a7;margin-bottom:10px">
-        <span style="display:inline-flex;align-items:center;gap:6px;color:#34d399"><span style="width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 8px #34d399"></span>Engine online</span>
+        <span style="display:inline-flex;align-items:center;gap:6px;color:${modelStatus().on ? '#34d399' : '#8b93a7'}"><span style="width:7px;height:7px;border-radius:50%;background:${modelStatus().on ? '#34d399' : '#6b7488'}"></span>${esc(modelStatus().on ? modelStatus().label : 'No model connected')}</span>
         <span style="color:#3a4256">·</span>
-        <span>${agentLabel(S.agent)} ready · ${Engine.FS.count()} files · ${fmtBytes(Engine.FS.totalSize())}</span>
+        <span>${Engine.FS.count()} files · ${fmtBytes(Engine.FS.totalSize())}</span>
       </div>
-      <h1 style="font-size:36px;font-weight:700;margin:0 0 6px;letter-spacing:-.02em">Prompt Composer<span style="font-size:13px;font-weight:600;color:#22d3ee;background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.3);border-radius:8px;padding:3px 9px;margin-left:10px;vertical-align:middle;letter-spacing:0">Stage 1 of 19</span></h1>
-      <p style="font-size:16px;color:#8b93a7;margin:0 0 28px">Describe your application. We&rsquo;ll normalize, classify, plan, architect, build, test, and ship it — with evidence.</p>
+      <h1 style="font-size:36px;font-weight:700;margin:0 0 6px;letter-spacing:-.02em">What do you want to build?</h1>
+      <p style="font-size:16px;color:#8b93a7;margin:0 0 28px">Describe the app. CodeSovereign plans it, writes the files, runs them and shows the evidence.</p>
 
       <div style="border:1px solid rgba(109,93,252,.35);border-radius:16px;background:linear-gradient(180deg,rgba(124,91,214,.08),rgba(13,17,28,.6));padding:20px;margin-bottom:14px;box-shadow:0 0 0 4px rgba(109,93,252,.06),0 20px 60px -30px rgba(109,93,252,.6)">
         <textarea id="welcomePrompt" placeholder="Describe the app you want to build — e.g. &ldquo;A local-first note app with markdown editing, tag search, and offline sync.&rdquo; Press Enter to generate." style="width:100%;min-height:70px;font:400 15px Inter,sans-serif;color:#e6e9f2;line-height:1.5;background:transparent;border:none;outline:none;resize:none;padding:0">${esc(S.prompt)}</textarea>
@@ -914,7 +962,7 @@ function renderWelcome() {
 
       ${S.showUniversal ? `<div id="universalInline" style="border:1px solid rgba(34,211,238,.25);border-radius:14px;margin-bottom:36px;overflow:hidden">${renderUniversal()}</div>` : ''}
 
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h2 style="font-size:17px;font-weight:700;margin:0">Start from a template</h2><span style="font-size:12.5px;color:#7b859c">${templates.length} templates · all scaffolded into real files</span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h2 style="font-size:17px;font-weight:700;margin:0">Start from a template</h2></div>
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:44px">${qs}</div>
 
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px"><h2 style="font-size:17px;font-weight:700;margin:0">Your projects</h2><span style="font-size:12.5px;color:#7b859c">${projs.length} ${projs.length === 1 ? 'project' : 'projects'}</span></div>
@@ -1189,17 +1237,8 @@ function renderAgent() {
         <span style="flex:1;font:500 12.5px JetBrains Mono,monospace">${esc(name)}</span>
         <span style="font-size:10.5px;color:#6b7488">${esc(path)}</span>
       </div>`).join('') || '<div style="font-size:12px;color:#7b859c">No files yet</div>'}
-      <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c;margin:20px 0 6px;display:flex;justify-content:space-between"><span>TOOLS</span><span style="color:#8b93a7">6</span></div>
-      ${tool('fs','File System','Read, write, edit files','folder')}
-      ${tool('term','Terminal','Run commands','term')}
-      ${tool('search','Search','Find code, files, symbols','search')}
-      ${tool('git','Git','Version control','git')}
-      ${tool('web','Web Fetch','Fetch web resources','globe')}
-      ${tool('db','Database','Query database','db')}
-      <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c;margin:20px 0 12px">AGENT SETTINGS</div>
-      <div id="agentChip" style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;padding:6px 0;cursor:pointer"><span style="color:#8b93a7">Agent</span><span style="font-weight:600">${agentLabel(S.agent)} ▾</span></div>
-      <div style="padding:8px 0"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span style="color:#8b93a7">Temperature</span><span style="font-weight:600">${S.temp}</span></div><input id="tempRange" type="range" min="0" max="1" step="0.1" value="${S.temp}" style="width:100%;accent-color:#6d5dfc;height:16px;cursor:pointer"></div>
-      <div style="padding:8px 0"><div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span style="color:#8b93a7">Max Tokens</span><span style="font-weight:600">${S.maxTok}</span></div><input id="maxTokRange" type="range" min="512" max="16384" step="512" value="${S.maxTok}" style="width:100%;accent-color:#6d5dfc;height:16px;cursor:pointer"></div>`;
+      <div style="font-size:11px;font-weight:600;letter-spacing:.05em;color:#7b859c;margin:20px 0 12px">AGENT</div>
+      <div id="agentChip" style="display:flex;align-items:center;justify-content:space-between;font-size:12.5px;padding:6px 0;cursor:pointer"><span style="color:#8b93a7">Agent</span><span style="font-weight:600">${agentLabel(S.agent)} ▾</span></div>`;
   }
 
   return `
@@ -2450,6 +2489,8 @@ function renderSettings(){
     }).catch(function () { S._openclawStatusFetching = false; });
   }
 
+  checkHermesAgent(false);
+
   const proj = Engine.Proj.current();
   const files = Engine.FS.count();
   const size = Engine.FS.totalSize();
@@ -2515,7 +2556,7 @@ function renderSettings(){
                 </div>
                 <button class="btn ${S.agent === a.id ? 'primary' : 'ghost'}" onclick="setExecutionBackend('${a.id}')">${S.agent === a.id ? 'In use' : 'Use'}</button>
               </div>
-              ${a.id === 'hermes' ? renderHermesKeyRow() : ''}
+              ${a.id === 'hermes' ? renderHermesKeyRow() : a.id === 'hermesagent' ? renderHermesAgentRow() : ''}
             </div>
           `).join('')}
         </div>
@@ -2611,10 +2652,9 @@ function renderSettings(){
       <div class="card" style="padding:20px">
         <h3 class="cs-h3" style="margin-bottom:14px">${I.sparkle} About</h3>
         <div style="font-size:13px;color:var(--muted);line-height:1.7">
-          <b>CodeSovereign</b> <span id="aboutVersion" style="font:600 12px ui-monospace,monospace;color:var(--fg)">v…</span> — a sovereign, agentic build environment. Everything runs in your browser
-          via a virtual file system (<code>cs.fs.v1</code>) and project store (<code>cs.proj.v1</code>).<br>
-          The agent fleet &mdash; ${(window.Engine && window.Engine.AGENTS ? window.Engine.AGENTS.map(a => agentLabel(a.id)).join(', ') : 'Direct')} &mdash; plan, scaffold, implement,
-          validate, and package real working code with no mock data.
+          <b>CodeSovereign</b> <span id="aboutVersion" style="font:600 12px ui-monospace,monospace;color:var(--fg)">v…</span> — a local build environment: you describe an app, your chosen model plans and writes it, and the app runs it and checks the result.<br>
+          In the desktop app your project lives in a folder on disk and commands run on your machine; in the browser it lives in this browser's storage.
+          Generation can go to a model directly or through a local agent (${(window.Engine && window.Engine.AGENTS ? window.Engine.AGENTS.filter(a => a.id !== 'direct').map(a => agentLabel(a.id)).join(', ') : 'none')}).
         </div>
       </div>
     </div>
@@ -3010,16 +3050,13 @@ function renderAll(){
 
 
 function bindTopNav() {
+  // the model chip leads to where a model is connected
   const mc = document.getElementById('modelChip');
-  if (mc) mc.onclick = cycleAgentQuick;
-  const ec = document.getElementById('envChip');
-  if (ec) ec.onclick = () => { toggleEnv(); };
+  if (mc) mc.onclick = () => { S.screen = 'settings'; S.settingsSection = 'ai'; renderAll(); };
   const rp = document.getElementById('runPreviewBtn');
   if (rp) rp.onclick = () => { runPreview(); };
   const db = document.getElementById('deployBtnTop');
   if (db) db.onclick = () => { deploy(); };
-  const sb = document.getElementById('settingsBtnTop');
-  if (sb) sb.onclick = () => { S.screen = 'settings'; renderAll(); };
 }
 
 function bindRail() {

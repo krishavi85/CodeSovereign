@@ -134,6 +134,44 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 /* Firefox scrollbar */
 .cs-main, .cs-screen { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.18) transparent; }
 
+/* ============ PRO CHROME: flat, quiet, compact (editor-style) ============ */
+body{background:#0b0c10}
+#appRoot{background:#0b0c10}
+.cs-top{height:44px;gap:10px;padding:0 12px;background:#0b0c10;border-bottom:1px solid rgba(255,255,255,.07)}
+.cs-logo{gap:9px}
+.cs-logo .badge{width:22px;height:22px;border-radius:6px;font-size:12px;background:#e6e9f2;color:#0b0c10;box-shadow:none}
+.cs-logo .name{font-weight:600;letter-spacing:0;font-size:13px}
+.cs-chip{padding:5px 10px;border-radius:6px;font-size:12px;background:transparent;border-color:rgba(255,255,255,.1);max-width:280px}
+.cs-chip .val{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cs-dot{box-shadow:none !important}
+.cs-btn{padding:5px 11px;border-radius:6px;font-size:12px;font-weight:500}
+.cs-btn-primary{background:var(--accent);box-shadow:none}
+.cs-btn-primary:hover{background:var(--accent-2);filter:none}
+.cs-btn-ghost{background:transparent;border-color:rgba(255,255,255,.12)}
+.cs-rail{width:48px;padding:8px 0;gap:2px;background:#0b0c10;border-right:1px solid rgba(255,255,255,.07)}
+.cs-rail button{width:36px;height:36px;border-radius:8px;gap:0}
+.cs-rail button:hover{background:rgba(255,255,255,.06)}
+.cs-rail button.active{background:rgba(255,255,255,.09);color:#e6e9f2;box-shadow:none}
+.cs-main,.cs-screen{background:#0b0c10}
+.screen-inner .card,.card{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07);border-radius:8px;box-shadow:none}
+.btn{border-radius:6px}
+#genAppBtn{background:var(--accent) !important;box-shadow:none !important;border-radius:8px !important;padding:9px 16px !important;font-size:13px !important}
+#welcomePrompt{font-size:14px !important}
+
+/* ============ SETTINGS: sections on the left, one at a time ============ */
+.cs-set{display:grid;grid-template-columns:190px minmax(0,1fr);gap:36px;max-width:1000px;margin:0 auto;padding:32px 28px 60px;align-items:start}
+.cs-set-nav{position:sticky;top:20px;display:flex;flex-direction:column;gap:2px}
+.cs-set-nav button{text-align:left;padding:7px 12px;border:none;border-radius:6px;background:transparent;color:#9aa3b8;font:500 13px Inter,sans-serif;cursor:pointer}
+.cs-set-nav button:hover{background:rgba(255,255,255,.05);color:#e6e9f2}
+.cs-set-nav button.active{background:rgba(255,255,255,.09);color:#e6e9f2}
+.cs-set-body{min-width:0}
+.cs-set-body > section > header{margin-bottom:18px}
+.cs-set-body > section > header h1{margin:0 0 4px;font-size:20px;font-weight:600;letter-spacing:-.01em}
+.cs-set-body > section > header p{margin:0;font-size:13px;color:var(--muted)}
+.cs-set-body .card{margin-bottom:14px !important;padding:18px !important}
+.cs-set-body .cs-h3{font-size:13.5px;font-weight:600}
+@media (max-width:760px){.cs-set{grid-template-columns:1fr;gap:14px;padding:16px}.cs-set-nav{position:static;flex-direction:row;flex-wrap:wrap}}
+
 </style>
 <link rel="stylesheet" href="vendor/xterm/xterm.css">
 </head>
@@ -319,6 +357,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,[role="button"]:
 <script src="app.orchestra.js"></script>
 <script src="app.runtime.js"></script>
 <script src="app.work.js"></script>
+<script src="app.settings.js"></script>
 <script src="app.chat.agent.js"></script>
 <script src="engine.repointel.js"></script>
 <script src="engine.nagent.js"></script>
