@@ -7,7 +7,7 @@
     "dev": "node server.js --port=4319",
     "start": "node server.js --port=4319",
     "build": "node scripts/build.js",
-    "test": "node --test",
+    "test": "node --test --test-concurrency=1",
     "lint": "node scripts/lint.js"
   }
 }

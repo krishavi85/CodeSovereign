@@ -60,6 +60,11 @@
     if (!ready()) return Promise.reject(new Error('AI not connected — call Engine.AI.ensure() or set a provider in Settings'));
     return LLM().chat(msgs, o || {});
   }
+  // Streaming completion: o.onDelta(text) per piece, o.signal to abort.
+  function chatStream(msgs, o) {
+    if (!ready()) return Promise.reject(new Error('AI not connected — call Engine.AI.ensure() or set a provider in Settings'));
+    return LLM().chatStream(msgs, o || {});
+  }
   function json(msgs, o) {
     return chat(msgs, Object.assign({ json: true }, o || {})).then(function (r) {
       var t = r.text || '';
@@ -110,6 +115,6 @@
       wiredCount: c.filter(function (x) { return x.wired; }).length, total: c.length };
   }
 
-  Engine.AI = { ready: ready, status: status, ensure: ensure, chat: chat, json: json, consumers: consumers, wiring: wiring };
+  Engine.AI = { ready: ready, status: status, ensure: ensure, chat: chat, chatStream: chatStream, json: json, consumers: consumers, wiring: wiring };
   console.info('[AI] facade + wiring audit ready — Engine.AI');
 })();

@@ -27,6 +27,7 @@ const { spawn } = require('child_process');
 const crossSpawn = require('cross-spawn');
 const { killTree } = require('./killtree');
 const { URL } = require('url');
+const { StringDecoder } = require('string_decoder');
 
 const LOOPBACK = new Set(['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0']);
 const API_HOSTS = new Set([
@@ -49,6 +50,9 @@ function allowed(u) {
 // body:<what arrived> } instead of an error, so the caller can keep every
 // file the model had finished. Live 2026-10-02: a 30-minute local-model
 // answer was cut at the limit and all of it was thrown away.
+// opts.onData(text): called with each decoded chunk as it arrives, so a caller
+// can stream an SSE answer to the UI. opts.onAbort(fn): hands the caller a
+// function that cancels the request (resolves { ok:false, error:'aborted' }).
 // timeoutMs is a TOTAL deadline here, not just the socket idle timeout —
 // with streaming, data keeps flowing, so an idle timeout alone never fires.
 function request(opts) {
@@ -82,7 +86,11 @@ function request(opts) {
         body: Buffer.concat(chunks).toString('utf8').slice(0, MAX_BYTES)
       });
       cutPartial = () => { if (o.partialOnTimeout && n > 0) { resolve(partialResult()); res.destroy(); return true; } return false; };
-      res.on('data', (c) => { n += c.length; if (n <= MAX_BYTES) chunks.push(c); if (n > MAX_BYTES) { res.destroy(); } });
+      const decoder = o.onData ? new StringDecoder('utf8') : null;
+      res.on('data', (c) => {
+        n += c.length; if (n <= MAX_BYTES) chunks.push(c); if (n > MAX_BYTES) { res.destroy(); }
+        if (decoder) { const s = decoder.write(c); if (s) { try { o.onData(s); } catch (_) { /* a bad listener must not break the request */ } } }
+      });
       res.on('end', () => resolve({
         ok: true, status: res.statusCode,
         headers: { 'content-type': res.headers['content-type'] || '' },
@@ -92,6 +100,7 @@ function request(opts) {
       res.on('error', () => { if (!cutPartial()) resolve({ ok: false, error: 'response aborted' }); });
     });
     let cutPartial = () => false;
+    if (typeof o.onAbort === 'function') o.onAbort(() => { if (!settled) { req.destroy(); resolve({ ok: false, error: 'aborted' }); } });
     const onTimeout = () => { if (!cutPartial()) { req.destroy(); resolve({ ok: false, error: 'timeout' }); } };
     if (o.timeoutMs) deadline = setTimeout(onTimeout, o.timeoutMs);
     req.on('timeout', onTimeout);

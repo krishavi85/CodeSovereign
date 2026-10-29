@@ -493,7 +493,9 @@ async function run() {
           p0.exportClaimAfter === 'VERIFIED', 'claim=' + p0.exportClaimAfter);
         check('P0: DoD gate flipped to DONE after the loop closed',
           p0.dodAfterPass === true && p0.dodAfterNoFake === true,
-          'PASS=' + p0.dodAfterPass + ' noFake=' + p0.dodAfterNoFake);
+          'PASS=' + p0.dodAfterPass + ' noFake=' + p0.dodAfterNoFake + ' failing=' +
+            JSON.stringify(Object.keys(p0.dodAfterCriteria || {}).filter((k) => !p0.dodAfterCriteria[k])) +
+            ' detail=' + JSON.stringify(p0.dodAfterDetail || null).slice(0, 600));
         check('P0: Sovereign Release Certificate written and SOVEREIGN VERIFIED',
           p0.certificateWritten && p0.certificateVerified,
           'written=' + p0.certificateWritten + ' verified=' + p0.certificateVerified);

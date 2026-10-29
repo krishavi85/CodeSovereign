@@ -446,6 +446,117 @@
     return { text: String(text || ""), model: body.model, provider: provider.id };
   }
 
+  // ----- streaming chat (chat panel) -----
+  // Incremental parser for an OpenAI-style SSE stream. feed(text) takes raw
+  // response text in arbitrary slices and returns the content deltas completed
+  // by it; a partial line is held until the rest arrives. Tool-call fragments
+  // are accumulated by index in state.toolCalls; state.done flips on [DONE].
+  function sseState() { return { buf: "", done: false, text: "", toolCalls: [], finish: null, sawEvent: false }; }
+  function sseFeed(st, chunk) {
+    st.buf += chunk;
+    const lines = st.buf.split(/\r?\n/);
+    st.buf = lines.pop();
+    const deltas = [];
+    lines.forEach(function (line) {
+      const m = /^data:\s?(.*)$/.exec(line);
+      if (!m) return;
+      const payload = m[1].trim();
+      if (!payload) return;
+      if (payload === "[DONE]") { st.done = true; return; }
+      let j; try { j = JSON.parse(payload); } catch (_) { return; }
+      st.sawEvent = true;
+      const ch = j && j.choices && j.choices[0];
+      if (!ch) return;
+      if (ch.finish_reason) st.finish = ch.finish_reason;
+      const d = ch.delta || {};
+      if (typeof d.content === "string" && d.content) { st.text += d.content; deltas.push(d.content); }
+      (d.tool_calls || []).forEach(function (tc) {
+        const i = tc.index == null ? st.toolCalls.length : tc.index;
+        const cur = st.toolCalls[i] || (st.toolCalls[i] = { id: "", name: "", arguments: "" });
+        if (tc.id) cur.id = tc.id;
+        if (tc.function) {
+          if (tc.function.name) cur.name += tc.function.name;
+          if (tc.function.arguments) cur.arguments += tc.function.arguments;
+        }
+      });
+    });
+    return deltas;
+  }
+
+  // Streams a completion. opts.onDelta(text) fires per piece; opts.signal
+  // (AbortSignal) cancels. Resolves { text, model, provider, aborted, toolCalls,
+  // finish }. A provider that ignores stream:true and answers with plain JSON is
+  // handled: its full text arrives as a single delta.
+  async function chatStream(messages, opts) {
+    opts = opts || {};
+    const cfg = loadConfig();
+    if (!isConfigured(cfg) && !opts.force) throw new Error("LLM not configured.");
+    const provider = resolveProvider(cfg);
+    if (!provider.baseUrl) throw new Error("Provider has no baseUrl.");
+    const msgs = typeof messages === "string" ? [{ role: "user", content: messages }] : messages;
+    const url = provider.baseUrl.replace(/\/+$/, "") + (provider.chatPath || "/v1/chat/completions");
+    const headers = { "Content-Type": "application/json" };
+    if (cfg.apiKey) headers[provider.keyHeader || "Authorization"] = (provider.keyPrefix || "Bearer ") + cfg.apiKey;
+    const body = { model: cfg.model || provider.defaultModel || "auto", messages: msgs, stream: true,
+      temperature: opts.temperature == null ? 0.2 : opts.temperature, max_tokens: opts.maxTokens || 4096 };
+    if (Array.isArray(opts.tools) && opts.tools.length) {
+      body.tools = opts.tools.map(function (t) {
+        return { type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } };
+      });
+    }
+    const st = sseState();
+    let raw = "", aborted = false;
+    const onDelta = typeof opts.onDelta === "function" ? opts.onDelta : function () {};
+    const onChunk = function (text) {
+      raw += text;
+      sseFeed(st, text).forEach(function (d) { try { onDelta(d); } catch (_) {} });
+    };
+    const timeoutMs = opts.timeoutMs || 300000;
+    let status = 200, failed = null;
+    const D = window.desktop;
+    if (D && D.isDesktop && D.ai && D.ai.stream) {
+      const h = D.ai.stream({ url: url, method: "POST", headers: headers, body: JSON.stringify(body), timeoutMs: timeoutMs }, onChunk);
+      if (opts.signal) {
+        if (opts.signal.aborted) { aborted = true; h.abort(); }
+        else opts.signal.addEventListener("abort", function () { aborted = true; h.abort(); }, { once: true });
+      }
+      const r = await h.done;
+      if (r && r.error === "aborted") aborted = true;
+      else if (!r || !r.ok) failed = (r && r.error) || "request failed";
+      else status = r.status;
+      // the proxy hands back the whole body too; if nothing arrived live, use it
+      if (r && r.ok && !raw && r.body) onChunk(r.body);
+    } else {
+      let res;
+      try { res = await fetch(url, { method: "POST", headers: headers, body: JSON.stringify(body), signal: opts.signal }); }
+      catch (e) { if (opts.signal && opts.signal.aborted) { aborted = true; } else throw e; }
+      if (res) {
+        status = res.status;
+        if (res.body && res.body.getReader && res.ok) {
+          const reader = res.body.getReader(), dec = new TextDecoder();
+          try { for (;;) { const r = await reader.read(); if (r.done) break; onChunk(dec.decode(r.value, { stream: true })); } }
+          catch (e) { if (opts.signal && opts.signal.aborted) aborted = true; else throw e; }
+        } else { onChunk(await res.text()); }
+      }
+    }
+    if (failed) throw new Error(failed);
+    if (status >= 400) {
+      throw new Error("HTTP " + status + " " + String(raw).slice(0, 240));
+    }
+    if (!aborted && !st.sawEvent && raw) {
+      // not SSE: a plain JSON completion
+      let data = null; try { data = JSON.parse(raw); } catch (_) {}
+      const msg = data && data.choices && data.choices[0] && data.choices[0].message;
+      const text = (msg && msg.content) || "";
+      if (text) { st.text = text; try { onDelta(text); } catch (_) {} }
+      if (msg && Array.isArray(msg.tool_calls)) {
+        st.toolCalls = msg.tool_calls.map(function (tc) { return { id: tc.id || "", name: tc.function && tc.function.name || "", arguments: tc.function && tc.function.arguments || "" }; });
+      }
+    }
+    return { text: st.text, model: body.model, provider: provider.id, aborted: aborted,
+      toolCalls: st.toolCalls.filter(Boolean), finish: st.finish };
+  }
+
   async function listModels() {
     const cfg = liveConfig();
     const provider = resolveProvider(cfg);
@@ -2286,7 +2397,7 @@
       "If you cannot use tools, output EACH file as a heading line 'FILE: /path/to/file' immediately followed by a fenced code block containing the COMPLETE, EXACT file content — nothing paraphrased, nothing omitted. Do not write any other prose before, between, or after the file blocks — no greeting, no explanation, no summary.",
       "Example of the exact fallback text format (follow this shape precisely, using YOUR real files instead):",
       "FILE: /server.js\n```javascript\nconst http = require('http');\nconst server = http.createServer((req, res) => { res.end('ok'); });\nif (require.main === module) server.listen(process.env.PORT || 3000);\nmodule.exports = server;\n```",
-      "FILE: /package.json\n```json\n{\n  \"name\": \"app\",\n  \"version\": \"1.0.0\",\n  \"scripts\": { \"start\": \"node server.js\", \"test\": \"node --test\" }\n}\n```",
+      "FILE: /package.json\n```json\n{\n  \"name\": \"app\",\n  \"version\": \"1.0.0\",\n  \"scripts\": { \"start\": \"node server.js\", \"test\": \"node --test --test-concurrency=1\" }\n}\n```",
       "(If you strongly prefer JSON instead, a single object { \"summary\": \"...\", \"files\": [ { \"path\": \"/...\", \"content\": \"...\" } ] } is also accepted — but the write_file tool or the FILE:/code-block format above are preferred and more reliable.)",
       formatContract(contract)
     ].filter(Boolean).join("\n\n");
@@ -2461,7 +2572,7 @@
         const sys = baseRules + "\n\nYOUR JOB — BACKEND ONLY: build a real server exposing REST endpoints for every entity above, with REAL persistence that actually reads and writes — never mocked or hard-coded return values.\n" +
           "HARD REQUIREMENTS (the app is started automatically with only `npm install && npm start`, so these are not optional):\n" +
           "- Unless the user explicitly named a database, persist to a JSON file using Node's built-in fs. Do NOT use MongoDB, mongoose, Postgres, MySQL, Redis, or any database server — none is running.\n" +
-          "- Write /package.json listing EVERY package you require(), with \"scripts\": { \"start\": \"node server.js\", \"test\": \"node --test\" }. Never list Node built-ins (fs, path, http, crypto, url, os, events) as dependencies — they are not npm packages.\n" +
+          "- Write /package.json listing EVERY package you require(), with \"scripts\": { \"start\": \"node server.js\", \"test\": \"node --test --test-concurrency=1\" }. Never list Node built-ins (fs, path, http, crypto, url, os, events) as dependencies — they are not npm packages.\n" +
           "- The server listens on process.env.PORT || 3000, ONLY when run directly: `if (require.main === module) app.listen(...)`, and `module.exports = app` so tests can import it without starting a second server.\n" +
           "- The server also serves the static frontend files (index.html, .css, .js) from the project root, so one `npm start` runs the whole app.\n" +
           "Do NOT output any frontend HTML/CSS/client JS.";
@@ -2571,7 +2682,7 @@
         // Stylesheets and images only cost prompt time here (live: a 15k
         // styles.css, on a CPU model that reads a few tokens a second).
         const testContextPaths = backendPaths.concat(frontendPaths).filter(function (p) { return !/\.(css|scss|svg|png|jpe?g|gif|ico|webp|woff2?)$/i.test(String(p)); });
-        const sys = baseRules + "\n\nYOUR JOB — TESTS ONLY: write real automated tests against the ACTUAL files below — test real behavior, not placeholders. They run with `npm test` (= `node --test`), so:\n" +
+        const sys = baseRules + "\n\nYOUR JOB — TESTS ONLY: write real automated tests against the ACTUAL files below — test real behavior, not placeholders. They run with `npm test` (= `node --test --test-concurrency=1`, files run one at a time and may share a data file), so:\n" +
           "- Use ONLY Node built-ins: `const test = require('node:test'); const assert = require('node:assert');` and the global fetch. Do NOT use jest, mocha, chai, supertest, or any other package — none is installed for tests.\n" +
           "- Put test files in /test/ named *.test.js, and import the app with `require('../server')` (one level up from /test/).\n" +
           "- For HTTP tests, start the imported app on a free port inside the test (`const server = app.listen(0)`, read `server.address().port`), call it with fetch, and `server.close()` when done — otherwise the test process never exits.\n\nCURRENT APP FILES:\n\n" + llmTaskFilesBlock(testContextPaths) + backendOutline(backendPaths);
@@ -3592,6 +3703,9 @@
     resolveProvider,
     isConfigured: () => isConfigured(loadConfig()),
     chat,
+    chatStream,
+    _sseState: sseState,
+    _sseFeed: sseFeed,
     isLocalEndpoint,
     needsApiKey,
     authToken,

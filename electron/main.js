@@ -693,6 +693,31 @@ function registerIpc() {
   ipcMain.on('terminal:input', (_e, { id, data } = {}) => { if (id) terminalManager.write(id, data); });
   ipcMain.on('terminal:resize', (_e, { id, cols, rows } = {}) => { if (id) terminalManager.resize(id, cols, rows); });
   ipcMain.on('terminal:kill', (_e, { id } = {}) => { if (id) terminalManager.kill(id); });
+  // Streaming variant of ai:request for the chat panel: same host allow-list,
+  // but each chunk is pushed to the sender as it arrives ('ai:stream-chunk'),
+  // and ai:stream-abort cancels the in-flight request by streamId.
+  const aiStreams = new Map();
+  ipcMain.handle('ai:stream', async (event, opts) => {
+    const o = opts || {};
+    const id = String(o.streamId || '');
+    if (!id || typeof o.url !== 'string') return fail('streamId and url required');
+    const sender = event.sender;
+    try {
+      const r = await aihost.request({
+        url: o.url, method: o.method, headers: o.headers, body: o.body, timeoutMs: o.timeoutMs,
+        partialOnTimeout: true,
+        onData: (data) => { if (!sender.isDestroyed()) sender.send('ai:stream-chunk', { id, data }); },
+        onAbort: (fn) => aiStreams.set(id, fn)
+      });
+      return r;
+    } catch (e) { return fail(e); }
+    finally { aiStreams.delete(id); }
+  });
+  ipcMain.handle('ai:stream-abort', async (_e, id) => {
+    const fn = aiStreams.get(String(id));
+    if (fn) { try { fn(); } catch (_) {} return { ok: true }; }
+    return { ok: false, error: 'no such stream' };
+  });
   // Locked-down HTTP: loopback only, or an LLM API host the CSP already allows.
   ipcMain.handle('ai:request', async (_e, opts) => {
     try {
