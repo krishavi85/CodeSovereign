@@ -51,13 +51,13 @@ function setup(opts) {
     console: { log() {}, info() {}, warn() {}, error() {}, debug() {} },
     localStorage: { getItem: (k) => (k in store ? store[k] : null), setItem: (k, v) => { store[k] = String(v); } },
     setTimeout, clearTimeout, AbortController, document: { getElementById: () => null },
-    Engine: { AI, FS, Autonomy, Review, Validator: { runAll: () => [] } },
+    Engine: { AI, FS, Autonomy, Review, Validator: { runAll: () => [] }, ProjectBrain: opts.brain },
     S, CSExec, renderAll: () => { renders.push(S.ideFile); }, toast: (m) => toasts.push(m),
     beginAgentReview: (before) => { reviewDock.push(before); }, renderReviewDock() {}
   };
   win.window = win;
   const ctx = vm.createContext(win);
-  for (const f of ['app.chat.agent.js', 'engine.nagent.js', 'app.chat.js', 'app.chat.task.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'dist', f), 'utf8'), ctx, { filename: f });
+  for (const f of ['app.chat.agent.js', 'engine.repointel.js', 'engine.nagent.js', 'app.chat.js', 'app.chat.task.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'dist', f), 'utf8'), ctx, { filename: f });
   const Chat = win.CSChat, x = Chat._x;
   // simulate a click on a [data-cs-task="..."] control
   const click = (action) => { const tgt = { closest: (sel) => (sel === '[data-cs-task]' ? { getAttribute: () => action } : null) }; return x.ext.click.some((fn) => fn(tgt) === true); };
@@ -259,6 +259,26 @@ module.exports = async function (t) {
     z.script.push({ text: 'just chatting' });
     await z.Chat.send('hello');
     t.ok('Ask mode is untouched: no tools, no task', z.seen[0].tools.length === 0 && z.task() === null);
+  }
+
+  /* ---------- project memory (Engine.ProjectBrain) ---------- */
+  {
+    const items = [];
+    const brain = { get: () => ({ items: items.slice() }), remember: (k, ti, b, m) => { items.push({ kind: k, title: ti, body: b, meta: m || {}, at: Date.now() }); return items[items.length - 1]; } };
+    const x = setup({ brain });
+    x.Chat.setMode('auto');
+    x.script.push(planStep, planDone, fixSum, report);
+    await x.Chat.send('make sum add the numbers');
+    t.ok('a finished task is written to the project brain', items.some((i) => i.kind === 'artifacts' && /Task \(verified\)/.test(i.title) && i.meta.agent === true));
+    x.click('revert');
+    await wait(60);
+    t.ok('reverting the result is remembered as a rejection', items.some((i) => i.kind === 'conventions' && /^Reverted by the user/.test(i.title) && i.meta.type === 'reverted'));
+    // the next, similar task is told
+    const y = setup({ brain });
+    y.Chat.setMode('auto');
+    y.script.push(planStep, planDone, fixSum, report);
+    await y.Chat.send('make sum add the numbers again');
+    t.ok('the next similar task is shown the earlier outcome and the rejection', y.seen.length > 0 && /Project memory/.test(String(y.seen[0].msgs[1].content)) && /Reverted by the user/.test(String(y.seen[0].msgs[1].content)));
   }
 
   /* ---------- attached context reaches task modes ---------- */

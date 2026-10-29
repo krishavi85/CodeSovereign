@@ -13,10 +13,12 @@ explicitly — what is **not** done yet.
 |---|---|
 | Runtime: state machine, modes, policy, command classifier, tools, task runner | `dist/engine.nagent.js` |
 | Tool loop, toolbox primitives, text-form tool-call recovery (Phase 3) | `dist/app.chat.agent.js` |
+| Repository intelligence: symbol index, import graph, references, impact, context selection (M5) | `dist/engine.repointel.js` |
 | Chat panel (Ask / Plan / Edit modes, `@` context, Apply, proposals) | `dist/app.chat.js` |
 | Task modes in the panel (Agent / Auto): plan card, approvals, revert, resume | `dist/app.chat.task.js` |
 | Provider adapter incl. Ollama-native streaming | `dist/engine.llm.js` (`chatStream`) |
 | Real-model evaluation | `scripts/eval-agent.js`, `scripts/lib/agent-eval*.js`, results in `docs/eval/` |
+| Desktop acceptance (real Electron + real model) | `electron/acceptance-agent.js` (`npm run acceptance:agent`) |
 
 ## Modes
 
@@ -71,9 +73,24 @@ from plain text), a timeout, a permission class and a structured result
 | Edit | `edit_file` (exact text → new text, unique match, whitespace-tolerant, CRLF-safe), `create_file`, `write_file`, `apply_patch` (unified diff, hunks located by context, all-or-nothing), `rename_file`, `delete_file` |
 | Run | `run_tests`, `build_project`, `run_acceptance_tests`, `run_command` (job or classified command), `start_dev_server`, `stop_process`, `inspect_process`, `inspect_logs` |
 | Debug | `read_diagnostics`, `get_problems`, `analyze_stack_trace`, `inspect_diff` |
+| Navigate (full toolset) | `find_symbol`, `find_references`, `file_dependencies` |
 | Control | `create_plan`, `update_plan`, `request_approval`, `report_result` |
 
 Small local models get a compact set (9–10 tools) because long tool menus hurt them.
+
+## Repository intelligence (M5)
+
+`Engine.RepoIntel` builds, from the project's files (including the agent's own unsaved/proposed edits), a **symbol index** (functions, classes, variables, types, methods; exported or not; JavaScript/TypeScript and Python) and an **import graph** (relative imports resolved to project files, packages kept as external). It is incremental (a file is re-parsed only when its content changes), bounded (skips `node_modules`, build output, files over 200 KB, more than 2,500 files) and never throws on malformed code. Parsing is line/regex based: a navigation aid for a model, not a compiler (it does not follow dynamic `require(variable)`, re-export chains or type-only resolution).
+
+What the agent does with it:
+
+* **Context selection.** The planning and execution prompts include the files most relevant to the goal (named files, files defining symbols the goal mentions, path/word matches, files already changed) plus their neighbours in the graph, each with its exports and *who uses it*, so a feature that spans two files is seen as one change.
+* **Repair.** The repair brief names *linked files the agent did not change* (importers of what it changed) and the project code the failing test loads.
+* **Tools** (full toolset only; small models keep their short menu and get the same information automatically): `find_symbol`, `find_references`, `file_dependencies`.
+
+## Project memory (M6)
+
+The agent reads and writes the project's long-term memory (`Engine.ProjectBrain`, stored with the project). It records only facts it can state from evidence: the user's goal, the files that really changed, what the harness verified, why a run was BLOCKED, and the verification recipe. It never stores the model's free-text summary, and only entries the native agent wrote are ever injected into a prompt, so a memory cannot carry instructions into later runs. A user's **Revert all changes** is remembered as a rejection ("the approach was not accepted"). Later tasks are shown the few memories relevant to their goal or files (size-bounded, marked as hints: the code is the truth). A failing memory store never breaks a run.
 
 ## The task lifecycle
 
@@ -138,7 +155,7 @@ reference solution passes, and a do-nothing model, a model that edits the tests,
 
 ### Real-model results (qwen2.5-coder:7b on Ollama, CPU only: 16 cores, no GPU)
 
-Mode `auto`, compact toolset, 16k context, 3 trials per task. Four runs, each after a
+Mode `auto`, compact toolset, 16k context, 3 trials per task. Six runs, each after a
 change prompted by the failures of the one before (raw data in `docs/eval/`):
 
 | Run | Change since the previous run | bugfix-range | bugfix-crossfile | feature-slugify | Overall |
@@ -147,10 +164,12 @@ change prompted by the failures of the one before (raw data in `docs/eval/`):
 | 2 | recover from malformed tool calls; nudge a model that quit with nothing changed; honest "blocked" respected | 3/3 | 2/3 | 0/3 | **5/9** |
 | 3 | small models told to use `write_file` for short files | 3/3 | 3/3 | 0/3 | **6/9** |
 | 4 | the harness checks "I changed X" claims against what changed and tells the model | 3/3 | 3/3 | 1/3 | **7/9** |
+| 5 | M5 repository index in the prompts, M6 memory (`2026-10-27T04-22-35`) | 3/3 | 3/3 | 1/3 | **7/9** (no change) |
+| 6 | + imported-name-not-exported check, in the edit result and the repair brief (`2026-10-27T05-12-23`) | 3/3 | 3/3 | 2/3 | **8/9** |
 
 What this does and does not show:
 
-* **Verification honesty held:** in all 36 trials the agent never reported *verified*
+* **Verification honesty held:** in all 54 trials the agent never reported *verified*
   for a result that failed the independent hidden-test judge (0 false successes).
   The failures were reported as `BLOCKED` or `NO CHANGES`.
 * The single-file and two-file bug fixes pass reliably with this model (6/6 in each of
@@ -164,6 +183,14 @@ What this does and does not show:
   the failure modes (mis-copied `edit_file` text, quitting early, malformed tool calls,
   false completion claims) and that each mitigation addressed one of them.
 
+## Desktop acceptance (real app, real model)
+
+`npm run acceptance:agent` (`electron . --acceptance-agent`) runs the actual Electron main process, preload, IPC proxy, disk-backed workspace, command runner and renderer chat panel against a real local model, with nothing in the agent path mocked. It checks, on files in a throwaway workspace: the plan card is shown and approved with a real click; model calls cross the main-process proxy and stream; the harness runs the tests through the real runner; files really change on disk; protected tests stay untouched; an **independent** hidden-test judge (run by the harness, not the agent) agrees with the agent's verdict; **Revert all changes** restores every file byte for byte; the renderer is torn down mid-run and, after restart, the run comes back BLOCKED/resumable and Resume finishes it; and network, destructive, inline-code and shell-operator commands are refused or need approval and execute nothing.
+
+It also found a real bug the mocks could not: the desktop runner's test output carries ANSI colour codes, which made the harness read "unknown" pass/fail counts and would have discarded failure details in repair prompts. Fixed and covered by a test.
+
+Scope: this proves the real Electron app run from source (`electron .`). It has **not** been run from an installed/packaged build (`electron-builder` output).
+
 ## Not done yet (honest list)
 
 * **No OS-level isolation.** Commands run as the user, in the project folder, with a
@@ -171,18 +198,13 @@ What this does and does not show:
   renderer; the main-process allowlist still checks only the executable, so a
   compromised renderer could bypass it. Project code the agent writes and runs can
   do anything user-level code can, including network access.
-* **Repository intelligence is basic.** The agent gets a file tree, `package.json`
-  scripts and `grep`/`read_file`. There is no symbol index, import/dependency graph,
-  framework detection or relevance-ranked context package yet.
-* **No persistent agent memory** is wired in (the app's `ProjectBrain` exists but is
-  not connected to the agent).
+* **Repository intelligence is syntactic.** Symbols and imports come from line-level parsing of JavaScript/TypeScript and Python. No type-aware resolution, no call graph, no framework detection, no embeddings/semantic search, other languages are file-listed and `grep`-able only.
+* **Memory is simple.** Relevance is keyword and file overlap; there is no summarisation or forgetting beyond the brain's 200-item cap, and memory is only as good as the evidence recorded (task outcomes, verification recipe, reverts).
 * **No specialist/multi-agent roles**, and the App Factory generator does not yet
   run on this runtime — they are two systems sharing the editor, not one runtime.
 * **No live in-editor decorations while the agent edits**: the edited file is
   brought to the front and the existing review dock lists the changes afterwards.
-* **Desktop paths not exercised end to end in a packaged app:** the real `CSExec`
-  runner, `start_dev_server`, and the streaming IPC were covered by unit tests and
-  the browser build, not by a packaged Electron run.
+* **Not run from an installed (packaged) build.** The real Electron app (`electron .`) is covered by `acceptance:agent` for plan/approve/edit/verify/revert/resume/permissions; `start_dev_server`, the interactive approval dialogs and a packaged installer run are not.
 * **The evaluation is small:** three tiny JavaScript tasks, one 7B model, CPU
   inference. It measures the harness and the failure modes; it is not a benchmark and
   says nothing about large repositories or other languages.

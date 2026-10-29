@@ -55,7 +55,7 @@ function setup(opts) {
   };
   win.window = win;
   const ctx = vm.createContext(win);
-  for (const f of ['app.chat.agent.js', 'engine.nagent.js', 'app.chat.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'dist', f), 'utf8'), ctx, { filename: f });
+  for (const f of ['app.chat.agent.js', 'engine.repointel.js', 'engine.nagent.js', 'app.chat.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'dist', f), 'utf8'), ctx, { filename: f });
   return { win, Chat: win.CSChat, FS, files, S, ed, E, reviews, jobs, script, seen, store, toasts, st: win.CSChat.core._state };
 }
 

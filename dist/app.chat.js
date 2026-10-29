@@ -450,6 +450,11 @@
       canWrite: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('write'); },
       canCommand: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('command'); },
       canNetwork: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('network'); },
+      // long-term project memory (Engine.ProjectBrain, stored with the project)
+      memory: E.ProjectBrain && E.ProjectBrain.get && E.ProjectBrain.remember ? {
+        all: function () { try { return (E.ProjectBrain.get() || {}).items || []; } catch (_) { return []; } },
+        remember: function (k, t, b, m) { return E.ProjectBrain.remember(k, t, b, m); }
+      } : null,
       canRepair: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('repair'); },
       jobsAvailable: function () { var X = win().CSExec; try { return !!(X && X.available && X.available()); } catch (_) { return false; } },
       runJob: function (job) { var X = win().CSExec; return X && typeof X[job] === 'function' ? X[job]() : Promise.reject(new Error('no runner for ' + job)); },

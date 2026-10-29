@@ -135,8 +135,11 @@
     var E = Engine(), S = w.S || {}, t = x.thread();
     // an open hunk review would keep showing the agent's text: close it first
     try { if (w.CSEditor && w.CSEditor.reviewing && w.CSEditor.reviewing()) w.CSEditor.endReview('replaced'); } catch (_) {}
+    var revertedFiles = (task.changes || []).map(function (c) { return c.path; });
     var r = task.reg.ws.revertAll();
     var n = r.reverted.length;
+    // the user rejecting a result is worth remembering: next time, do not assume that approach was accepted
+    try { NA().remember(x.agentEnv(), 'conventions', 'Reverted by the user: ' + String(task.goal || '').replace(/\s+/g, ' ').slice(0, 90), 'The user reverted all changes from this task (' + revertedFiles.slice(0, 8).join(', ') + '). The approach was not accepted; try a different one.', { type: 'reverted', files: revertedFiles.slice(0, 12), at: Date.now() }); } catch (_) {}
     Promise.resolve(E.FS && E.FS.__flush ? E.FS.__flush() : null).then(function () {
       if (S.ideFile && E.FS) { S.ideBuffer = E.FS.read(S.ideFile) || ''; S.ideDirty = false; if (!E.FS.isFile(S.ideFile)) S.ideFile = null; }
       task.changes = [];
