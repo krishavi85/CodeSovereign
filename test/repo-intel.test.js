@@ -117,6 +117,19 @@ module.exports = async function (t) {
     ];
     t.ok('anything that can supply names we cannot see is left alone (no false alarm)', opaque.every((src) => RI.create(mk({ '/a.js': src, '/impl.js': 'exports.zzz = 1;\n', '/b.js': "const { zzz } = require('./a');\n" })).importProblems().filter((x) => x.why === 'not-provided').length === 0));
     t.ok('importProblems can be limited to given files', RI.create(half).importProblems(['/src/text.js']).length === 0 && (() => { half._d['/src/text.js'] = half._d['/src/text.js'].replace('{ capitalize, slugify }', '{ capitalize }'); return RI.create(half).importProblems(['/src/format.js']).length === 1; })());
+    // aliased exports publish a name that no declaration has
+    const alias = mk({
+      '/a.js': "function internalName() {}\nmodule.exports = { publicName: internalName };\n",
+      '/b.js': "function other() {}\nmodule.exports.second = other;\n",
+      '/c.mjs': "function inner() {}\nexport { inner as renamed };\n",
+      '/use.js': "const { publicName } = require('./a');\nconst { second } = require('./b');\nimport { renamed } from './c.mjs';\n"
+    });
+    const ai = RI.create(alias); ai.refresh();
+    t.deepEqual('an alias is published under its alias (module.exports = { y: x })', ai.exportsOf('/a.js').sort(), ['publicName']);
+    t.deepEqual('module.exports.y = x publishes y', ai.exportsOf('/b.js'), ['second']);
+    t.deepEqual('export { x as y } publishes y', ai.exportsOf('/c.mjs'), ['renamed']);
+    t.deepEqual('importing the aliased names is not reported as missing', ai.importProblems(), []);
+    t.deepEqual('...but importing the internal name is', RI.create(mk({ '/a.js': "function internalName() {}\nmodule.exports = { publicName: internalName };\n", '/u.js': "const { internalName } = require('./a');\n" })).importProblems().map((x) => x.name), ['internalName']);
     const esm = mk({ '/a.js': "export function one() {}\nfunction hidden() {}\n", '/b.js': "import { one, hidden } from './a';\n" });
     t.deepEqual('ES modules: a declared but un-exported name is found', RI.create(esm).importProblems().map((x) => x.name), ['hidden']);
   }

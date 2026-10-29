@@ -913,9 +913,12 @@
     }
 
     // "src/format.js imports slugify from src/text.js, which does not export it": caught the moment it is written
-    function importNotes(only) {
+    // related: keep only problems that involve this file (as importer or as target), THEN take the first few, so
+    // problems that were already there in other files cannot crowd out the one the edit just caused
+    function importNotes(only, related) {
       if (!intel) return [];
       var probs = intel.importProblems(only);
+      if (related) probs = probs.filter(function (x) { return x.from === related || x.to === related; });
       return probs.slice(0, 3).map(function (x) {
         return x.from + ' imports "' + x.name + '" from ' + x.to + (x.why === 'declared-not-exported' ? ', which defines it but does NOT export it (add it to the exports there)' : ', which does not provide it');
       });
@@ -923,7 +926,7 @@
     function withImportNotes(res, args) {
       try {
         var p = args && args.path ? normPath(args.path) : null;
-        var notes = importNotes(null).filter(function (n) { return !p || n.indexOf(p) >= 0; });
+        var notes = importNotes(null, p);
         if (notes.length) return Object.assign({}, res, { text: String(res.text || '') + '\n\nHeads-up from the project index — this will fail when the code runs:\n- ' + notes.join('\n- ') });
       } catch (_) { /* a hint, never a failure */ }
       return res;
