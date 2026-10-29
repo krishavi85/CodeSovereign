@@ -556,6 +556,14 @@ module.exports = async function (t) {
     t.ok('the repair brief names the missing export as the likely cause', !!repairH && /Import problems found by the project index \(likely the cause\): \/src\/format\.js imports "slugify" from \/src\/text\.js, which defines it but does NOT export it/.test(repairH.msgs[1].content));
     t.ok('and the run ends verified', r.report.status === 'verified');
 
+    // 12e5. problems that were already in other files must not crowd out the one this edit just caused
+    const crowd = { '/package.json': PKG, '/src/text.js': 'function cap(s) { return s; }\nmodule.exports = { cap };\n', '/src/format.js': "const { cap } = require('./text');\nmodule.exports = { f: cap };\n", '/test/t.test.js': "test('t', () => {});\n" };
+    for (let i = 1; i <= 4; i++) { crowd['/old' + i + '.js'] = 'function a' + i + '() {}\nmodule.exports = { a' + i + ' };\n'; crowd['/user' + i + '.js'] = "const { missing" + i + " } = require('./old" + i + "');\n"; }
+    const regCrowd = NA.createRegistry({ env: makeEnv(crowd), mode: 'agent', profile: 'full', planApproved: true });
+    await regCrowd.call('edit_file', { path: '/src/text.js', old_text: 'function cap(s) { return s; }', new_text: 'function cap(s) { return s; }\nfunction slugify(t) { return t; }' }, {});
+    const crowded = await regCrowd.call('write_file', { path: '/src/format.js', content: "const { cap, slugify } = require('./text');\nmodule.exports = { f: (x) => slugify(cap(x)) };\n" }, {});
+    t.ok('four older mismatches elsewhere do not hide the one the edit just caused', /src\/format\.js imports "slugify" from \/src\/text\.js/.test(crowded.text) && !/missing1/.test(crowded.text));
+
     // 12f. project memory (M6): a task records evidence-backed facts; a later task is shown the relevant ones
     const memStore = []; // newest last, like ProjectBrain
     const memory = { all: () => memStore.slice(), remember: (k, ti, b, m) => { memStore.push({ kind: k, title: ti, body: b, meta: m || {}, at: Date.now() }); } };

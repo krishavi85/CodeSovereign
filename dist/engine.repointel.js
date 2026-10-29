@@ -84,6 +84,9 @@
     var ed = /export\s*\{([^}]*)\}/g, em;
     while ((em = ed.exec(text))) em[1].split(',').forEach(function (p) { var k = /^\s*([A-Za-z_$][\w$]*)(?:\s+as\s+([A-Za-z_$][\w$]*))?/.exec(p); if (k) exported[k[2] || k[1]] = 1; });
     symbols.forEach(function (s) { if (exported[s.name]) s.exported = true; });
+    // names as PUBLISHED: an alias (export { x as y }, module.exports = { y: x }, module.exports.y = x) publishes y,
+    // which is not the name of any declaration
+    var published = Object.keys(exported);
 
     var re = /(?:const|let|var)\s*(\{[^}]*\}|[A-Za-z_$][\w$]*)\s*=\s*require\(\s*['"]([^'"]+)['"]\s*\)|import\s+(?:([\w$*\s{},]+?)\s+from\s+)?['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\)/g, m2;
     while ((m2 = re.exec(text))) {
@@ -94,7 +97,7 @@
       else if (clause && /^[A-Za-z_$][\w$]*$/.test(clause.trim())) names.push(clause.trim());
       if (spec && !imports.some(function (x) { return x.spec === spec && x.line === lineOf(text, m2.index); })) imports.push({ spec: spec, names: names, line: lineOf(text, m2.index) });
     }
-    return { symbols: symbols, imports: imports };
+    return { symbols: symbols, imports: imports, published: published };
   }
 
   function extractPy(text) {
@@ -134,7 +137,7 @@
         var s = sig(text);
         if (cache[p] && cache[p].sig === s) { reused++; return; }
         var ex; try { ex = lang === 'js' ? extractJS(text) : extractPy(text); } catch (_) { ex = { symbols: [], imports: [] }; }
-        cache[p] = { sig: s, lang: lang, symbols: ex.symbols, imports: ex.imports };
+        cache[p] = { sig: s, lang: lang, symbols: ex.symbols, imports: ex.imports, published: ex.published || [] };
         parsed++; dirtyGraph = true;
       });
       Object.keys(cache).forEach(function (p) { if (!seen[p]) { delete cache[p]; dirtyGraph = true; } });
@@ -230,7 +233,13 @@
       return { imports: out, importedBy: (graph.inn[path] || []).slice(), external: (externals[path] || []).slice() };
     }
 
-    function exportsOf(path) { return ((cache[path] && cache[path].symbols) || []).filter(function (s) { return s.exported; }).map(function (s) { return s.name; }); }
+    // every name the file publishes: exported declarations plus aliases (an alias names no declaration)
+    function exportsOf(path) {
+      var c = cache[path] || {}, out = [];
+      (c.symbols || []).forEach(function (s) { if (s.exported && out.indexOf(s.name) < 0) out.push(s.name); });
+      (c.published || []).forEach(function (n) { if (out.indexOf(n) < 0) out.push(n); });
+      return out;
+    }
 
     // Named imports of project files that the target does not provide. High precision on purpose:
     //  - "declared but not exported": the target defines the name (function/class/const) yet does not export it
