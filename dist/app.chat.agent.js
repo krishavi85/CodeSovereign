@@ -263,20 +263,37 @@
   function runLoop(opts) {
     var max = opts.maxTurns || MAX_TURNS, tb = opts.toolbox;
     var names = tb.defs.map(function (d) { return d.name; });
-    var convo = opts.messages.slice(), seen = {}, turns = 0, repeats = 0, useTools = true;
+    var convo = opts.messages.slice(), seen = {}, turns = 0, repeats = 0, useTools = true, malformed = 0;
     var cb = function (n) { return typeof opts[n] === 'function' ? opts[n] : function () {}; };
     var aborted = function () { return !!(opts.signal && opts.signal.aborted); };
 
+    // opts.shouldStop() -> a reason string (e.g. 'budget') ends the run cleanly
+    var stopReason = function () { return typeof opts.shouldStop === 'function' ? opts.shouldStop() : null; };
+    var offered = function () { return typeof tb.activeDefs === 'function' ? tb.activeDefs() : tb.defs; };
+
     function turn() {
       if (aborted()) return Promise.resolve({ reason: 'aborted', turns: turns, text: '' });
+      var sr = stopReason();
+      if (sr) return Promise.resolve({ reason: sr, turns: turns, text: '' });
       if (turns >= max) return Promise.resolve({ reason: 'max-turns', turns: turns, text: '' });
       turns++;
       cb('onTurnStart')(turns);
-      return opts.chatStream(convo, { tools: useTools ? tb.defs : undefined, signal: opts.signal, onDelta: cb('onText') }).then(function (r) {
+      if (typeof opts.compact === 'function') { try { convo = opts.compact(convo) || convo; } catch (_) {} }
+      var copts = Object.assign({}, opts.chatOptions || {}, { tools: useTools ? offered() : undefined, signal: opts.signal, onDelta: cb('onText') });
+      return opts.chatStream(convo, copts).then(function (r) {
         return r;
       }, function (e) {
+        var emsg = String((e && e.message) || e);
+        // The server could not parse the tool call the model wrote (small local
+        // models do this). Ask for it again, bounded, instead of ending the run.
+        if (/HTTP 4\d\d|HTTP 500/.test(emsg) && /looks like object|can't find closing|invalid (json|character)|unexpected end of json|failed to parse|error parsing tool/i.test(emsg) && malformed < 2 && !aborted()) {
+          malformed++;
+          convo.push({ role: 'user', content: 'Your last reply contained a tool call with invalid JSON, so it could not be read. Reply again. When you call a tool, give its arguments as valid JSON.' });
+          turns--;
+          return null;
+        }
         // a provider that rejects the tools parameter: retry this turn without tools, once
-        if (useTools && turns === 1 && /HTTP 4\d\d/.test(String((e && e.message) || e)) && !aborted()) {
+        if (useTools && turns === 1 && /HTTP 4\d\d/.test(emsg) && !aborted()) {
           useTools = false; cb('onNoTools')();
           cb('onTurnEnd')({ text: '', calls: [], aborted: false, retry: true });
           turns--;
@@ -295,26 +312,43 @@
         if (r.aborted || aborted()) return { reason: 'aborted', turns: turns, text: text };
         if (!calls.length) return { reason: 'done', turns: turns, text: text };
         convo.push({ role: 'assistant', content: text, tool_calls: calls.map(function (c) { return { id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments || '{}' } }; }) });
-        return calls.reduce(function (p, c) {
+        var hooks = { approve: opts.approve, signal: opts.signal };
+        // prepare every call: parse its arguments, count repeats, decide how to run it
+        var prepared = calls.map(function (c) {
+          var args = null;
+          try { args = c.arguments ? JSON.parse(c.arguments) : {}; } catch (_) { args = null; }
+          var key = c.name + ' ' + JSON.stringify(args);
+          seen[key] = (seen[key] || 0) + 1;
+          return { c: c, args: args, shown: { id: c.id, name: c.name, args: args || {} }, count: seen[key] };
+        });
+        var start = function (it) {
+          if (it.args === null) return Promise.resolve(fail('The arguments were not valid JSON. Send a JSON object.'));
+          if (it.count > 2) { repeats++; return Promise.resolve(fail('You have made this exact call ' + it.count + ' times already. Use a different approach or finish and explain.')); }
+          return tb.call(it.c.name, it.args, hooks);
+        };
+        var finishOne = function (it, res) {
+          cb('onToolDone')(it.shown, res);
+          convo.push({ role: 'tool', tool_call_id: it.c.id, content: res.text });
+        };
+        var after = function () {
+          if (aborted()) return { reason: 'aborted', turns: turns, text: '' };
+          if (repeats >= 2) return { reason: 'repeat', turns: turns, text: '' };
+          var s2 = stopReason();
+          return s2 ? { reason: s2, turns: turns, text: '' } : null;
+        };
+        // read-only calls the toolbox marks parallel-safe run together; anything else runs in order
+        if (prepared.length > 1 && typeof tb.parallelSafe === 'function' && prepared.every(function (it) { return it.args !== null && it.count <= 2 && tb.parallelSafe(it.c.name); })) {
+          prepared.forEach(function (it) { cb('onToolStart')(it.shown); });
+          return Promise.all(prepared.map(start)).then(function (results) {
+            prepared.forEach(function (it, i) { finishOne(it, results[i]); });
+            return after() || turn();
+          });
+        }
+        return prepared.reduce(function (p, it) {
           return p.then(function (stop) {
             if (stop) return stop;
-            var args = null;
-            try { args = c.arguments ? JSON.parse(c.arguments) : {}; } catch (_) { args = null; }
-            var shown = { id: c.id, name: c.name, args: args || {} };
-            cb('onToolStart')(shown);
-            var key = c.name + ' ' + JSON.stringify(args);
-            seen[key] = (seen[key] || 0) + 1;
-            var run;
-            if (args === null) run = Promise.resolve(fail('The arguments were not valid JSON. Send a JSON object.'));
-            else if (seen[key] > 2) { repeats++; run = Promise.resolve(fail('You have made this exact call ' + seen[key] + ' times already. Use a different approach or finish and explain.')); }
-            else run = tb.call(c.name, args, { approve: opts.approve });
-            return run.then(function (res) {
-              cb('onToolDone')(shown, res);
-              convo.push({ role: 'tool', tool_call_id: c.id, content: res.text });
-              if (aborted()) return { reason: 'aborted', turns: turns, text: '' };
-              if (repeats >= 2) return { reason: 'repeat', turns: turns, text: '' };
-              return null;
-            });
+            cb('onToolStart')(it.shown);
+            return start(it).then(function (res) { finishOne(it, res); return after(); });
           });
         }, Promise.resolve(null)).then(function (stop) { return stop || turn(); });
       });

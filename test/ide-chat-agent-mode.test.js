@@ -55,7 +55,7 @@ function setup(opts) {
   };
   win.window = win;
   const ctx = vm.createContext(win);
-  for (const f of ['app.chat.agent.js', 'app.chat.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'dist', f), 'utf8'), ctx, { filename: f });
+  for (const f of ['app.chat.agent.js', 'engine.nagent.js', 'app.chat.js']) vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'dist', f), 'utf8'), ctx, { filename: f });
   return { win, Chat: win.CSChat, FS, files, S, ed, E, reviews, jobs, script, seen, store, toasts, st: win.CSChat.core._state };
 }
 
@@ -66,10 +66,10 @@ module.exports = async function (t) {
   {
     const x = setup();
     t.equal('Ask is the default mode', x.Chat.mode, 'ask');
-    x.Chat.setMode('agent');
-    t.ok('the mode is switchable and remembered', x.Chat.mode === 'agent' && x.store['cs.chat.mode.v1'] === 'agent');
+    x.Chat.setMode('edit');
+    t.ok('the mode is switchable and remembered', x.Chat.mode === 'edit' && x.store['cs.chat.mode.v1'] === 'edit');
     const y = setup({ store: x.store });
-    t.equal('a reload comes back in the same mode', y.Chat.mode, 'agent');
+    t.equal('a reload comes back in the same mode', y.Chat.mode, 'edit');
 
     const z = setup();
     z.script.push({ text: 'plain answer', toolCalls: [] });
@@ -80,7 +80,7 @@ module.exports = async function (t) {
   /* ---------- a read + propose run ---------- */
   {
     const x = setup();
-    x.Chat.setMode('agent');
+    x.Chat.setMode('edit');
     x.script.push(
       { text: 'Let me look.', toolCalls: [tc('read_file', { path: '/a.js' }, 'c1')] },
       { text: '', toolCalls: [tc('write_file', { path: '/a.js', content: 'let a = 2;\n' }, 'c2')] },
@@ -91,7 +91,9 @@ module.exports = async function (t) {
     t.ok('send resolves with the final answer', last.role === 'assistant' && /Changed a to 2/.test(last.content));
     const tools = x.Chat.thread().messages.filter((m) => m.role === 'tool');
     t.ok('tool rows record status, a summary and the result', tools.every((m) => m.status === 'done') && /\/a\.js/.test(tools[0].summary) && /let a = 1/.test(tools[0].result));
-    t.ok('the agent system prompt and all six tools are used', /write_file/.test(x.seen[0].msgs[0].content) && x.seen[0].tools.length === 6);
+    const offered = x.seen[0].tools.map((d) => d.name);
+    t.ok('the edit-mode system prompt is used and the original six tools are offered', /write_file/.test(x.seen[0].msgs[0].content) && ['list_dir', 'read_file', 'grep', 'get_problems', 'write_file', 'run_command'].every((n) => offered.indexOf(n) >= 0));
+    t.ok('...together with the new targeted-edit tools (and nothing that could run unasked)', ['edit_file', 'create_file', 'apply_patch'].every((n) => offered.indexOf(n) >= 0) && offered.length === 9 && offered.indexOf('run_tests') < 0);
     t.ok('the user\'s question is in the prompt', x.seen[0].msgs[x.seen[0].msgs.length - 1].content === 'make a equal 2');
     t.equal('write_file only queued a proposal: the project is unchanged', x.files['/a.js'], 'let a = 1;\n');
     t.deepEqual('the proposal is available for review', x.Chat.proposals().map((p) => p.path + ':' + p.after.trim()), ['/a.js:let a = 2;']);
@@ -108,7 +110,7 @@ module.exports = async function (t) {
   /* ---------- reviewing proposals ---------- */
   {
     const x = setup();
-    x.Chat.setMode('agent');
+    x.Chat.setMode('edit');
     x.script.push({ text: '', toolCalls: [tc('write_file', { path: '/a.js', content: 'let a = 2;\n' }, 'w1'), tc('write_file', { path: '/c.js', content: 'new\n' }, 'w2')] }, { text: 'done', toolCalls: [] });
     await x.Chat.send('do two things');
     t.equal('two proposals are queued', x.Chat.proposals().length, 2);
@@ -129,7 +131,7 @@ module.exports = async function (t) {
 
     // chained review of several
     const y = setup();
-    y.Chat.setMode('agent');
+    y.Chat.setMode('edit');
     y.script.push({ text: '', toolCalls: [tc('write_file', { path: '/a.js', content: 'A2\n' }, 'w1'), tc('write_file', { path: '/b.js', content: 'B2\n' }, 'w2')] }, { text: 'ok', toolCalls: [] });
     await y.Chat.send('both');
     y.Chat.reviewAll();
@@ -143,7 +145,7 @@ module.exports = async function (t) {
     t.ok('the chain ends when nothing is left', y.reviews.length === 2 && y.Chat.proposals().length === 0);
 
     const z = setup();
-    z.Chat.setMode('agent');
+    z.Chat.setMode('edit');
     z.script.push({ text: '', toolCalls: [tc('write_file', { path: '/a.js', content: 'Z\n' })] }, { text: 'ok', toolCalls: [] });
     await z.Chat.send('x');
     z.Chat.discardProposal('/a.js');
@@ -154,7 +156,7 @@ module.exports = async function (t) {
     t.equal('Discard all empties the tray', z.Chat.proposals().length, 0);
 
     const d = setup();
-    d.Chat.setMode('agent');
+    d.Chat.setMode('edit');
     d.S.ideDirty = true; d.S.ideBuffer = 'edited\n';
     d.script.push({ text: '', toolCalls: [tc('write_file', { path: '/b.js', content: 'B3\n' })] }, { text: 'ok', toolCalls: [] });
     await d.Chat.send('x');
@@ -165,7 +167,7 @@ module.exports = async function (t) {
   /* ---------- the agent sees unsaved edits ---------- */
   {
     const x = setup();
-    x.Chat.setMode('agent');
+    x.Chat.setMode('edit');
     x.S.ideDirty = true; x.S.ideBuffer = 'let a = 99; // unsaved\n';
     x.script.push({ text: '', toolCalls: [tc('read_file', { path: '/a.js' })] }, { text: 'seen', toolCalls: [] });
     await x.Chat.send('read it');
@@ -175,7 +177,7 @@ module.exports = async function (t) {
   /* ---------- run_command approval ---------- */
   {
     const x = setup();
-    x.Chat.setMode('agent');
+    x.Chat.setMode('edit');
     x.script.push({ text: '', toolCalls: [tc('run_command', { job: 'test' }, 'r1')] }, { text: 'tests pass', toolCalls: [] });
     const p = x.Chat.send('run the tests');
     await wait(60);
@@ -186,7 +188,7 @@ module.exports = async function (t) {
     t.ok('approving runs the job and the run continues', x.jobs.join() === 'test' && tm.status === 'done' && /exit 0/.test(tm.summary) && last.content === 'tests pass');
 
     const y = setup();
-    y.Chat.setMode('agent');
+    y.Chat.setMode('edit');
     y.script.push({ text: '', toolCalls: [tc('run_command', { job: 'build' }, 'r2')] }, { text: 'skipped', toolCalls: [] });
     const p2 = y.Chat.send('build it');
     await wait(60);
@@ -196,7 +198,7 @@ module.exports = async function (t) {
     t.ok('declining runs nothing and the model is told', tm2.status === 'denied' && y.jobs.length === 0 && y.seen[1].msgs.some((m) => m.role === 'tool' && /declined/.test(m.content)));
 
     const z = setup();
-    z.Chat.setMode('agent');
+    z.Chat.setMode('edit');
     z.script.push({ text: '', toolCalls: [tc('run_command', { job: 'test' }, 'r3')] }, { text: 'never', toolCalls: [] });
     const p3 = z.Chat.send('run');
     await wait(60);
@@ -205,14 +207,14 @@ module.exports = async function (t) {
     t.ok('Stop while waiting for approval declines it and ends the run', z.jobs.length === 0 && z.Chat.busy === false && z.Chat.thread().messages.filter((m) => m.role === 'tool')[0].status === 'denied');
 
     const web = setup({ noExec: true });
-    web.Chat.setMode('agent');
+    web.Chat.setMode('edit');
     web.script.push({ text: '', toolCalls: [tc('run_command', { job: 'test' }, 'r4')] }, { text: 'ok', toolCalls: [] });
     await web.Chat.send('run');
     const wm = web.Chat.thread().messages.filter((m) => m.role === 'tool')[0];
     t.ok('without the desktop app the command is blocked without asking', wm.status === 'blocked' && Object.keys(web.st.approvals).length === 0);
 
     const lo = setup({ deny: ['write', 'command'] });
-    lo.Chat.setMode('agent');
+    lo.Chat.setMode('edit');
     lo.script.push({ text: '', toolCalls: [tc('write_file', { path: '/a.js', content: 'x' }, 'w'), tc('run_command', { job: 'test' }, 'c')] }, { text: 'ok', toolCalls: [] });
     await lo.Chat.send('go');
     t.ok('the autonomy level is honoured for writes and commands', lo.Chat.proposals().length === 0 && lo.jobs.length === 0 && lo.Chat.thread().messages.filter((m) => m.role === 'tool').every((m) => m.status === 'blocked'));
@@ -221,26 +223,26 @@ module.exports = async function (t) {
   /* ---------- failure modes ---------- */
   {
     const x = setup();
-    x.Chat.setMode('agent');
+    x.Chat.setMode('edit');
     x.script.push(() => Promise.reject(new Error('HTTP 400 tools unsupported')), { text: 'I can only chat.', toolCalls: [] });
     const last = await x.Chat.send('hi');
     t.ok('a model that rejects tools still answers, with a note saying why', last.content === 'I can only chat.' && x.Chat.thread().messages.some((m) => m.role === 'note' && /does not accept tools/.test(m.content)));
 
     const y = setup();
-    y.Chat.setMode('agent');
+    y.Chat.setMode('edit');
     y.script.push(() => Promise.reject(new Error('HTTP 500 down')));
     const e = await y.Chat.send('hi');
     t.ok('a hard failure becomes an error message and frees the panel', e.error === true && /HTTP 500/.test(e.content) && y.Chat.busy === false);
 
     const z = setup();
-    z.Chat.setMode('agent');
+    z.Chat.setMode('edit');
     let n = 0;
     z.script.push(...Array.from({ length: 20 }, () => () => Promise.resolve({ text: '', toolCalls: [tc('grep', { query: 'q' + (++n) })] })));
     await z.Chat.send('loop forever');
     t.ok('a run that never settles is stopped with a visible note', z.Chat.thread().messages.some((m) => m.role === 'note' && /Stopped after 12 steps/.test(m.content)) && z.Chat.busy === false);
 
     const w = setup();
-    w.Chat.setMode('agent');
+    w.Chat.setMode('edit');
     w.script.push((msgs, o) => new Promise((resolve) => { o.signal.addEventListener('abort', () => resolve({ text: 'par', toolCalls: [], aborted: true })); setTimeout(() => w.Chat.stop(), 20); }));
     const s = await w.Chat.send('stop me');
     t.ok('Stop mid-reply keeps the partial text and ends cleanly', w.Chat.busy === false && w.Chat.thread().messages.some((m) => m.role === 'assistant' && m.content === 'par' && m.stopped));

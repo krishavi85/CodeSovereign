@@ -483,6 +483,58 @@
     return deltas;
   }
 
+  // Ollama's native /api/chat streams newline-delimited JSON:
+  //   {"message":{"content":"tok","tool_calls":[{"function":{"name","arguments":{...}}}]},"done":false}
+  // It is used (instead of the OpenAI-compatible route) when a context size is
+  // requested, because only the native API honours options.num_ctx — over /v1
+  // Ollama keeps its small default and silently truncates the prompt.
+  function ndjsonFeed(st, chunk) {
+    st.buf += chunk;
+    const lines = st.buf.split(/\r?\n/);
+    st.buf = lines.pop();
+    const deltas = [];
+    lines.forEach(function (line) {
+      line = line.trim();
+      if (!line) return;
+      let j; try { j = JSON.parse(line); } catch (_) { return; }
+      st.sawEvent = true;
+      if (j.error) { st.error = String(j.error); return; }
+      const m = j.message || {};
+      if (typeof m.content === "string" && m.content) { st.text += m.content; deltas.push(m.content); }
+      (m.tool_calls || []).forEach(function (tc) {
+        const f = tc.function || {};
+        let args = f.arguments;
+        if (args && typeof args === "object") args = JSON.stringify(args);
+        st.toolCalls.push({ id: tc.id || "", name: f.name || "", arguments: args || "{}" });
+      });
+      if (j.done) { st.done = true; st.finish = j.done_reason || "stop"; }
+    });
+    return deltas;
+  }
+
+  // OpenAI-shaped messages -> Ollama's: tool-call arguments are objects, and a
+  // tool result names the tool it answers.
+  function toOllamaMessages(msgs) {
+    const nameById = {};
+    return msgs.map(function (m) {
+      if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
+        return { role: "assistant", content: m.content || "", tool_calls: m.tool_calls.map(function (tc) {
+          nameById[tc.id] = tc.function && tc.function.name;
+          let a = tc.function && tc.function.arguments;
+          if (typeof a === "string") { try { a = JSON.parse(a); } catch (_) { a = {}; } }
+          return { function: { name: tc.function && tc.function.name, arguments: a || {} } };
+        }) };
+      }
+      if (m.role === "tool") return { role: "tool", content: String(m.content == null ? "" : m.content), tool_name: nameById[m.tool_call_id] || undefined };
+      return { role: m.role, content: String(m.content == null ? "" : m.content) };
+    });
+  }
+
+  function isOllamaEndpoint(provider, cfg) {
+    const base = String((provider && provider.baseUrl) || (cfg && cfg.baseUrl) || "");
+    return (provider && provider.id === "ollama") || /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]):11434(\/|$)/.test(base);
+  }
+
   // Streams a completion. opts.onDelta(text) fires per piece; opts.signal
   // (AbortSignal) cancels. Resolves { text, model, provider, aborted, toolCalls,
   // finish }. A provider that ignores stream:true and answers with plain JSON is
@@ -494,22 +546,34 @@
     const provider = resolveProvider(cfg);
     if (!provider.baseUrl) throw new Error("Provider has no baseUrl.");
     const msgs = typeof messages === "string" ? [{ role: "user", content: messages }] : messages;
-    const url = provider.baseUrl.replace(/\/+$/, "") + (provider.chatPath || "/v1/chat/completions");
+    // opts.ollamaNative forces the native API for an Ollama server on a non-default port
+    const native = !!(opts.extraBody && opts.extraBody.options && (opts.ollamaNative || isOllamaEndpoint(provider, cfg)));
+    const base = provider.baseUrl.replace(/\/+$/, "");
+    const url = native ? base + "/api/chat" : base + (provider.chatPath || "/v1/chat/completions");
     const headers = { "Content-Type": "application/json" };
     if (cfg.apiKey) headers[provider.keyHeader || "Authorization"] = (provider.keyPrefix || "Bearer ") + cfg.apiKey;
-    const body = { model: cfg.model || provider.defaultModel || "auto", messages: msgs, stream: true,
-      temperature: opts.temperature == null ? 0.2 : opts.temperature, max_tokens: opts.maxTokens || 4096 };
-    if (Array.isArray(opts.tools) && opts.tools.length) {
-      body.tools = opts.tools.map(function (t) {
-        return { type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } };
-      });
+    const tools = Array.isArray(opts.tools) && opts.tools.length ? opts.tools.map(function (t) {
+      return { type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } };
+    }) : null;
+    let body;
+    if (native) {
+      body = { model: cfg.model || provider.defaultModel || "auto", messages: toOllamaMessages(msgs), stream: true,
+        options: Object.assign({ temperature: opts.temperature == null ? 0.2 : opts.temperature, num_predict: opts.maxTokens || 4096 }, opts.extraBody.options) };
+      if (tools) body.tools = tools;
+    } else {
+      body = { model: cfg.model || provider.defaultModel || "auto", messages: msgs, stream: true,
+        temperature: opts.temperature == null ? 0.2 : opts.temperature, max_tokens: opts.maxTokens || 4096 };
+      if (tools) body.tools = tools;
+      // provider-specific body fields for OpenAI-compatible servers
+      if (opts.extraBody && typeof opts.extraBody === "object") Object.assign(body, opts.extraBody);
     }
     const st = sseState();
     let raw = "", aborted = false;
     const onDelta = typeof opts.onDelta === "function" ? opts.onDelta : function () {};
+    const feed = native ? ndjsonFeed : sseFeed;
     const onChunk = function (text) {
       raw += text;
-      sseFeed(st, text).forEach(function (d) { try { onDelta(d); } catch (_) {} });
+      feed(st, text).forEach(function (d) { try { onDelta(d); } catch (_) {} });
     };
     const timeoutMs = opts.timeoutMs || 300000;
     let status = 200, failed = null;
@@ -543,6 +607,8 @@
     if (status >= 400) {
       throw new Error("HTTP " + status + " " + String(raw).slice(0, 240));
     }
+    if (native && st.buf.trim()) feed(st, "\n");        // a final line without a newline
+    if (st.error && !aborted) throw new Error("Ollama: " + st.error);
     if (!aborted && !st.sawEvent && raw) {
       // not SSE: a plain JSON completion
       let data = null; try { data = JSON.parse(raw); } catch (_) {}
@@ -3706,6 +3772,8 @@
     chatStream,
     _sseState: sseState,
     _sseFeed: sseFeed,
+    _ndjsonFeed: ndjsonFeed,
+    _toOllamaMessages: toOllamaMessages,
     isLocalEndpoint,
     needsApiKey,
     authToken,

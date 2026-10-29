@@ -41,6 +41,16 @@ const t = {
   }
 };
 
+// A test file whose promise never settles leaves nothing on the event loop, so
+// Node would exit 0 and silently skip the rest. Treat that as a failure.
+let finished = false, currentFile = null;
+process.on('exit', (code) => {
+  if (!finished && code === 0) {
+    console.error('\n[run] test run ended before it finished — a promise in ' + currentFile + ' never settled (a hung await?)');
+    process.exitCode = 1;
+  }
+});
+
 (async () => {
   const only = process.argv[2];
   const dir = __dirname;
@@ -53,6 +63,7 @@ const t = {
 
   for (const f of files) {
     console.log('\n' + f);
+    currentFile = f;
     try {
       await require(path.join(dir, f))(t);
     } catch (e) {
@@ -61,6 +72,7 @@ const t = {
     }
   }
 
+  finished = true;
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) { console.log('failed: ' + failures.join(', ')); process.exit(1); }
 })();

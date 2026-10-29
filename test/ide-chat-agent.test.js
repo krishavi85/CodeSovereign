@@ -248,6 +248,20 @@ module.exports = async function (t) {
       t.ok('the loop routes a command to the approval hook, and a decline reaches the model', reqs.join() === 'lint' && env.calls.jobs.length === 0 && s.seen[1].msgs.some((m) => m.role === 'tool' && /declined/.test(m.content)));
     }
 
+    // the server could not parse a tool call the model wrote: ask again, bounded
+    {
+      const tb = A.createToolbox(envFor(FILES));
+      let n = 0;
+      const s = mkStream([() => (++n <= 2 ? Promise.reject(new Error('HTTP 400 {"error":"Value looks like object, but can\'t find closing \'}\' symbol"}')) : Promise.resolve({ text: 'recovered', toolCalls: [] }))]);
+      const res = await A.runLoop({ chatStream: s.fn, messages: [{ role: 'user', content: 'x' }], toolbox: tb });
+      t.ok('a malformed tool call rejected by the server is retried, with a corrective note', res.reason === 'done' && res.text === 'recovered' && s.seen.length === 3 && /invalid JSON/.test(s.seen[2].msgs[s.seen[2].msgs.length - 1].content));
+      t.equal('the retries do not use up the turn budget', res.turns, 1);
+      let k = 0, threw = null;
+      const s2 = mkStream([() => { k++; return Promise.reject(new Error('HTTP 400 {"error":"Value looks like object, but can\'t find closing \'}\' symbol"}')); }]);
+      try { await A.runLoop({ chatStream: s2.fn, messages: [{ role: 'user', content: 'x' }], toolbox: tb }); } catch (e) { threw = e; }
+      t.ok('a model that keeps failing is retried twice, then once without tools, and the error then surfaces', !!threw && /looks like object/.test(threw.message) && k === 4);
+    }
+
     // provider rejects tools
     {
       const tb = A.createToolbox(envFor(FILES));
