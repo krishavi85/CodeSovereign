@@ -143,7 +143,8 @@ async function setupApiServer(opts) {
   if (a.code !== 0) return { ok: false, error: 'hermes config set API_SERVER_ENABLED failed: ' + (a.stderr || a.stdout).trim().slice(0, 300) };
   const b = await run(bin(), ['config', 'set', 'API_SERVER_KEY', key], 30000);
   if (b.code !== 0) return { ok: false, error: 'hermes config set API_SERVER_KEY failed: ' + (b.stderr || b.stdout).trim().replace(key, '***').slice(0, 300) };
-  return { ok: true, key };       // the caller stores it in the OS keychain; it is not kept here
+  // a gateway we started keeps the key it was started with: tell the caller so it can restart it
+  return { ok: true, key, gatewayWasRunning: gatewayRunning() };       // the caller stores the key in the OS keychain; it is not kept here
 }
 
 /* ---- is the API server answering? (GET /v1/models, the same probe the app uses) ---- */

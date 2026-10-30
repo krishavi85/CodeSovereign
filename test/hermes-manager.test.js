@@ -135,7 +135,7 @@ module.exports = async function (t) {
     csBehaviour = (bin, args) => (args[0] === '--version' ? { code: 0, stdout: 'hermes 0.9.1' } : { code: 0 });
     r = await mgr.setupApiServer();
     const sets = calls.cs.filter((x) => x.args[0] === 'config');
-    t.ok('the documented config commands are run, enabling the server and setting a key', r.ok === true && sets.length === 2 && sets[0].args.join(' ') === 'config set API_SERVER_ENABLED true' && sets[1].args.slice(0, 3).join(' ') === 'config set API_SERVER_KEY');
+    t.ok('the documented config commands are run, enabling the server and setting a key (and no gateway of ours was running to restart)', r.ok === true && r.gatewayWasRunning === false && sets.length === 2 && sets[0].args.join(' ') === 'config set API_SERVER_ENABLED true' && sets[1].args.slice(0, 3).join(' ') === 'config set API_SERVER_KEY');
     t.ok('the key is random (48 hex chars), differs between calls, and is what was handed to Hermes', /^[0-9a-f]{48}$/.test(r.key) && sets[1].args[3] === r.key && (await mgr.setupApiServer()).key !== r.key);
     mgr._reset();
     csBehaviour = (bin, args) => (args[0] === '--version' ? { code: 0, stdout: 'hermes 0.9.1' } : (args[2] === 'API_SERVER_KEY' ? { code: 1, stderr: 'cannot write ' + args[3] } : { code: 0 }));

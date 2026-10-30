@@ -396,17 +396,21 @@ function hermesMgrRefresh() {
   const H = hermesDesktop(); if (!H) return;
   const cfg = (window.Engine && Engine.LLM && Engine.LLM.getConfig) ? Engine.LLM.getConfig() : {};
   S.hermesMgr = S.hermesMgr || {};
+  const failed = function (msg) { S.hermesMgr.st = null; S.hermesMgr.err = String(msg || 'the status check failed'); renderAll(); };
   H.getStatus(cfg.hermesAgentKey || '').then(function (r) {
-    S.hermesMgr.st = (r && r.ok !== false) ? (r.value || r.data || r) : null;
+    if (!r || r.ok === false) return failed(r && r.error);
+    S.hermesMgr.err = '';
+    S.hermesMgr.st = r.value || r.data || r;
     const api = S.hermesMgr.st && S.hermesMgr.st.api;
     if (api) S.hermesAgentStatus = Object.assign({ url: cfg.hermesAgentUrl || 'http://127.0.0.1:8642', at: Date.now() }, api);
     renderAll();
-  }).catch(function () {});
+  }).catch(function (e) { failed(e && e.message); });
 }
 function hermesMgrAct(name) {
   const H = hermesDesktop(); if (!H) return;
   const m = S.hermesMgr = S.hermesMgr || {};
   if (m.busy) return;
+  if (name === 'recheck') { m.err = ''; hermesMgrRefresh(); renderAll(); return; }
   const cfg = (window.Engine && Engine.LLM && Engine.LLM.getConfig) ? Engine.LLM.getConfig() : {};
   m.busy = name; m.msg = ''; renderAll();
   const done = function (msg, good) { m.busy = null; m.msg = msg || ''; if (msg) toast(msg, good ? '#34d399' : '#f59e0b'); S.hermesAgentStatus = null; hermesMgrRefresh(); renderAll(); };
@@ -424,7 +428,14 @@ function hermesMgrAct(name) {
     if (name === 'api' && r.ok && r.key) {
       // the key goes straight to the OS keychain (Engine.LLM.setConfig is wrapped by the desktop layer)
       Engine.LLM.setConfig({ hermesAgentKey: r.key });
-      return done('Hermes API server enabled; the key is saved in your credential store.', true);
+      if (r.gatewayWasRunning) {
+        // a running gateway keeps the key it started with: restart ours so the app and the gateway agree
+        return Promise.resolve(H.stopGateway()).then(function () { return H.startGateway(r.key); }).then(function (s2) {
+          s2 = unwrap(s2) || {};
+          return done(s2.ready ? 'New key saved and the Hermes gateway restarted with it.' : 'New key saved, but the restarted gateway did not answer yet: ' + (s2.error || 'check again in a moment.'), !!s2.ready);
+        });
+      }
+      return done('Hermes API server enabled; the key is saved in your credential store. If you started Hermes yourself, restart it so it uses the new key.', true);
     }
     if (r.ok === false) return done(r.error === 'declined' ? 'Cancelled.' : (r.error || 'That step failed.'), false);
     if (name === 'install') return done(r.installedButNotFound ? r.note : 'Hermes Agent installed' + (r.version ? ' (v' + r.version + ')' : '') + '. Next: choose a model.', !r.installedButNotFound);
@@ -447,7 +458,7 @@ function renderHermesSteps(cfg) {
   const btn = (act, label, enabled, primary) => '<button class="btn ' + (primary ? 'primary' : 'ghost') + '" style="padding:4px 10px;font-size:11.5px" ' + (enabled && !busy ? '' : 'disabled') + ' onclick="hermesMgrAct(\'' + act + '\')">' + (busy === act ? 'Working…' : label) + '</button>';
   const row = (done, title, detail, action) => '<div style="display:flex;align-items:center;gap:8px;font-size:12px"><span style="width:16px;color:' + (done ? 'var(--good)' : 'var(--muted)') + '">' + (done ? '&#x2713;' : '&#x25CB;') + '</span><span style="flex:1"><b>' + title + '</b>' + (detail ? ' <span style="color:var(--muted)">' + detail + '</span>' : '') + '</span>' + action + '</div>';
   return '<div style="display:flex;flex-direction:column;gap:6px;padding:8px 10px;border:1px solid var(--line);border-radius:8px">' +
-    row(installed, '1. Install', installed ? 'Hermes Agent ' + esc(st.version || '') + ' found' : (st ? 'not found on this computer' : 'checking…'), installed ? '' : btn('install', 'Install Hermes Agent', !!st, true) + btn('page', 'Download page', true, false)) +
+    row(installed, '1. Install', installed ? 'Hermes Agent ' + esc(st.version || '') + ' found' : (st ? 'not found on this computer' : (m.err ? 'could not check (' + esc(m.err.slice(0, 120)) + ')' : 'checking…')), installed ? '' : (m.err ? btn('recheck', 'Check again', true, false) : '') + btn('install', 'Install Hermes Agent', !!st || !!m.err, true) + btn('page', 'Download page', true, false)) +
     row(false, '2. Choose a model', 'opens a terminal running <code>hermes setup</code> (provider and model are chosen there)', btn('setup', 'Open setup', installed, false)) +
     row(hasKey, '3. Enable the API server', hasKey ? 'key saved in your credential store' : 'random key, loopback only', btn('api', hasKey ? 'Re-create key' : 'Enable API server', installed, !hasKey && installed)) +
     row(up, '4. Start', up ? 'API server answering' : (running ? 'gateway running, API not answering yet' : 'not running'), (running || up) ? btn('stop', 'Stop gateway', running, false) : btn('start', 'Start gateway', installed && hasKey, installed && hasKey)) +
