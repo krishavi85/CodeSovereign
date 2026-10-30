@@ -913,9 +913,12 @@
     }
 
     // "src/format.js imports slugify from src/text.js, which does not export it": caught the moment it is written
-    function importNotes(only, max) {
+    // related: keep only problems that involve this file (as importer or as target), THEN take the first few, so
+    // problems that were already there in other files cannot crowd out the one the edit just caused
+    function importNotes(only, related, max) {
       if (!intel) return [];
       var probs = intel.importProblems(only);
+      if (related) probs = probs.filter(function (x) { return x.from === related || x.to === related; });
       return probs.slice(0, max || 3).map(function (x) {
         return x.from + ' imports "' + x.name + '" from ' + x.to + (x.why === 'declared-not-exported' ? ', which defines it but does NOT export it (add it to the exports there)' : ', which does not provide it');
       });
@@ -923,7 +926,7 @@
     function withImportNotes(res, args) {
       try {
         var p = args && args.path ? normPath(args.path) : null;
-        var notes = importNotes(null).filter(function (n) { return !p || n.indexOf(p) >= 0; });
+        var notes = importNotes(null, p);
         if (notes.length) return Object.assign({}, res, { text: String(res.text || '') + '\n\nHeads-up from the project index — this will fail when the code runs:\n- ' + notes.join('\n- ') });
       } catch (_) { /* a hint, never a failure */ }
       return res;
@@ -1254,7 +1257,7 @@
         // Tests only cover what they cover: a rename that leaves other files importing the old name can pass them all.
         // The project index checks the imports; if they do not line up, that is a failure like any other.
         if (results.length && results.every(function (r) { return r.ok || r.skipped || r.empty; })) {
-          var imp = []; try { imp = reg.importNotes(null, 6); } catch (_) {}
+          var imp = []; try { imp = reg.importNotes(null, null, 6); } catch (_) {}
           if (imp.length) results.push({ label: 'imports', cmd: 'project index', code: 1, ms: 0, ok: false, failures: [{ name: 'imports do not line up', message: imp.join('\n'), file: null, line: null, frames: [] }], pass: null, fail: imp.length, total: null, outputTail: imp.join('\n') });
         }
         var failed = results.filter(function (r) { return !r.ok && !r.skipped && !r.empty; });

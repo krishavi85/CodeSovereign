@@ -40,7 +40,7 @@ const ACCEPTANCE_AGENT = process.argv.includes('--acceptance-agent');
 const RENDERER = path.join(__dirname, '..', 'dist', 'index.html');
 
 // The headless checks run on CI runners with no GPU / no desktop session.
-if (SMOKE || SMOKE_OBSERVER || ACCEPTANCE || ACCEPTANCE_BUILD) {
+if (SMOKE || SMOKE_OBSERVER || ACCEPTANCE || ACCEPTANCE_BUILD || ACCEPTANCE_AGENT) {
   app.disableHardwareAcceleration();
   app.commandLine.appendSwitch('disable-gpu');
   app.commandLine.appendSwitch('in-process-gpu');
