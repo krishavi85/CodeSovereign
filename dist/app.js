@@ -871,8 +871,8 @@ function deploy() {
       }
     } catch (e) {
       S.lastDeploy = { at: Date.now(), ok: false, error: e.message };
-      toast('Deploy failed: ' + e.message, '#ef4444');
-      console.error('Deploy failed:', e);
+      toast('Export failed: ' + e.message, '#ef4444');
+      console.error('Export failed:', e);
     } finally {
       S.deploying = false;
       renderAll();
