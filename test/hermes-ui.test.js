@@ -72,6 +72,15 @@ module.exports = async function (t) {
   t.deepEqual('the running gateway is stopped and started again with the NEW key', calls2, ['api', 'stop', 'start:rotatedkey0987654321']);
   t.ok('and the user is told it was restarted', L2.toasts.some((m) => /restarted with it/.test(m)));
 
+  /* ---- the old gateway cannot be stopped: no second one is started ---- */
+  const calls4 = [];
+  const bridge4 = Object.assign({}, bridge2, { setupApiServer: async () => { calls4.push('api'); return { ok: true, key: 'k4key123456789', gatewayWasRunning: true }; }, stopGateway: async () => { calls4.push('stop'); return { ok: false, wasRunning: true, error: 'The Hermes gateway did not exit after being stopped.' }; }, startGateway: async () => { calls4.push('start'); return { ok: true, ready: true }; } });
+  const L4 = load(bridge4);
+  L4.api.renderHermesSteps(L4.cfg); await tick();
+  L4.api.hermesMgrAct('api'); await tick(); await tick();
+  t.deepEqual('a stop that fails means no start (never a second gateway on a held port)', calls4, ['api', 'stop']);
+  t.ok('and the user is told, with the reason', L4.toasts.some((m) => /could not be stopped/.test(m) && /did not exit/.test(m)));
+
   /* ---- no gateway of ours running: the user is told to restart one they started themselves ---- */
   const calls3 = [];
   const bridge3 = Object.assign({}, bridge2, { setupApiServer: async () => { calls3.push('api'); return { ok: true, key: 'freshkey12345678', gatewayWasRunning: false }; }, stopGateway: async () => { calls3.push('stop'); return { ok: true }; }, startGateway: async () => { calls3.push('start'); return { ok: true }; } });

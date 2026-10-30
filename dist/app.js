@@ -430,8 +430,14 @@ function hermesMgrAct(name) {
       Engine.LLM.setConfig({ hermesAgentKey: r.key });
       if (r.gatewayWasRunning) {
         // a running gateway keeps the key it started with: restart ours so the app and the gateway agree
-        return Promise.resolve(H.stopGateway()).then(function () { return H.startGateway(r.key); }).then(function (s2) {
+        return Promise.resolve(H.stopGateway()).then(function (st) {
+          st = unwrap(st) || {};
+          // never start a second gateway against a port the first one may still hold
+          if (st.ok === false) return { ok: false, error: 'Key saved, but the running gateway could not be stopped: ' + (st.error || 'unknown error') };
+          return H.startGateway(r.key);
+        }).then(function (s2) {
           s2 = unwrap(s2) || {};
+          if (s2.ok === false && /could not be stopped/.test(String(s2.error))) return done(s2.error, false);
           return done(s2.ready ? 'New key saved and the Hermes gateway restarted with it.' : 'New key saved, but the restarted gateway did not answer yet: ' + (s2.error || 'check again in a moment.'), !!s2.ready);
         });
       }

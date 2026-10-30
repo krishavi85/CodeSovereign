@@ -206,18 +206,25 @@ async function stopGateway(opts) {
   const o = opts || {};
   if (!gatewayRunning()) { gateway = null; return { ok: true, wasRunning: false }; }
   const c = gateway.child;
-  const exited = new Promise((resolve) => { if (c.exitCode != null) return resolve(); c.once('close', resolve); c.once('exit', resolve); });
+  const exited = new Promise((resolve) => { if (c.exitCode != null) return resolve('exit'); c.once('close', () => resolve('exit')); c.once('exit', () => resolve('exit')); });
   await Promise.resolve(killTree(c));
-  await Promise.race([exited, new Promise((r) => setTimeout(r, o.exitWaitMs || 10000))]);
+  const outcome = await Promise.race([exited, new Promise((r) => setTimeout(() => r('timeout'), o.exitWaitMs || 10000))]);
+  if (outcome !== 'exit') {
+    // still alive: keep tracking it (so it can be stopped again) and say so; a start now would run a second gateway
+    return { ok: false, wasRunning: true, error: 'The Hermes gateway did not exit after being stopped. End the "hermes" process in Task Manager (or restart your computer) before starting it again.' };
+  }
   gateway = null;
-  let freed = false;
+  // freed only when the connection is REFUSED (nothing listens); a timeout or reset says something still holds the port
+  let freed = false, lastErr = '';
   const deadline = Date.now() + (o.portWaitMs || 8000);
   while (Date.now() < deadline) {
     const pr = await probe({ port: o.port, timeoutMs: 1000 });
-    if (!pr.reachable) { freed = true; break; }
+    if (!pr.reachable && pr.error === 'ECONNREFUSED') { freed = true; break; }
+    lastErr = pr.reachable ? 'still answering (HTTP ' + pr.status + ')' : String(pr.error || 'unknown');
     await new Promise((r) => setTimeout(r, 300));
   }
-  return { ok: true, wasRunning: true, portFreed: freed };
+  if (!freed) return { ok: false, wasRunning: true, portFreed: false, error: 'The gateway process ended but the Hermes API port is still in use (' + lastErr + '). Another Hermes process may hold it: stop it before starting the gateway again.' };
+  return { ok: true, wasRunning: true, portFreed: true };
 }
 
 // everything the Settings row needs in one call

@@ -198,6 +198,16 @@ module.exports = async function (t) {
     const stopped = await mgr2.stopGateway();
     t.ok('stopGateway waits for the process to exit', exitedAt > 0 && stopped.ok === true && stopped.wasRunning === true && mgr2.gatewayRunning() === false, 'exited=' + (exitedAt > 0));
     t.ok('and reports that the API port is free again', stopped.portFreed === true);
+
+    // a gateway that does not exit is NOT reported as stopped, and stays tracked so it can be stopped again
+    await mgr2.startGateway(() => {}, { key: 'goodkey', port: api.port, waitMs: 5000 });
+    lastGw.kill = () => true;                                            // the process ignores the kill
+    const stuck = await mgr2.stopGateway({ exitWaitMs: 300, port: api.port });
+    t.ok('a gateway that will not exit: stop fails with what to do, and it is still tracked', stuck.ok === false && /did not exit/.test(stuck.error) && mgr2.gatewayRunning() === true);
+    lastGw.kill = () => { setImmediate(() => { lastGw.exitCode = 1; lastGw.emit('close', 1); }); return true; };
+    // the process ends but something still answers on the port: not a success either (a start would run a second gateway)
+    const held = await mgr2.stopGateway({ exitWaitMs: 2000, portWaitMs: 800, port: api.port });
+    t.ok('the process ended but the API port is still in use: stop fails, portFreed false, the reason names the port', held.ok === false && held.portFreed === false && /still in use/.test(held.error) && mgr2.gatewayRunning() === false);
     t.ok('stopping again is harmless', (await mgr2.stopGateway()).wasRunning === false);
 
     // a gateway that dies at once: a clear error, not a 60 s wait
