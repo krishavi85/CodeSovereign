@@ -185,22 +185,39 @@ async function startGateway(onStatus, opts) {
     child.on('error', (e) => { if (onStatus) onStatus('hermes gateway: ' + String(e && e.message || e)); });
     child.on('close', () => { if (gateway && gateway.child === child) gateway = null; });
   }
-  // ready when the API answers (with or without a key: a 401 still proves it is up)
+  // Ready when the API answers. Without a key any answer proves it is up (a 401 included). WITH a key only an answer
+  // that accepts it counts: a 401 may come from an older process that still holds the port (after a key change), and
+  // reporting that as "up" would leave the app talking to a gateway that rejects it.
   const deadline = Date.now() + (o.waitMs || 60000);
   let last = null;
   while (Date.now() < deadline) {
     last = await probe({ key: o.key, port: o.port, timeoutMs: 2000 });
-    if (last.reachable) return { ok: true, ready: last.ok, needsKey: last.needsKey, models: last.models };
+    if (last.reachable && (last.ok || !o.key)) return { ok: true, ready: last.ok, needsKey: last.needsKey, models: last.models };
     if (!gatewayRunning()) return { ok: false, error: 'The Hermes gateway exited before its API server came up. Run `hermes doctor` and `hermes setup` in a terminal.' };
     await new Promise((r) => setTimeout(r, 1000));
   }
+  if (last && last.reachable && o.key && !last.ok) return { ok: false, error: 'Something answers on the Hermes API port but rejects this key (HTTP ' + last.status + '). An older Hermes process may still hold the port: stop it (or restart Hermes) and start the gateway again.' };
   return { ok: false, error: 'The Hermes API server did not answer within ' + Math.round((o.waitMs || 60000) / 1000) + 's. Make sure API_SERVER_ENABLED is set (use "Enable API server" first) and a model is configured (`hermes setup`).' };
 }
 
-function stopGateway() {
-  if (!gatewayRunning()) { gateway = null; return Promise.resolve({ ok: true, wasRunning: false }); }
+// Resolves once the child has really exited (not merely been signalled) and the API port no longer answers, so a
+// start that follows cannot race the old process.
+async function stopGateway(opts) {
+  const o = opts || {};
+  if (!gatewayRunning()) { gateway = null; return { ok: true, wasRunning: false }; }
   const c = gateway.child;
-  return Promise.resolve(killTree(c)).then(() => { gateway = null; return { ok: true, wasRunning: true }; });
+  const exited = new Promise((resolve) => { if (c.exitCode != null) return resolve(); c.once('close', resolve); c.once('exit', resolve); });
+  await Promise.resolve(killTree(c));
+  await Promise.race([exited, new Promise((r) => setTimeout(r, o.exitWaitMs || 10000))]);
+  gateway = null;
+  let freed = false;
+  const deadline = Date.now() + (o.portWaitMs || 8000);
+  while (Date.now() < deadline) {
+    const pr = await probe({ port: o.port, timeoutMs: 1000 });
+    if (!pr.reachable) { freed = true; break; }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  return { ok: true, wasRunning: true, portFreed: freed };
 }
 
 // everything the Settings row needs in one call

@@ -166,8 +166,10 @@ module.exports = async function (t) {
     const fakeGateway = (bin, args) => {
       calls.cs.push({ bin, args });
       if (args[0] === '--version') return makeChild((c) => { c.stdout.emit('data', 'hermes 0.9.1'); c.emit('close', 0); });
-      return makeChild((c) => { c.stdout.emit('data', 'Bearer goodkey and API_SERVER_KEY goodkey\n[API Server] listening\n'); });
+      lastGw = makeChild((c) => { c.stdout.emit('data', 'Bearer goodkey and API_SERVER_KEY goodkey\n[API Server] listening\n'); });
+      return lastGw;
     };
+    let lastGw = null;
     // swap the fake for this section
     Module._load = function (request) { if (request === 'cross-spawn') return fakeGateway; if (request === 'child_process') return fakeChildProcess; return origLoad.apply(this, arguments); };
     delete require.cache[mgrPath];
@@ -177,8 +179,25 @@ module.exports = async function (t) {
     t.ok('the key never appears in the status lines handed to the UI', status.length >= 1 && !status.some((l) => /goodkey/.test(l)) && status.some((l) => /\*\*\*/.test(l)));
     const again = await mgr2.startGateway(() => {}, { key: 'goodkey', port: api.port, waitMs: 5000 });
     t.ok('starting twice does not start a second process', again.ok === true && calls.cs.filter((x) => x.args[0] === 'gateway').length === 1);
+    // with a key, an answer that REJECTS it is not "ready" (it may be an older process still holding the port)
+    const rejected = await mgr2.startGateway(() => {}, { key: 'wrong', port: api.port, waitMs: 1500 });
+    t.ok('a gateway that answers but rejects our key is reported as such, not as ready', rejected.ok === false && /rejects this key/.test(rejected.error) && /older Hermes process/.test(rejected.error));
+    // after a key change: the old process answers 401 for a while, then the new one accepts the new key
+    let n401 = 0;
+    const api2 = await listen((req, res) => {
+      if (req.headers.authorization === 'Bearer newkey' && n401 >= 3) { res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"data":[{"id":"hermes-agent"}]}'); }
+      else { n401++; res.writeHead(401); res.end('{}'); }
+    });
+    const t1 = Date.now();
+    const rotated = await mgr2.startGateway(() => {}, { key: 'newkey', port: api2.port, waitMs: 15000 });
+    t.ok('start waits through 401s from the old process and is ready only once the new key is accepted', rotated.ok === true && rotated.ready === true && n401 >= 3 && Date.now() - t1 >= 1500, 'waited ' + (Date.now() - t1) + 'ms after ' + n401 + ' rejections');
+    api2.srv.close();
+    // stop resolves only after the process has really exited, not when it was merely signalled
+    let exitedAt = 0;
+    lastGw.kill = () => { setTimeout(() => { exitedAt = Date.now(); lastGw.exitCode = 1; lastGw.emit('close', 1); }, 400); return true; };
     const stopped = await mgr2.stopGateway();
-    t.ok('stopGateway ends it', stopped.ok === true && stopped.wasRunning === true && mgr2.gatewayRunning() === false);
+    t.ok('stopGateway waits for the process to exit', exitedAt > 0 && stopped.ok === true && stopped.wasRunning === true && mgr2.gatewayRunning() === false, 'exited=' + (exitedAt > 0));
+    t.ok('and reports that the API port is free again', stopped.portFreed === true);
     t.ok('stopping again is harmless', (await mgr2.stopGateway()).wasRunning === false);
 
     // a gateway that dies at once: a clear error, not a 60 s wait
