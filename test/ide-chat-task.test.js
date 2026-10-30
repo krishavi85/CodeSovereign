@@ -114,7 +114,7 @@ module.exports = async function (t) {
     t.ok('clicking Approve is handled by the task module', x.click('approve') === true);
     const last = await p;
     t.equal('after approval the task finishes VERIFIED', x.task().report.status, 'verified');
-    t.ok('the file really changed and the tests really ran', /a \+ b/.test(x.files['/sum.js']) && x.jobs.length === 1);
+    t.ok('the file really changed and the tests really ran (once: a feature-style goal gets no baseline run)', /a \+ b/.test(x.files['/sum.js']) && x.jobs.length === 1);
     t.deepEqual('the conversation has the plan, tool rows, phase labels and a report', rows(x.Chat).filter((r) => r !== 'note').join(' '), 'user tool:create_plan@plan assistant@plan tool:read_file@execute tool:edit_file@execute tool:report_result@execute assistant#report');
     t.deepEqual('tool rows know their phase', x.Chat.thread().messages.filter((m) => m.role === 'tool').map((m) => m.phase), ['plan', 'execute', 'execute', 'execute']);
     t.ok('the final message is the evidence-based report', last.report === true && /VERIFIED/.test(last.content) && /exit 0, 2 pass \/ 0 fail/.test(last.content) && /sum\.js/.test(last.content));

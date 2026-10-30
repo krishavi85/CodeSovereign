@@ -25,6 +25,9 @@ module.exports = async function (t) {
   t.deepEqual('nothing reads the temperature / max-token sliders', readers(/S\.temp\b|S\.maxTok\b/, /^app\.js$/), []);
   const appSrc = dist('app.js');
   t.ok('the Agent panel no longer shows tool switches or sampling sliders', !/\$\{tool\('/.test(appSrc) && !/id="tempRange"/.test(appSrc) && !/id="maxTokRange"/.test(appSrc));
+  // regression: moving cards into a new container broke buttons whose handler finds its inputs through the
+  // container it was bound to (the Manual endpoint "Connect" threw "Cannot read properties of null")
+  t.ok('cards are never re-parented (sections are shown/hidden, not moved)', !/\.appendChild\(el\)|\.insertBefore\(el\b/.test(src));
   t.ok('the top bar has no environment switch or fake avatar', !/id="envChip"/.test(appSrc) && !/class="cs-avatar"/.test(appSrc));
   t.ok('the "LLM • local" pill that claimed a model when none was connected is retired', /Retired: the top bar's model chip/.test(dist('app.llm.extras.js')));
 };

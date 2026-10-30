@@ -9,6 +9,9 @@ const proc = require('../electron/lib/proc');
 module.exports = async function (t) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-proc-'));
   ws.setRoot(tmp);
+  // proc.js refuses `node -e` (inline code) in the main process, so test programs are written to files
+  let jsN = 0;
+  const js = (code) => { const f = 't' + (++jsN) + '.js'; fs.writeFileSync(path.join(tmp, f), code); return [f]; };
 
   const r1 = await proc.runManaged({ cmd: 'node', args: ['--version'], cwd: '.' });
   t.ok('runManaged: node --version succeeds', r1.code === 0 && /^v\d+/.test(r1.stdout.trim()));
@@ -16,7 +19,7 @@ module.exports = async function (t) {
   const r2 = await proc.runManaged({ cmd: 'calc', args: [], cwd: '.' });
   t.ok('runManaged: non-allowlisted command blocked', r2.code === -1 && /allowlist/i.test(r2.stderr));
 
-  const r3 = await proc.runManaged({ cmd: 'node', args: ['-e', '0'], cwd: '../../..' });
+  const r3 = await proc.runManaged({ cmd: 'node', args: ['--version'], cwd: '../../..' });
   t.ok('runManaged: cwd escape blocked', r3.code === -1);
 
   const events = [];
@@ -38,7 +41,7 @@ module.exports = async function (t) {
   const ev2 = [];
   await new Promise((resolve) => {
     let done = false;
-    proc.spawnAllowed({ cmd: 'node', args: ['-e', 'console.log("streamed")'], cwd: '.' }, (e) => {
+    proc.spawnAllowed({ cmd: 'node', args: js('console.log("streamed")'), cwd: '.' }, (e) => {
       ev2.push(e);
       if (e.stream === 'exit') { done = true; resolve(); }
     });
@@ -49,7 +52,7 @@ module.exports = async function (t) {
   // sanitized environment — secrets in the parent env do not reach the child
   process.env.MY_SECRET_TOKEN = 'leaked-value-xyz';
   process.env.NPM_TOKEN = 'npm-leaked';
-  const envRun = await proc.runManaged({ cmd: 'node', args: ['-e', 'process.stdout.write(JSON.stringify({s:process.env.MY_SECRET_TOKEN||null,n:process.env.NPM_TOKEN||null,ci:process.env.CI||null,path:!!process.env.PATH||!!process.env.Path}))'], cwd: '.' });
+  const envRun = await proc.runManaged({ cmd: 'node', args: js('process.stdout.write(JSON.stringify({s:process.env.MY_SECRET_TOKEN||null,n:process.env.NPM_TOKEN||null,ci:process.env.CI||null,path:!!process.env.PATH||!!process.env.Path}))'), cwd: '.' });
   const env = JSON.parse(envRun.stdout || '{}');
   t.equal('secret env var is stripped', env.s, null);
   t.equal('NPM_TOKEN is stripped', env.n, null);
@@ -59,7 +62,7 @@ module.exports = async function (t) {
 
   // timeout terminates a hung process
   const t0 = Date.now();
-  const hung = await proc.runManaged({ cmd: 'node', args: ['-e', 'setInterval(()=>{},1000)'], cwd: '.', timeoutMs: 1500 });
+  const hung = await proc.runManaged({ cmd: 'node', args: js('setInterval(()=>{},1000)'), cwd: '.', timeoutMs: 1500 });
   t.ok('timeout kills a hung process (~1.5s)', hung.code === -2 && (Date.now() - t0) < 6000);
 
   // sanitizedEnv() has no obviously-sensitive keys
@@ -75,7 +78,7 @@ module.exports = async function (t) {
       "console.log('GRANDCHILD '+g.pid);setInterval(()=>{},1000);";
     let grand = 0;
     await new Promise((resolve) => {
-      proc.spawnAllowed({ cmd: 'node', args: ['-e', PARENT], cwd: '.' }, (e) => {
+      proc.spawnAllowed({ cmd: 'node', args: js(PARENT), cwd: '.' }, (e) => {
         const m = e.stream === 'stdout' && /GRANDCHILD (\d+)/.exec(e.data);
         if (m) { grand = Number(m[1]); resolve(); }
       });

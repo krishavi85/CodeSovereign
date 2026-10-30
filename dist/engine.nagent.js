@@ -190,7 +190,7 @@
       return refuse('node may only run a project .js/.mjs/.cjs file or --test');
     }
     if (base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun') {
-      if (has('-g', '--global', '--location=global') || hasPrefix('--registry') || hasPrefix('--userconfig') || hasPrefix('--prefix') || hasPrefix('--globalconfig'))
+      if (has('-g', '--global', '--location=global') || hasPrefix('--script-shell') || hasPrefix('--shell') || hasPrefix('--registry') || hasPrefix('--userconfig') || hasPrefix('--prefix') || hasPrefix('--globalconfig'))
         return refuse('changing global installs or package-manager configuration is not allowed');
       if (!sub) return refuse('a subcommand is required');
       if (sub === 'test' || sub === 't' || sub === 'tst') return res('exec', 'runs the project\'s test script');
@@ -915,11 +915,11 @@
     // "src/format.js imports slugify from src/text.js, which does not export it": caught the moment it is written
     // related: keep only problems that involve this file (as importer or as target), THEN take the first few, so
     // problems that were already there in other files cannot crowd out the one the edit just caused
-    function importNotes(only, related) {
+    function importNotes(only, related, max) {
       if (!intel) return [];
       var probs = intel.importProblems(only);
       if (related) probs = probs.filter(function (x) { return x.from === related || x.to === related; });
-      return probs.slice(0, 3).map(function (x) {
+      return probs.slice(0, max || 3).map(function (x) {
         return x.from + ' imports "' + x.name + '" from ' + x.to + (x.why === 'declared-not-exported' ? ', which defines it but does NOT export it (add it to the exports there)' : ', which does not provide it');
       });
     }
@@ -1116,6 +1116,14 @@
     } catch (_) { return false; }                                         // memory is an aid; it must never break a run
   }
 
+  // why a run was blocked, from the harness's own state history: never the model's words, so nothing a model
+  // (or content it read) wrote can be carried into a later prompt through memory
+  function blockedWhy(run) {
+    var h = (run && run.history) || [];
+    for (var i = h.length - 1; i >= 0; i--) if (h[i].state === 'BLOCKED' && h[i].reason) return clip(String(h[i].reason).replace(/[^\w .,:'()\/-]/g, ' ').replace(/\s+/g, ' '), 80);
+    return 'stopped';
+  }
+
   function rememberOutcome(env, run, status, reason, changes, goal) {
     var files = (changes || []).map(function (c) { return c.path; });
     if (['verified', 'unverified', 'blocked', 'failed'].indexOf(status) < 0) return;
@@ -1123,7 +1131,7 @@
     var lastV = (run.verification || [])[run.verification.length - 1];
     var vtxt = lastV ? lastV.steps.map(function (s) { return s.label + (s.pass != null ? ' ' + s.pass + ' pass/' + s.fail + ' fail' : ' exit ' + s.code); }).join(', ') : 'not verified';
     var title = 'Task (' + status + '): ' + clip(String(goal).replace(/\s+/g, ' '), 90);
-    var body = (status === 'verified' ? 'Verified by the harness (' + vtxt + ').' : status === 'unverified' ? 'Finished but NOT verified (' + vtxt + ').' : status === 'blocked' ? 'BLOCKED: ' + clip(String(reason || '').replace(/\s+/g, ' '), 200) : 'FAILED.') +
+    var body = (status === 'verified' ? 'Verified by the harness (' + vtxt + ').' : status === 'unverified' ? 'Finished but NOT verified (' + vtxt + ').' : status === 'blocked' ? 'BLOCKED: ' + blockedWhy(run) : 'FAILED.') +
       (files.length ? ' Changed: ' + files.slice(0, 8).join(', ') + '.' : '') + (run.attempts && run.attempts.length ? ' Repair attempts: ' + run.attempts.length + '.' : '');
     remember(env, 'artifacts', title, body, { type: 'task', status: status, files: files.slice(0, 12), at: Date.now() });
     if (status === 'verified' && lastV && lastV.ok === true) {
@@ -1221,6 +1229,8 @@
       var changes = reg.ws.changes(cp0);
       var report = buildReport(run, { status: status, summary: text, changes: changes, reg: reg, turns: turnsUsed, ms: Date.now() - t0, budgets: B, claim: lastClaim });
       run.result = { status: status, summary: text }; machine.save();
+      // a background server the agent started must not outlive the task (it would keep running, unwatched)
+      try { reg.stopProcesses(); } catch (_) { /* nothing to stop */ }
       if (!opts.noMemory) rememberOutcome(env, run, status, text, changes, opts.goal);
       return { run: run, report: report, registry: reg, changes: changes };
     }
@@ -1244,6 +1254,12 @@
         });
       });
       return chain.then(function () {
+        // Tests only cover what they cover: a rename that leaves other files importing the old name can pass them all.
+        // The project index checks the imports; if they do not line up, that is a failure like any other.
+        if (results.length && results.every(function (r) { return r.ok || r.skipped || r.empty; })) {
+          var imp = []; try { imp = reg.importNotes(null, null, 6); } catch (_) {}
+          if (imp.length) results.push({ label: 'imports', cmd: 'project index', code: 1, ms: 0, ok: false, failures: [{ name: 'imports do not line up', message: imp.join('\n'), file: null, line: null, frames: [] }], pass: null, fail: imp.length, total: null, outputTail: imp.join('\n') });
+        }
         var failed = results.filter(function (r) { return !r.ok && !r.skipped && !r.empty; });
         var skipped = results.length && results.every(function (r) { return r.skipped || r.empty; });
         var v = { ran: true, ok: failed.length ? false : (skipped ? null : true), results: results, at: Date.now(),
@@ -1384,9 +1400,41 @@
       if (trackDone) trackDone(c, res);
     } });
 
+    // The failing tests are the most concrete statement of the task there is. Before the model edits anything the
+    // harness runs the project's tests once and shows what fails (names, messages, the source they point at), so the
+    // model works from facts instead of guessing from the goal's wording. Once per run; nothing changes if the tests
+    // already pass, if there is no runner, or in a mode that may not run commands.
+    var BROKEN_GOAL = /\b(fail(s|ed|ing|ure)?|broken|breaks?|bug|bugs|error|errors|crash(es|ed|ing)?|exception|wrong|incorrect|not working|doesn't work|does not work|regress(ion|ed)?|started failing)\b/i;
+    var baselineBlock = null;
+    function baseline() {
+      if (baselineBlock != null) return Promise.resolve(baselineBlock);
+      baselineBlock = '';
+      var steps = verificationPlan(env).filter(function (st) { return st.label === 'tests'; });
+      if (!steps.length || mode === 'plan' || !BROKEN_GOAL.test(String(opts.goal || ''))) return Promise.resolve('');
+      return reg.execute(steps[0].spec, { signal: opts.signal }).then(function (e) {
+        if (!e || e.skipped || aborted()) return '';
+        var parsed = parseTestOutput(e.output);
+        if (e.code === 0 && !((parsed.fail || 0) > 0)) return '';
+        var v = { results: [{ label: 'tests', ok: false, failures: parsed.failures, fail: parsed.fail, outputTail: tail(e.output, 1500) }] };
+        var parts = ['The project\'s tests were run BEFORE any change and FAIL (' + (parsed.pass != null ? parsed.pass + ' pass / ' + parsed.fail + ' fail' : 'exit ' + e.code) + '). This is what has to be made to work:'];
+        allFailures(v).slice(0, 4).forEach(function (f, i) {
+          parts.push((i + 1) + '. ' + f.name + '\n' + String(f.message).split('\n').slice(0, 6).join('\n'));
+          var at = reg.analyze((f.frames || []).map(function (x) { return 'at ' + x.file + ':' + x.line; }).join('\n') + (f.file ? '\nat ' + f.file + ':' + (f.line || 1) : ''));
+          at.slice(0, 2).forEach(function (x) { parts.push('   in ' + x.path + ':' + x.line + '\n' + x.snippet); });
+        });
+        baselineBlock = parts.join('\n');
+        return baselineBlock;
+      }, function () { return ''; });
+    }
+
     function execute(nudge) {
       reg.reported = null;
+      return baseline().then(function (base) { return executeWith(nudge, base); });
+    }
+
+    function executeWith(nudge, base) {
       var user = goalText() + '\n\nPlan:\n' + planText(run.plan) + '\n\n' + projectSummary(env, reg, opts.goal + '\n' + planText(run.plan), reg.ws.changes(cp0).map(function (c) { return c.path; }), toolset) +
+        (base ? '\n\n' + base : '') +
         '\n\nCarry out the plan with the tools. When the change is made, call report_result. The harness will run the project\'s tests itself afterwards, so you do not need to.' +
         (nudge ? '\n\n' + nudge : '');
       return loop(toolset, system + '\nYou are EXECUTING the plan.', user, nudge ? 'execute (retry ' + nudges + ')' : 'execute').then(function (lr) {

@@ -130,6 +130,16 @@ contextBridge.exposeInMainWorld('desktop', {
     omniroute: (action) => invoke('ai:omniroute', action)
   },
 
+  hermes: {
+    getStatus: (key) => invoke('hermes:status', key),
+    install: () => invoke('hermes:install'),
+    openSetup: () => invoke('hermes:openSetup'),
+    setupApiServer: () => invoke('hermes:setupApiServer'),
+    startGateway: (key) => invoke('hermes:startGateway', key),
+    stopGateway: () => invoke('hermes:stopGateway'),
+    openDownloadPage: () => invoke('hermes:openDownloadPage')
+  },
+
   openclaw: {
     detect: () => invoke('openclaw:detect'),
     install: () => invoke('openclaw:install'),
