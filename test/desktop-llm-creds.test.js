@@ -11,12 +11,15 @@ module.exports = async function (t) {
   let resolveToken;
   const tokenP = new Promise((resolve) => { resolveToken = resolve; });
 
+  // like the real Engine.LLM, setConfig merges into the RAW stored config (loadConfig), not the public getter
+  // that desktop-app.js wraps to inject keychain secrets
+  const raw = function () {
+    try { return JSON.parse(store['cs.llm.v1'] || '{}'); } catch (_) { return {}; }
+  };
   const llmStore = {
-    getConfig: function () {
-      try { return JSON.parse(store['cs.llm.v1'] || '{}'); } catch (_) { return {}; }
-    },
+    getConfig: raw,
     setConfig: function (patch) {
-      const cur = llmStore.getConfig();
+      const cur = raw();
       const next = Object.assign({}, cur, patch || {});
       store['cs.llm.v1'] = JSON.stringify(next);
       return next;
@@ -126,4 +129,13 @@ module.exports = async function (t) {
     'empty localToken after hydrate is an intentional clear',
     setCalls.some((c) => c.k === 'llm.localToken' && c.v === '')
   );
+
+  // The OpenRouter key (Hermes models) and the Hermes Agent API key are secrets too: keychain, never localStorage.
+  await new Promise((r) => setImmediate(r));
+  win.Engine.LLM.setConfig({ hermesApiKey: 'or-secret-123', hermesAgentKey: 'hermes-agent-secret-456', hermesAgentUrl: 'http://127.0.0.1:8642' });
+  t.ok('the OpenRouter key goes to the keychain', credStore['llm.hermesApiKey'] === 'or-secret-123');
+  t.ok('the Hermes Agent key goes to the keychain', credStore['llm.hermesAgentKey'] === 'hermes-agent-secret-456');
+  t.ok('neither secret is written to localStorage', String(store['cs.llm.v1'] || '').indexOf('or-secret-123') < 0 && String(store['cs.llm.v1'] || '').indexOf('hermes-agent-secret-456') < 0);
+  t.ok('a non-secret setting (the URL) still persists normally', JSON.parse(store['cs.llm.v1']).hermesAgentUrl === 'http://127.0.0.1:8642');
+  t.ok('getConfig hands the keys back to the code that needs them', win.Engine.LLM.getConfig().hermesApiKey === 'or-secret-123' && win.Engine.LLM.getConfig().hermesAgentKey === 'hermes-agent-secret-456');
 };

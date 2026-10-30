@@ -273,8 +273,16 @@ async function run() {
 
     if ((r1.changes || []).length) {
       const rv = await exec(revertDriver(cfg1));
-      const afterRevert = readTree(dir1);
-      const same = Object.keys(before1).every((k) => afterRevert[k] === before1[k]) && Object.keys(afterRevert).every((k) => k in before1);
+      // the brain file is flushed to disk asynchronously: give it a moment
+      for (let i = 0; i < 20 && !/Reverted by the user/.test(readTree(dir1)['/.codesovereign/project/brain.json'] || ''); i++) await new Promise((r) => setTimeout(r, 250));
+      const afterRevertAll = readTree(dir1);
+      // project memory (/.codesovereign/) is deliberately NOT reverted: it records the task and the rejection
+      const brainRaw = afterRevertAll['/.codesovereign/project/brain.json'];
+      const afterRevert = Object.assign({}, afterRevertAll); delete afterRevert['/.codesovereign/project/brain.json'];
+      let brain = null; try { brain = JSON.parse(brainRaw || 'null'); } catch (_) {}
+      const items = (brain && brain.items) || [];
+      check('S1: project memory was written to the project and records the task and the revert', items.some((i) => /^Task \(verified\)/.test(i.title) && i.meta && i.meta.agent === true) && items.some((i) => /^Reverted by the user/.test(i.title)), 'brain.json ' + (brainRaw ? brainRaw.length + ' bytes' : 'ABSENT') + '; items: ' + (items.map((i) => i.kind + ':' + i.title.slice(0, 40)).join(' | ') || 'none') + '; files: ' + Object.keys(afterRevertAll).filter((k) => /codesovereign|sovereign/.test(k)).join(','));
+      const same =Object.keys(before1).every((k) => afterRevert[k] === before1[k]) && Object.keys(afterRevert).every((k) => k in before1);
       check('S1: "Revert all changes" put every file on disk back exactly', rv.revertClicked === true && same, same ? '' : 'differs: ' + Object.keys(afterRevert).filter((k) => afterRevert[k] !== before1[k]).join(','));
     } else {
       check('S1: revert (nothing to revert — the agent changed no files)', false, 'status=' + r1.status);

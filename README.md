@@ -50,9 +50,14 @@ artifact as-is. The `dist/desktop/` scripts are inert without Electron.
 
 ## Screens
 
-Top nav: Welcome · Agent · IDE · Factory · Pipelines · Marketplace · Workspaces ·
-Ratings · Actions · GitHub · OAuth. Left rail: Welcome · Agent · IDE · Factory ·
-Recovery · Settings.
+The app has four screens, reached from the icon rail on the left:
+
+- **Home** — describe an app (or attach a spec / Figma export) and generate it, or start from a template.
+- **Agent** — watch a generation run: plan, files, logs, evidence.
+- **IDE** — your project's files in an editor, with a chat panel on the right (Ask, Plan, Edit, Agent, Auto modes — see [`docs/NATIVE_AGENT.md`](docs/NATIVE_AGENT.md)), a terminal, git and a live preview.
+- **Settings** — Project, AI & Models, Agents, Integrations, Advanced, About.
+
+The top bar shows the model that is actually connected (it says so when none is) plus Run Preview and Export (packages the project as a downloadable bundle; nothing is published anywhere). Controls that were not connected to any behaviour (an environment switch, "run on AWS Lambda" targets, tool switches, sampling sliders, a vector-database choice) have been removed rather than left as decoration.
 
 **Welcome** (which absorbed the former Universal and Ultra Mode tabs) runs the
 closed loop: one natural-language request →
@@ -109,31 +114,29 @@ Sentry/APM account — needs the user's credentials. See
 
 ## Backend / Supabase
 
-`dist/backend.js` has a hardcoded Supabase project URL and **publishable** anon
-key. The app is fully functional without it (offline-first). To use your own
-sync backend, replace `SUPABASE_URL` / `SUPABASE_ANON_KEY` in `dist/backend.js`
-and apply the two `_init_*.sql` files to your project.
+Optional and off by default. The app is fully functional without it (offline-first): projects live in your project folder (desktop) or browser storage. To mirror saves to your own Supabase project, paste its URL and publishable key in **Settings → Integrations** and apply the two `dist/_init_*.sql` files to that project. No project is built in.
+
+## Agents and models
+
+Generation goes to the model you connect in **Settings → AI & Models** (a local model through Ollama / LM Studio / llama.cpp, OmniRoute, or any OpenAI-compatible cloud endpoint), or through a local agent you choose in **Settings → Agents**:
+
+| Option | What it is | Verified |
+|---|---|---|
+| Direct | Calls your configured model over HTTP. | Yes, against a real local model (`npm run eval:agent`, `npm run acceptance:agent`). |
+| OpenClaw | Local OpenClaw agent: install, onboarding, gateway lifecycle and sessions through its CLI and gateway (`127.0.0.1:18789`). | Lifecycle verified live against OpenClaw 2026.7.x; the in-app status reads the real CLI and gateway. Needs OpenClaw installed and its gateway running. |
+| Hermes Agent | Local Hermes Agent (Nous Research) through its OpenAI-compatible API server (`127.0.0.1:8642`). The status is a real `GET /v1/models`. | Protocol tested against a spec-shaped test server; **not yet run against a live Hermes Agent** (not installed on the development machine). |
+| Hermes models | Nous Research's Hermes *models* hosted on OpenRouter (your OpenRouter key, kept in the OS keychain). | Same request path as Direct. These are models, not the Hermes Agent. |
 
 ## Deploy
 
-`dist/` is a static bundle — deploy it to any static host (the CSP `connect-src`
-already allows `*.supabase.co`, OpenAI, Anthropic and MiniMax endpoints for the
-LLM/agent features). `oauth-callback.html` must be served from the same origin.
+`dist/` is a static bundle — deploy it to any static host. The CSP `connect-src` allows loopback model servers and the listed API hosts; `oauth-callback.html` must be served from the same origin.
 
-## Fixes applied in this pass
+## Checks you can run
 
-- Repaired UTF-8 mojibake throughout `dist/app.js` — em dashes, ellipses, arrows,
-  check marks, middle dots and curly quotes had been replaced by `?` / `�`
-  (~110 occurrences across toasts, labels, the terminal panel and the 19-stage
-  spec view).
-- Removed the `frame-ancestors` directive from the `<meta>` CSP in
-  `dist/index.html` (ignored in `<meta>`, only valid as an HTTP header — it was
-  logging a console error on every screen).
-- Fixed the Phase-8 screen router: **Workspaces, Ratings, Actions and OAuth**
-  never painted because their modules return an HTML string that the delegator
-  discarded. Screen dispatch + `mount()` are now handled in the core `renderAll()`.
-- Factory screen: `S.buildSubPhase` defaulted to `'components'` (no such key —
-  the buckets are `component` / `logic` / `data`), so the artifact counter showed
-  "undefined files" and no sub-phase was highlighted. Defaulted to `'all'` and
-  hardened the counter.
-- Minor: "1 file" vs "1 files" pluralization in the Modules panel.
+| Command | What it proves |
+|---|---|
+| `npm test` | the unit / integration / security suites |
+| `npm run smoke` | the Electron app boots with no renderer errors |
+| `npm run acceptance` | the closed loop on a real project (detect → run → observe → repair → gate) |
+| `npm run acceptance:agent` | the native agent in the real desktop app against a real local model |
+| `npm run eval:agent` | the native agent on benchmark tasks, judged by hidden tests |

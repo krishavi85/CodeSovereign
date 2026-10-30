@@ -4179,7 +4179,8 @@ h1{font-size:18px;color:var(--mut);font-weight:600;margin:0 0 14px}
   const AGENTS = [
     { id: 'direct',   role: 'Direct model',  tone: 'HTTP',        ctx: 'model-dependent', available: true, desc: 'Calls whatever AI Provider is configured in Settings (OpenAI, MiniMax, a local model, ...) directly. Default.' },
     { id: 'openclaw', role: 'Agent runtime', tone: 'Sessions',    ctx: 'session-based',   available: true, desc: 'Routes generation through your local OpenClaw agent instead of a direct API call — its own session memory, tools, and channels.' },
-    { id: 'hermes',   role: 'Model override',tone: 'Open-weight', ctx: '131K',            available: true, desc: 'Forces Nous Research’s Hermes models (via OpenRouter) for this generation, regardless of what Direct is set to.' }
+    { id: 'hermesagent', role: 'Local agent', tone: 'API server',   ctx: 'session-based',   available: true, desc: 'Routes generation through your local Hermes Agent (Nous Research) using its OpenAI-compatible API server on 127.0.0.1:8642 — its own memory, skills and tools. Install it, enable the API server, run `hermes gateway`.' },
+    { id: 'hermes',   role: 'Hosted models', tone: 'Open-weight', ctx: '131K',            available: true, desc: 'Uses Nous Research’s Hermes models hosted on OpenRouter (needs your OpenRouter key). These are models, not the Hermes Agent.' }
   ];
 
   // ---------- Public API ----------

@@ -203,7 +203,12 @@
     var AI = E().AI;
     if (!AI || !AI.wiring) return '';
     var w = AI.wiring();
-    return '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">AI wiring — ' + w.wiredCount + '/' + w.total + ' consumers connected</summary>' +
+    // These marks say a feature is built to use the model; they are presence checks, not proof a model is answering.
+    // So the heading says which of the two is true right now.
+    var heading = w.connected
+      ? w.wiredCount + ' features can use your connected model'
+      : 'No model connected — ' + w.total + ' features would use one; until then they use built-in rules';
+    return '<details style="margin-top:14px"><summary style="cursor:pointer;font-size:12px;color:var(--muted)">Where the model is used — ' + esc(heading) + '</summary>' +
       '<div style="margin-top:6px">' + w.consumers.map(function (c) {
         return '<div style="font-size:11.5px;padding:3px 0;display:flex;gap:8px">' +
           '<span style="color:' + (c.wired ? 'var(--good)' : 'var(--muted)') + '">' + (c.wired ? '&#x2713;' : '&#x25CB;') + '</span>' +

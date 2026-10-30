@@ -154,15 +154,29 @@
   function emptyBrain() {
     return { updated: 0, items: [], sync: { local: true, cloud: false } };
   }
+  // One brain per project: the localStorage copy is keyed by the current project, so what one project
+  // learned is never shown in another (the file inside the project is per-project by nature).
+  function brainId() {
+    let id = '';
+    try { const pr = Engine.Proj && Engine.Proj.current && Engine.Proj.current(); id = pr && (pr.id || pr.path || pr.name) || ''; } catch (_) {}
+    return id;
+  }
+  function brainKey() { const id = brainId(); return id ? BRAIN_NS + ':' + id : BRAIN_NS; }
+  // in the browser the in-memory file system can still hold another project's brain file after a switch
+  function foreignFile(b) {
+    try { if (Engine.FS && Engine.FS.__hasWorkspace && Engine.FS.__hasWorkspace()) return false; } catch (_) {}
+    return !!(b && b.project && brainId() && b.project !== brainId());
+  }
   function readBrain() {
-    let fromLs = load(BRAIN_NS, null);
+    let fromLs = load(brainKey(), null);
     let fromFs = null;
     try {
       const raw = readFile(BRAIN_PATH);
       if (raw) fromFs = JSON.parse(raw);
     } catch (_) {}
+    if (foreignFile(fromFs)) fromFs = null;
     if (fromFs && (!fromLs || (fromFs.updated || 0) >= (fromLs.updated || 0))) {
-      save(BRAIN_NS, fromFs);
+      save(brainKey(), fromFs);
       return fromFs;
     }
     if (fromLs) return fromLs;
@@ -170,8 +184,9 @@
   }
   function writeBrain(b) {
     b.updated = now();
+    b.project = brainId() || undefined;
     b.sync = { local: true, cloud: true, at: b.updated };
-    save(BRAIN_NS, b);
+    save(brainKey(), b);
     writeFile(BRAIN_PATH, JSON.stringify(b, null, 2));
     return b;
   }

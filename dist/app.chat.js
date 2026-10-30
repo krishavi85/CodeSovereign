@@ -450,6 +450,7 @@
       canWrite: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('write'); },
       canCommand: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('command'); },
       canNetwork: function () { return !(E.Autonomy && E.Autonomy.allows) || E.Autonomy.allows('network'); },
+      flush: function () { return E.FS && E.FS.__flush ? E.FS.__flush() : null; },
       // long-term project memory (Engine.ProjectBrain, stored with the project)
       memory: E.ProjectBrain && E.ProjectBrain.get && E.ProjectBrain.remember ? {
         all: function () { try { return (E.ProjectBrain.get() || {}).items || []; } catch (_) { return []; } },

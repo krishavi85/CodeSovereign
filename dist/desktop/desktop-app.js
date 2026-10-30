@@ -168,13 +168,20 @@
 
   /* ---------------- credential migration ---------------- */
 
+  // Every secret the LLM config can hold lives in the OS keychain, never in localStorage:
+  // [keychain key, config field]. (The OpenRouter key for Hermes models and the Hermes Agent
+  // API key used to sit in plain localStorage.)
+  var LLM_SECRETS = [
+    ['llm.apiKey', 'apiKey'],
+    ['llm.localToken', 'localToken'],
+    ['llm.hermesApiKey', 'hermesApiKey'],
+    ['llm.hermesAgentKey', 'hermesAgentKey']
+  ];
+
   function migrateLlmKey() {
     if (!Engine.LLM || !Engine.LLM.getConfig) return;
     var _get = Engine.LLM.getConfig, _set = Engine.LLM.setConfig;
-    var keyCache = null;
-    var tokenCache = null;
-    var keyReady = false;
-    var tokenReady = false;
+    var cache = {}, ready = {};
 
     function stripStore(field) {
       try {
@@ -195,7 +202,7 @@
       } catch (_) {}
     }
 
-    function hydrate(credKey, field, apply) {
+    function hydrate(credKey, field) {
       D.creds.get(credKey).then(function (r) {
         var stored = r && r.value;
         var cfg = _get();
@@ -203,7 +210,8 @@
           D.creds.set(credKey, cfg[field]);
           stored = cfg[field];
         }
-        apply(stored || '');
+        cache[field] = stored || '';
+        ready[field] = true;
         if (stored) {
           var patch = {};
           patch[field] = stored;
@@ -214,34 +222,27 @@
       });
     }
 
-    hydrate('llm.apiKey', 'apiKey', function (v) { keyCache = v; keyReady = true; });
-    hydrate('llm.localToken', 'localToken', function (v) { tokenCache = v; tokenReady = true; });
+    LLM_SECRETS.forEach(function (e) { hydrate(e[0], e[1]); });
 
     Engine.LLM.getConfig = function () {
       var c = _get() || {};
-      if (!c.apiKey && keyCache) c.apiKey = keyCache;
-      if (!c.localToken && tokenCache) c.localToken = tokenCache;
+      LLM_SECRETS.forEach(function (e) { if (!c[e[1]] && cache[e[1]]) c[e[1]] = cache[e[1]]; });
       return c;
     };
     Engine.LLM.setConfig = function (patch) {
       if (!patch) return _set(patch);
       var copy = {}; for (var k in patch) copy[k] = patch[k];
-      if (typeof patch.apiKey === 'string') {
+      LLM_SECRETS.forEach(function (e) {
+        var field = e[1];
+        if (typeof patch[field] !== 'string') return;
         // Ignore empty writes until the keychain has hydrated — Save/Test
         // on a still-empty Settings field must not delete the stored secret.
-        if (keyReady || patch.apiKey) {
-          keyCache = patch.apiKey;
-          D.creds.set('llm.apiKey', patch.apiKey);
+        if (ready[field] || patch[field]) {
+          cache[field] = patch[field];
+          D.creds.set(e[0], patch[field]);
         }
-        delete copy.apiKey;
-      }
-      if (typeof patch.localToken === 'string') {
-        if (tokenReady || patch.localToken) {
-          tokenCache = patch.localToken;
-          D.creds.set('llm.localToken', patch.localToken);
-        }
-        delete copy.localToken;
-      }
+        delete copy[field];
+      });
       return _set(copy);
     };
   }

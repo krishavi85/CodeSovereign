@@ -455,7 +455,13 @@
   }
 
   // ---------- Top-nav pill ----------
+  // Retired: the top bar's model chip (app.js modelStatus()) is the one truthful indicator. This pill said
+  // "LLM • local" even when no model was connected, so it is removed instead of drawn.
   function renderTopNavLlmPill() {
+    const old = document.getElementById("llmTopNavPill");
+    if (old && old.parentNode) old.parentNode.removeChild(old);
+    return;
+    // eslint-disable-next-line no-unreachable
     const llm = LLM();
     if (!llm) return;
     const st = llm.status();

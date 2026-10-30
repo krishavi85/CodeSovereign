@@ -21,8 +21,9 @@ module.exports = async function (t) {
 
   const topNavBody = appSrc.slice(appSrc.indexOf('function renderTopNav()'), appSrc.indexOf('function renderRail()'));
   t.ok('the top header no longer renders a <nav> of screen tabs', !/<nav class="cs-nav"/.test(topNavBody));
-  t.ok('...but keeps its non-duplicate chrome (agent/env/backend chips)', /modelChip/.test(topNavBody) && /envChip/.test(topNavBody) && /backendChip/.test(topNavBody));
-  t.ok('...and keeps the Run Preview / Deploy / Settings controls', /runPreviewBtn/.test(topNavBody) && /deployBtnTop/.test(topNavBody) && /settingsBtnTop/.test(topNavBody));
+  t.ok('...and keeps only what is real: the connected-model chip, Run Preview and Deploy', /modelChip/.test(topNavBody) && /runPreviewBtn/.test(topNavBody) && /deployBtnTop/.test(topNavBody));
+  t.ok('the top bar no longer carries a made-up identity, an environment switch, or a duplicate settings gear', !/cs-avatar/.test(topNavBody) && !/envChip/.test(topNavBody) && !/settingsBtnTop/.test(topNavBody) && !/backendChip/.test(topNavBody));
+  t.ok('the model chip reads the real connection state (Engine.AI), not a label', /modelStatus()/.test(topNavBody) && /No model connected/.test(appSrc));
 
   const renderAllBody = appSrc.slice(appSrc.indexOf('function renderAll('), appSrc.indexOf('function renderAll(') + 1400);
   t.ok('renderAll() no longer treats "universal" as its own routable screen', !/screen === 'universal'/.test(renderAllBody));
