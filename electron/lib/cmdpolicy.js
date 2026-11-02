@@ -36,7 +36,7 @@ function hardRefusal(cmd, args) {
   const prefixIn = (list, ...ps) => list.some((x) => ps.some((p) => x.indexOf(p) === 0));
   // short options can be clustered: "node -pe code" is -p and -e. Any single-dash cluster that contains an
   // eval / print / require / interactive letter counts as that option.
-  const evalCluster = (list) => list.some((x) => /^-[A-Za-z]+$/.test(x) && /[eprI]/.test(x));
+  const evalCluster = (list) => list.some((x) => /^-[A-Za-z]+$/.test(x) && /[eprI]/i.test(x));
 
   // --node-options hands flags (--require, --import, --experimental-loader, --inspect) to every Node process the tool
   // starts, which is code execution without a project file. No tool the agent runs needs it, whichever tool it is given to.

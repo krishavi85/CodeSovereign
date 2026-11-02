@@ -822,7 +822,10 @@ function registerIpc() {
           relay.done();
           try { if (!sender.isDestroyed()) sender.send('terminal:exit', Object.assign({ id }, info)); } catch (_) {}
         });
-      if (res && res.ok === false) relay.done();
+      if (res && res.ok === false) { relay.done(); return res; }
+      // the window may have closed, crashed or reloaded while the shell was starting (the first create waits for shell
+      // detection): the relay already fired its kill before the shell existed, so kill it now that it does
+      if (relay.dead) { try { terminalManager.kill(id); } catch (_) {} return { ok: false, error: 'the window closed while the terminal was starting' }; }
       return res;
     } catch (e) { return fail(e); }
   });

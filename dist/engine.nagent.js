@@ -182,7 +182,7 @@
     var hasPrefix = function (p) { return args.some(function (x) { return x.indexOf(p) === 0; }); };
 
     // clustered short options: "node -pe code" is -p and -e
-    var evalCluster = args.some(function (x) { return /^-[A-Za-z]+$/.test(x) && /[eprI]/.test(x); });
+    var evalCluster = args.some(function (x) { return /^-[A-Za-z]+$/.test(x) && /[eprI]/i.test(x); });
     if (base === 'node') {
       if (has('-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || evalCluster || hasPrefix('--inspect') || hasPrefix('--eval=') || hasPrefix('--require=') || hasPrefix('--import='))
         return refuse('node with inline code, preloads or an inspector is not allowed — write a file and run it');
