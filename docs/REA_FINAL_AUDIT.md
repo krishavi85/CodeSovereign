@@ -114,3 +114,54 @@ The 7B model did not fix the bug. The app behaved correctly: it reported BLOCKED
 - Sign the installer.
 - Decide on an OS-level sandbox for agent commands (Windows job objects/AppContainer or a container) or ship with the risk documented to testers.
 - Evaluate against a stronger model if the native agent is to be sold on repair quality.
+
+## 10. Addendum: second round (review findings, crash/close, installer lifecycle)
+
+Commits `3601e00`..`5fb4ec5` on `fix/security-review`.
+
+### 10.1 Cursor security review findings on PR #17 (all fixed, threads resolved)
+
+| Finding | Severity | Fix | Test |
+|---|---|---|---|
+| Clustered short flags (`node -pe code`), `go test -exec <prog>` not refused | High | main-process floor and renderer classifier refuse clustered eval letters, `go -exec/-toolexec`, `cargo --config/-Z` | `cmdpolicy.test.js` |
+| Untrusted-repo empty hooks dir at fixed shared-temp path | High | `mkdtemp` per process, mode 0700, removed at exit | `git-hooks-dir.test.js` |
+| `net:fetch` followed redirects to other hosts | Medium | manual redirects: cross-host, non-https or > 5 hops are not followed (3xx returned); DNS result checked per hop. Residual: DNS rebinding between check and connect is not closed | `net-redirect.test.js` |
+| `hermes:openSetup` had no confirmation | Medium | native dialog + audit entry | none (main-process dialog; not unit-tested) |
+| `--node-options` on npm/pnpm/yarn/bun/npx loads arbitrary JS (`npm test --node-options=--require=…` was auto-allowed) | High | `--node-options` refused for every command, in floor and classifier | `cmdpolicy.test.js` |
+
+The last row (`5fb4ec5`) was fixed after the packaged build below was made; it is covered by unit tests but not by a packaged run.
+
+### 10.2 Lifecycle defect found by manual IPC review
+
+`terminal:create` sent to the window with no guard and never killed the shell when the page reloaded or the window closed. Terminals now go through the stream relay and die with their window. Real-Electron proof: S8 below.
+
+### 10.3 Packaged-build results (build from `3d6c1bb`; real model, simple scenarios)
+
+Hashes: `app.asar` `9d5255ff6493b536c7620addbb335f2f18f13acc8eda4f8b9fed9c9fa2416682`, `CodeSovereign.exe` `66a820de7397b1bece0a260285078596151829a7eaf1ebb53b59343eb895720a`, NSIS `18aac42358d2d416db2efc8a0562adb23fcbd42ce7973667749eed8e8e9cf941`, portable `165e16e07aa20543014c504cdbc9b6310d5f8c087f582e515f5cfde918de649e`.
+
+| Phase | Result |
+|---|---|
+| Main | **45/45** |
+| Reopen | **10/10** |
+
+New in this run, all in the real packaged Electron app:
+- **S6** renderer force-crashed mid-stream: the main process ended the stream (reason `crashed`, 0 streams left); after reload a new model request completed and privileged calls answered.
+- **S7** window closed mid-stream: request ended, 0 left running.
+- **S6/S7** no uncaught exception or unhandled rejection in the main process.
+- **S8** closing the window, and reloading the page, that owns a terminal each killed the shell.
+
+The default rounding scenario was not re-run on this build; its earlier result (BLOCKED, 34/35) stands for the model and has no relation to these changes.
+
+### 10.4 Installer lifecycle (NSIS, `scripts/installer-lifecycle.js`): 14/14
+
+Silent install of alpha.5, boot (smoke), silent upgrade over it with an alpha.6 build (version moved forward, boots), then silent uninstall into a scratch folder. User-data marker and a project with project memory were untouched by upgrade and by uninstall; no uninstall registry entry left; application files removed. Not covered: the portable exe, a SmartScreen-blocked unsigned install, install to a path with spaces, per-machine install, and an upgrade while the app is running.
+
+### 10.5 CI
+
+`.github/workflows/desktop.yml` now runs on pull requests to any base branch (it only ran for PRs targeting `main`, so the stacked PRs had no CI). It needs no local model. Not yet observed running on a PR at the time of writing.
+
+### 10.6 Updated limitations
+
+- Items 1-3 and 5-8 of section 8 stand. Item 10 (crash/close only unit-tested) is now closed by S6/S7/S8; a stale renderer after a reload still cannot be tested directly.
+- Command policy remains a deny-list over an allowlist of tools: each review round has found another way an allowlisted tool can run code (`-pe`, `-exec`, `--node-options`). Expect more; the OS-level sandbox is the real fix.
+- Auto mode should stay limited to trusted projects.
