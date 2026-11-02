@@ -3,6 +3,20 @@
  * Renderer-initiated HTTPS (or localhost HTTP) fetch. Bypasses page CSP so
  * desktop can reach remote MCP / Google / Vercel / GitHub APIs.
  */
+const dns = require('dns');
+
+const MAX_HOPS = 5;
+
+// A redirect must stay on the host the caller asked for (and the user confirmed). A cross-host redirect is not
+// followed: the 3xx answer is returned with its Location so the caller can decide. Without this, an allowed host
+// could bounce the request to loopback, an internal address or the cloud metadata service.
+async function assertPublicResolution(host, local) {
+  if (local) return;
+  let addrs;
+  try { addrs = await dns.promises.lookup(host, { all: true }); } catch (e) { throw new Error('could not resolve ' + host); }
+  for (const a of addrs) if (isPrivateHost(a.address)) throw new Error(host + ' resolves to a private or link-local address');
+}
+
 async function fetchUrl(opts) {
   opts = opts || {};
   const raw = String(opts.url || '');
@@ -24,7 +38,24 @@ async function fetchUrl(opts) {
   const t = setTimeout(() => ctrl.abort(), Number(opts.timeoutMs || 20000));
   init.signal = ctrl.signal;
   try {
-    const r = await fetch(u.toString(), init);
+    init.redirect = 'manual';
+    const startHost = host;
+    let cur = u, r = null;
+    for (let hop = 0; ; hop++) {
+      const curHost = String(cur.hostname || '').toLowerCase();
+      await assertPublicResolution(curHost, curHost === '127.0.0.1' || curHost === 'localhost');
+      r = await fetch(cur.toString(), init);
+      if (!(r.status >= 300 && r.status < 400 && r.headers.get('location'))) break;
+      let next;
+      try { next = new URL(r.headers.get('location'), cur); } catch (_) { break; }
+      const nh = String(next.hostname || '').toLowerCase();
+      const okScheme = next.protocol === 'https:' || (next.protocol === 'http:' && (nh === '127.0.0.1' || nh === 'localhost'));
+      if (nh !== startHost || !okScheme || hop >= MAX_HOPS) {
+        return { status: r.status, ok: false, text: '', json: null, redirectBlocked: true, location: next.toString() };
+      }
+      cur = next;
+      if (r.status === 303 || ((r.status === 301 || r.status === 302) && init.method === 'POST')) { init.method = 'GET'; delete init.body; }
+    }
     const text = await r.text();
     let json = null;
     try { json = JSON.parse(text); } catch (_) {}
