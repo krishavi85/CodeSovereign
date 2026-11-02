@@ -207,6 +207,17 @@
     if (base === 'node') {
       if (has('-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || evalCluster || hasPrefix('--inspect') || hasPrefix('--eval=') || hasPrefix('--require=') || hasPrefix('--import='))
         return refuse('node with inline code, preloads or an inspector is not allowed — write a file and run it');
+      // the test runner loads the module named by --test-reporter (file: / data: URLs run code) and writes to --test-reporter-destination
+      for (var ti = 0; ti < args.length; ti++) {
+        var tm = /^--(test-r[a-z-]*)(?:=([\s\S]*))?$/.exec(args[ti]);
+        if (tm) {
+          var tval = tm[2] !== undefined ? tm[2] : args[ti + 1];
+          var tdest = tm[1].length > 'test-reporter'.length;
+          if (!tdest && ['spec', 'tap', 'dot', 'junit', 'lcov'].indexOf(String(tval)) < 0) return refuse('node --test-reporter may only name a built-in reporter (spec, tap, dot, junit, lcov)');
+          if (tdest && ['stdout', 'stderr'].indexOf(String(tval)) < 0) return refuse('node --test-reporter-destination may only be stdout or stderr');
+        }
+        if (/^--env-file(-if-exists)?(=|$)/.test(args[ti])) return refuse('node --env-file can set NODE_OPTIONS and is not allowed');
+      }
       if (has('--version', '-v') && args.length === 1) return res('read');
       if (args[0] === '--test' || has('--test')) return res('exec', 'runs the project\'s tests');
       var file = args.filter(function (x) { return !/^-/.test(x); })[0];

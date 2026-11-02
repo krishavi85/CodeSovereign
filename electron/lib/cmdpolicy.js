@@ -65,6 +65,18 @@ function hardRefusal(cmd, args, depth) {
         prefixIn(ihead, '--eval=', '--print=', '--require=', '--import=', '--loader=', '--experimental-loader=', '--inspect', '--debug'))
       return base + ' with inline code, a preload or an inspector is not allowed';
     if (base === 'deno' && sub === 'eval') return 'deno eval is not allowed';
+    // node's test runner LOADS the module named by --test-reporter (a file: or data: URL runs code) and writes to
+    // --test-reporter-destination: only the built-in reporters and stdout / stderr are allowed. --env-file can set NODE_OPTIONS.
+    for (let i = 0; i < beforeDD.length; i++) {
+      const m = /^--(test-r[a-z-]*)(?:=([\s\S]*))?$/.exec(beforeDD[i]);
+      if (m) {
+        const val = m[2] !== undefined ? m[2] : beforeDD[i + 1];
+        const dest = m[1].length > 'test-reporter'.length;
+        if (!dest && !['spec', 'tap', 'dot', 'junit', 'lcov'].includes(String(val))) return 'node --test-reporter may only name a built-in reporter (spec, tap, dot, junit, lcov)';
+        if (dest && !['stdout', 'stderr'].includes(String(val))) return 'node --test-reporter-destination may only be stdout or stderr';
+      }
+      if (/^--env-file(-if-exists)?(=|$)/.test(beforeDD[i])) return 'node --env-file can set NODE_OPTIONS and is not allowed';
+    }
   }
   let pyMod = null, pyAfter = 0;      // the module `python -m` runs, and where its arguments start
   if (isPython(base)) {
