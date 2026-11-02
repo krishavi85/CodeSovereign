@@ -53,7 +53,13 @@ function hardRefusal(cmd, args) {
     if (hasIn(pyHead, '-i') || pyHead.some((x) => x === '-c' || (/^-[A-Za-z]*c/.test(x) && !/^--/.test(x))))
       return 'python with inline code is not allowed';
   }
-  if (base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun') {
+  // package runners: npx / pnpx / bunx and `npm|pnpm|yarn|bun exec|x|dlx`. -c / --call run a shell string, and the
+  // registry / config flags point the download at an attacker's index.
+  const isPm = base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun';
+  const isRunner = base === 'npx' || base === 'pnpx' || base === 'bunx' || (isPm && ['exec', 'x', 'dlx'].includes(sub));
+  if (isRunner && (hasIn(beforeDD, '-c', '--call', '--shell-mode') || prefixIn(beforeDD, '--call=', '--registry', '--userconfig', '--globalconfig', '--prefix', '--script-shell', '--shell')))
+    return base + ' with a shell command or registry / configuration overrides is not allowed';
+  if (isPm) {
     if (hasIn(beforeDD, '-g', '--global', '--location=global') || prefixIn(beforeDD, '--registry', '--userconfig', '--globalconfig', '--prefix', '--script-shell', '--shell'))
       return 'changing global installs or package-manager configuration is not allowed';
     if (sub && ['publish', 'unpublish', 'deprecate', 'login', 'adduser', 'logout', 'token', 'config', 'set', 'owner', 'access', 'team', 'org', 'profile', 'whoami', 'set-script', 'link', 'unlink'].includes(sub))
@@ -72,7 +78,10 @@ function hardRefusal(cmd, args) {
   // cargo --config can name a rustc wrapper or runner; -Z enables unstable behaviour
   if (base === 'cargo' && (beforeDD.some((x) => /^--config(=|$)/.test(x)) || beforeDD.some((x) => /^-Z/.test(x)))) return 'cargo --config / -Z overrides are not allowed';
   if (base === 'cargo' && sub && ['publish', 'login', 'owner', 'yank', 'logout'].includes(sub)) return 'cargo "' + sub + '" is not allowed';
-  if ((base === 'pip' || base === 'pip3') && (prefixIn(beforeDD, '--index-url', '--extra-index-url', '--trusted-host', '--config-settings') || hasIn(beforeDD, '-i', '--break-system-packages')))
+  // pip, and the same pip run as `python -m pip`
+  const mPip = (base === 'python' || base === 'python3' || base === 'py') ? a.indexOf('-m') : -1;
+  const pipArgs = (base === 'pip' || base === 'pip3') ? beforeDD : (mPip >= 0 && a[mPip + 1] === 'pip' ? a.slice(mPip + 2, dd < 0 ? undefined : dd) : null);
+  if (pipArgs && (prefixIn(pipArgs, '--index-url', '--extra-index-url', '--trusted-host', '--config-settings', '--find-links', '--proxy') || hasIn(pipArgs, '-i', '-f', '--break-system-packages')))
     return 'pip index / system overrides are not allowed';
   return null;
 }
