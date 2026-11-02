@@ -214,7 +214,7 @@
       return refuse('node may only run a project .js/.mjs/.cjs file or --test');
     }
     if (base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun') {
-      if (has('-g', '--global', '--location=global') || hasPrefix('--script-shell') || hasPrefix('--shell') || hasPrefix('--registry') || hasPrefix('--userconfig') || hasPrefix('--prefix') || hasPrefix('--globalconfig') || args.some(function (x) { return abbrev(x, ['registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell']); }))
+      if (args.some(function (x, i) { return (/^-[^-]/.test(x) && x.indexOf('g') >= 0) || abbrev(x, ['global']) || /^--location=global$/i.test(x) || (abbrev(x, ['location']) && String(args[i + 1]).toLowerCase() === 'global'); }) || (base === 'yarn' && sub === 'global') || hasPrefix('--script-shell') || hasPrefix('--shell') || hasPrefix('--registry') || hasPrefix('--userconfig') || hasPrefix('--prefix') || hasPrefix('--globalconfig') || args.some(function (x) { return abbrev(x, ['registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell']); }))
         return refuse('changing global installs or package-manager configuration is not allowed');
       if (!sub) return refuse('a subcommand is required');
       if (sub === 'test' || sub === 't' || sub === 'tst') return res('exec', 'runs the project\'s test script');
@@ -278,6 +278,7 @@
       return refuse('cargo "' + sub + '" is not allowed (publish, login and similar are blocked)');
     }
     if (base === 'go') {
+      if (sub === 'env' && has('-w', '-u', '--w', '--u')) return refuse('go env -w / -u change the global Go configuration and are not allowed');
       if (args.some(function (x) { return /^--?(exec|toolexec)(=|$)/.test(x); })) return refuse('go -exec / -toolexec runs an arbitrary program and is not allowed');
       if (['build', 'test', 'vet', 'fmt', 'list', 'env', 'version'].indexOf(sub) >= 0) return res(sub === 'env' || sub === 'version' || sub === 'list' ? 'read' : 'exec');
       if (['get', 'install', 'mod', 'work'].indexOf(sub) >= 0) return res('network', 'may fetch modules (network)');

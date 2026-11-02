@@ -116,7 +116,11 @@ function hardRefusal(cmd, args, depth) {
   if (isRunner && (beforeDD.some((x) => /^-[^-]/.test(x) && x.indexOf('c') >= 0) || beforeDD.some((x) => abbrev(x, ['call', 'shell-mode', 'registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell', 'shell']))))
     return base + ' with a shell command or registry / configuration overrides is not allowed';
   if (isPm) {
-    if (hasIn(beforeDD, '-g', '--global', '--location=global') || prefixIn(beforeDD, '--registry', '--userconfig', '--globalconfig', '--prefix', '--script-shell', '--shell') ||
+    // global installs: -g also clusters (-Dg, -gD), --global may be abbreviated, --location takes a separate value,
+    // and `yarn global add` is a subcommand
+    const globalFlag = beforeDD.some((x, i) => (/^-[^-]/.test(x) && x.indexOf('g') >= 0) || abbrev(x, ['global']) || /^--location=global$/i.test(x) ||
+      (abbrev(x, ['location']) && String(beforeDD[i + 1]).toLowerCase() === 'global'));
+    if (globalFlag || (base === 'yarn' && sub === 'global') || prefixIn(beforeDD, '--registry', '--userconfig', '--globalconfig', '--prefix', '--script-shell', '--shell') ||
         beforeDD.some((x) => abbrev(x, ['registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell'])))
       return 'changing global installs or package-manager configuration is not allowed';
     if (sub && ['publish', 'unpublish', 'deprecate', 'login', 'adduser', 'logout', 'token', 'config', 'set', 'owner', 'access', 'team', 'org', 'profile', 'whoami', 'set-script', 'link', 'unlink'].includes(sub))
@@ -150,6 +154,8 @@ function hardRefusal(cmd, args, depth) {
     }
     if (sub && ['credential', 'config'].includes(sub)) return 'git "' + sub + '" is not allowed';
   }
+  // go env -w / -u persist settings (GOPROXY, GOTOOLCHAIN ...) in the user's global Go configuration
+  if (base === 'go' && sub === 'env' && beforeDD.some((x) => /^--?(w|u)$/.test(x))) return 'go env -w / -u change the global Go configuration and are not allowed';
   // go runs a program named by -exec / -toolexec (go test -exec <prog>): arbitrary code through an allowlisted tool
   if (base === 'go' && beforeDD.some((x) => /^--?(exec|toolexec)(=|$)/.test(x))) return 'go -exec / -toolexec runs an arbitrary program and is not allowed';
   // go -C <dir> changes the directory; -modfile / -overlay / -workfile read other build definitions

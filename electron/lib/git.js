@@ -153,11 +153,38 @@ function dangerousLocalKeys(root) {
   });
 }
 
+// does path x, resolved against the folder, end up (through links) outside it? Judged on the deepest part that exists.
+function destEscapes(root, x) {
+  let realRoot;
+  try { realRoot = fs.realpathSync(root); } catch (_) { return true; }
+  let p = path.resolve(root, x);
+  for (let i = 0; i < 64; i++) {
+    try {
+      const rp = fs.realpathSync(p);
+      const r = path.relative(realRoot, rp);
+      return r.startsWith('..') || path.isAbsolute(r);
+    } catch (_) {
+      const up = path.dirname(p);
+      if (up === p) return true;
+      p = up;
+    }
+  }
+  return true;
+}
+
 async function exec(args) {
   const root = workspace.getRoot();
   if (!root) return { code: -1, stdout: '', stderr: 'No workspace is open' };
   const bad = validateArgs(args) || cmdpolicy.hardRefusal('git', args);
   if (bad) return { code: -1, stdout: '', stderr: bad };
+  // clone / init write where an argument says; a relative name can be a symlink or junction that leads out of the folder
+  const subIdx = args.findIndex((x) => !x.startsWith('-'));
+  if (subIdx >= 0 && (args[subIdx] === 'clone' || args[subIdx] === 'init')) {
+    for (const x of args.slice(subIdx + 1)) {
+      if (x.startsWith('-') || /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(x) || /^[\w.-]+@[\w.-]+:/.test(x)) continue;
+      if (destEscapes(root, x)) return { code: -1, stdout: '', stderr: 'git ' + args[subIdx] + ' destination "' + x.slice(0, 60) + '" resolves outside the project folder.' };
+    }
+  }
   if (!trust.isTrusted(root)) {
     const keys = layoutIssues(root).concat(await dangerousLocalKeys(root));
     if (keys.length) {

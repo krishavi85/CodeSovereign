@@ -89,6 +89,24 @@ module.exports = async function (t) {
     r = await git.exec(['status']);
     t.ok('.git/objects that is a link elsewhere is flagged', r.needsTrust === true && (r.keys || []).some((k) => /objects/.test(k)));
   }
+  // clone / init destinations are judged on real paths
+  const proj = mk('proj');
+  const outside = path.join(base, 'outside-dest');
+  fs.mkdirSync(outside);
+  const lk = path.join(proj, 'notes');
+  let linked = false;
+  try { fs.symlinkSync(outside, lk, process.platform === 'win32' ? 'junction' : 'dir'); linked = true; } catch (_) {}
+  ws.setRoot(proj);
+  trust.grant(ws.getRoot());
+  if (linked) {
+    r = await git.exec(['init', 'notes']);
+    t.ok('git init into a link that leads outside the folder is refused', r.code === -1 && /resolves outside/.test(r.stderr) && !fs.existsSync(path.join(outside, '.git')));
+    r = await git.exec(['init', 'notes/sub']);
+    t.ok('and so is a path below that link', r.code === -1 && /resolves outside/.test(r.stderr));
+  }
+  r = await git.exec(['init', 'inside-ok']);
+  t.ok('a plain relative destination still works', r.code === 0 && fs.existsSync(path.join(proj, 'inside-ok', '.git')));
+  trust.revoke(ws.getRoot());
   const alt = mk('alt');
   fs.mkdirSync(path.join(alt, '.git', 'objects', 'info'), { recursive: true });
   fs.writeFileSync(path.join(alt, '.git', 'objects', 'info', 'alternates'), path.join(elsewhere, '.git', 'objects') + '\n');
