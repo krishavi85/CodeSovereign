@@ -176,6 +176,7 @@
       if (/%[A-Za-z_]+%|\$\{?[A-Za-z_]/.test(a)) return refuse('environment-variable expansion is not allowed in arguments');
       if (escapesProject(a)) return refuse('"' + a.slice(0, 40) + '" points outside the project');
     }
+    if (args.some(function (x) { return /^--node-options(=|$)/i.test(x); })) return refuse('--node-options injects code into Node processes and is not allowed');
     var sub = args.filter(function (x) { return !/^-/.test(x); })[0];
     var has = function () { for (var j = 0; j < arguments.length; j++) if (args.indexOf(arguments[j]) >= 0) return true; return false; };
     var hasPrefix = function (p) { return args.some(function (x) { return x.indexOf(p) === 0; }); };

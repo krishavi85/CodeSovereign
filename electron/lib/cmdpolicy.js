@@ -38,6 +38,9 @@ function hardRefusal(cmd, args) {
   // eval / print / require / interactive letter counts as that option.
   const evalCluster = (list) => list.some((x) => /^-[A-Za-z]+$/.test(x) && /[eprI]/.test(x));
 
+  // --node-options hands flags (--require, --import, --experimental-loader, --inspect) to every Node process the tool
+  // starts, which is code execution without a project file. No tool the agent runs needs it, whichever tool it is given to.
+  if (beforeDD.some((x) => /^--node-options(=|$)/i.test(x))) return '--node-options injects code into Node processes and is not allowed';
   if (base === 'node' || base === 'deno' || base === 'bun') {
     if (hasIn(head, '-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || evalCluster(head) ||
         prefixIn(head, '--eval=', '--print=', '--require=', '--import=', '--loader=', '--experimental-loader=', '--inspect', '--debug'))
