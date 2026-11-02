@@ -23,6 +23,9 @@ function baseCmd(cmd) {
 // Programs a package runner can be asked to start that this policy also judges
 const INNER = new Set(['node', 'deno', 'bun', 'python', 'python3', 'py', 'pip', 'pip3', 'npm', 'pnpm', 'yarn', 'npx', 'pnpx', 'bunx', 'git', 'go', 'cargo']);
 
+// every spelling of the Python interpreter: python, python3, python3.11, pythonw, py (the Windows launcher)
+const isPython = (n) => /^(py|pythonw?[0-9.]*)$/.test(n);
+
 function hardRefusal(cmd, args, depth) {
   depth = depth || 0;
   const base = baseCmd(cmd);
@@ -54,7 +57,7 @@ function hardRefusal(cmd, args, depth) {
       return base + ' with inline code, a preload or an inspector is not allowed';
     if (base === 'deno' && sub === 'eval') return 'deno eval is not allowed';
   }
-  if (base === 'python' || base === 'python3') {
+  if (isPython(base)) {
     const mIdx = a.indexOf('-m');
     const pyHead = mIdx >= 0 && (firstPos < 0 || mIdx < firstPos) ? a.slice(0, mIdx) : head;
     if (hasIn(pyHead, '-i') || pyHead.some((x) => x === '-c' || (/^-[A-Za-z]*c/.test(x) && !/^--/.test(x))))
@@ -69,7 +72,7 @@ function hardRefusal(cmd, args, depth) {
   // npx -p pkg node -pe x). Any token that names a judged program counts, whatever options come before it.
   if (isRunner && depth < 3) {
     for (let i = 0; i < a.length; i++) {
-      if (typeof a[i] === 'string' && !a[i].startsWith('-') && INNER.has(baseCmd(a[i]))) {
+      if (typeof a[i] === 'string' && !a[i].startsWith('-') && (INNER.has(baseCmd(a[i])) || isPython(baseCmd(a[i])))) {
         const inner = hardRefusal(a[i], a.slice(i + 1), depth + 1);
         if (inner) return base + ' would start ' + baseCmd(a[i]) + ': ' + inner;
       }
@@ -97,7 +100,7 @@ function hardRefusal(cmd, args, depth) {
   if (base === 'cargo' && (beforeDD.some((x) => /^--config(=|$)/.test(x)) || beforeDD.some((x) => /^-Z/.test(x)))) return 'cargo --config / -Z overrides are not allowed';
   if (base === 'cargo' && sub && ['publish', 'login', 'owner', 'yank', 'logout'].includes(sub)) return 'cargo "' + sub + '" is not allowed';
   // pip, and the same pip run as `python -m pip`
-  const mPip = (base === 'python' || base === 'python3' || base === 'py') ? a.indexOf('-m') : -1;
+  const mPip = isPython(base) ? a.indexOf('-m') : -1;
   const pipArgs = (base === 'pip' || base === 'pip3') ? beforeDD : (mPip >= 0 && a[mPip + 1] === 'pip' ? a.slice(mPip + 2, dd < 0 ? undefined : dd) : null);
   // -i / -f take attached values too (-ihttp://evil/simple)
   if (pipArgs && (pipArgs.some((x) => /^-[^-]/.test(x) && /[if]/.test(x)) || pipArgs.some((x) => abbrev(x, ['index-url', 'extra-index-url', 'trusted-host', 'config-settings', 'find-links', 'proxy', 'break-system-packages']))))
