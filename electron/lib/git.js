@@ -97,12 +97,16 @@ function dangerousLocalKeys(root) {
   return new Promise((resolve) => {
     // --show-scope separates the repository's own settings from the user's global ones (e.g. git-lfs filters)
     execFile('git', ['config', '--list', '--show-scope', '--name-only'], { cwd: root, windowsHide: true, env: gitEnv(root), maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      // fail closed: if the repository's config cannot be listed (git too old for --show-scope, output over the
+      // buffer because a hostile config pads itself, a broken include, a killed process) we cannot say it is safe
+      if (err || typeof stdout !== 'string') {
+        resolve(['(the repository configuration could not be checked' + (err && err.code ? ': ' + err.code : '') + ')']);
+        return;                                  // a failed scan is never cached
+      }
       const keys = [];
-      if (!err) {
-        for (const line of String(stdout || '').split(/\r?\n/)) {
-          const m = /^(local|worktree)\s+(\S.*)$/.exec(line);
-          if (m && RUNS_PROGRAMS.some((re) => re.test(m[2].trim()))) keys.push(m[2].trim());
-        }
+      for (const line of stdout.split(/\r?\n/)) {
+        const m = /^(local|worktree)\s+(\S.*)$/.exec(line);
+        if (m && RUNS_PROGRAMS.some((re) => re.test(m[2].trim()))) keys.push(m[2].trim());
       }
       scanCache.set(root, { at: Date.now(), keys });
       resolve(keys);

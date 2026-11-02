@@ -52,6 +52,17 @@ module.exports = async function (t) {
   r = await git.exec(['status']);
   t.ok('ordinary local settings do not trigger the check', !r.needsTrust && r.code === 0);
 
+  // fail closed: a config the scan cannot read (here: padded far past the output buffer) is not "safe"
+  const padded = mk('padded');
+  const lines = [];
+  for (let i = 0; i < 400000; i++) lines.push('\tpad' + i + ' = v');
+  fs.appendFileSync(path.join(padded, '.git', 'config'), '[padding]\n' + lines.join('\n') + '\n');
+  ws.setRoot(padded);
+  r = await git.exec(['status']);
+  t.ok('a repository config the scan cannot read pauses git instead of running it', r.needsTrust === true && /could not be checked/.test((r.keys || []).join(' ')));
+  r = await git.exec(['status']);
+  t.ok('and the failed scan is not cached as "clean"', r.needsTrust === true);
+
   // trusting the folder is the user's decision; after it git proceeds
   ws.setRoot(hostile);
   trust.grant(hostile);
