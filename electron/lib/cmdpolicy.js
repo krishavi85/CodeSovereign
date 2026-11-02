@@ -23,8 +23,8 @@ function baseCmd(cmd) {
 // Programs a package runner can be asked to start that this policy also judges
 const INNER = new Set(['node', 'deno', 'bun', 'python', 'python3', 'py', 'pip', 'pip3', 'npm', 'pnpm', 'yarn', 'npx', 'pnpx', 'bunx', 'git', 'go', 'cargo']);
 
-// every spelling of the Python interpreter: python, python3, python3.11, pythonw, py (the Windows launcher)
-const isPython = (n) => /^(py|pythonw?[0-9.]*)$/.test(n);
+// every spelling of the Python interpreter: python, python3, python3.11, python3.13t, pythonw, py / pyw (the Windows launchers), pypy
+const isPython = (n) => /^(pyw?|pythonw?|pypy)([0-9]+(\.[0-9]+)*[a-z]*)?$/.test(n);   // py, pyw, python, pythonw, python3.13t, pypy3 ...
 
 function hardRefusal(cmd, args, depth) {
   depth = depth || 0;
