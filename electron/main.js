@@ -551,7 +551,15 @@ function registerIpc() {
   /* ---- git ---- */
   ipcMain.handle('git:available', () => git.available());
   ipcMain.handle('git:exec', async (_e, args) => {
-    try { return ok(await git.exec(args)); } catch (e) { return fail(e); }
+    try {
+      let r = await git.exec(args);
+      if (r && r.needsTrust) {
+        // an action the user took in a repository whose own config can run programs: ask once, like any command
+        await ensureTrusted('git ' + (Array.isArray(args) ? args.join(' ') : '') + '  (this repository\'s configuration can run programs: ' + (r.keys || []).slice(0, 3).join(', ') + ')');
+        r = await git.exec(args);
+      }
+      return ok(r);
+    } catch (e) { return fail(e); }
   });
   ipcMain.handle('git:status', async () => {
     try { return ok(await git.status()); } catch (e) { return fail(e); }

@@ -9,6 +9,7 @@ const path = require('path');
 const workspace = require('./workspace');
 const trust = require('./trust');
 const { sanitizedEnv } = require('./proc');
+const cmdpolicy = require('./cmdpolicy');
 
 // A folder that already contains a .git directory can ship a hostile .git/config or hooks. Git runs programs
 // named there: core.fsmonitor on every `git status` (the Git panel runs it on each refresh), hooks on commit /
@@ -80,12 +81,47 @@ function validateArgs(args) {
   return null;
 }
 
-function exec(args) {
+// Settings in a repository's OWN config (and anything it includes) that name a program git will run: clean / smudge /
+// process filters, merge drivers, diff drivers, ssh / proxy / askpass / editor / pager commands, credential helpers,
+// remote upload-pack, and includes that can pull any of those in. fsmonitor and hooksPath are overridden separately.
+const RUNS_PROGRAMS = [
+  /^filter\..+\.(clean|smudge|process)$/i, /^merge\..+\.driver$/i, /^diff\..+\.(command|textconv)$/i, /^diff\.external$/i,
+  /^core\.(sshcommand|gitproxy|askpass|editor|pager)$/i, /^gpg(\..+)?\.program$/i, /^credential(\..+)?\.helper$/i,
+  /^sequence\.editor$/i, /^pager\..+/i, /^remote\..+\.(uploadpack|receivepack|vcs)$/i, /^protocol\.ext\.allow$/i,
+  /^uploadpack\.packobjectshook$/i, /^include(if)?\..+/i
+];
+const scanCache = new Map(); // root -> { at, keys }
+function dangerousLocalKeys(root) {
+  const hit = scanCache.get(root);
+  if (hit && Date.now() - hit.at < 3000) return Promise.resolve(hit.keys);
   return new Promise((resolve) => {
-    const root = workspace.getRoot();
-    if (!root) { resolve({ code: -1, stdout: '', stderr: 'No workspace is open' }); return; }
-    const bad = validateArgs(args);
-    if (bad) { resolve({ code: -1, stdout: '', stderr: bad }); return; }
+    // --show-scope separates the repository's own settings from the user's global ones (e.g. git-lfs filters)
+    execFile('git', ['config', '--list', '--show-scope', '--name-only'], { cwd: root, windowsHide: true, env: gitEnv(root), maxBuffer: 4 * 1024 * 1024 }, (err, stdout) => {
+      const keys = [];
+      if (!err) {
+        for (const line of String(stdout || '').split(/\r?\n/)) {
+          const m = /^(local|worktree)\s+(\S.*)$/.exec(line);
+          if (m && RUNS_PROGRAMS.some((re) => re.test(m[2].trim()))) keys.push(m[2].trim());
+        }
+      }
+      scanCache.set(root, { at: Date.now(), keys });
+      resolve(keys);
+    });
+  });
+}
+
+async function exec(args) {
+  const root = workspace.getRoot();
+  if (!root) return { code: -1, stdout: '', stderr: 'No workspace is open' };
+  const bad = validateArgs(args) || cmdpolicy.hardRefusal('git', args);
+  if (bad) return { code: -1, stdout: '', stderr: bad };
+  if (!trust.isTrusted(root)) {
+    const keys = await dangerousLocalKeys(root);
+    if (keys.length) {
+      return { code: -1, stdout: '', stderr: 'This repository\'s own configuration can run programs (' + keys.slice(0, 3).join(', ') + '). Trust the folder to use Git here.', needsTrust: true, keys };
+    }
+  }
+  return new Promise((resolve) => {
     let argv = args;
     const si = args.findIndex((a) => !a.startsWith('-'));
     if (si >= 0 && ['diff', 'show', 'log'].includes(args[si])) argv = args.slice(0, si + 1).concat(['--no-ext-diff', '--no-textconv'], args.slice(si + 1));
@@ -102,6 +138,7 @@ async function status() {
   const root = workspace.getRoot();
   if (!root) return { repo: false };
   const inside = await exec(['rev-parse', '--is-inside-work-tree']);
+  if (inside.needsTrust) return { repo: false, needsTrust: true, keys: inside.keys };
   if (inside.code !== 0 || inside.stdout.trim() !== 'true') return { repo: false };
 
   // symbolic-ref names the branch even before the first commit (rev-parse
