@@ -56,7 +56,7 @@ Modified: `electron/main.js`, `electron/acceptance-agent.js`, `package.json`. Ne
 
 ## 5. Unit tests
 
-Full suite on the final built tree: **3529 passed, 0 failed** (3530 earlier; one assertion in the stream-relay test file was replaced when the abort moved to `did-navigate`). After the build, five more stream-relay lifecycle tests were added (navigation that fails or is cancelled, a new stream after navigation, concurrent streams, window closed mid-inference); the stream-relay file now has 18 checks, all passing. The full suite was not re-run after those additions. New: `stream-relay` 13 checks at build time (18 now), `ipc-guard` 12 checks. `scripts/verify-installer.js`: all build-output checks passed. Its manual lifecycle checklist (install, upgrade, uninstall, portable) was **not** run for this build.
+Full suite on the final built tree: **3529 passed, 0 failed** (3530 earlier; one assertion in the stream-relay test file was replaced when the abort moved to `did-navigate`). After the build, five more stream-relay lifecycle tests were added (navigation that fails or is cancelled, a new stream after navigation, concurrent streams, window closed mid-inference); the stream-relay file now has 18 checks, all passing. The full suite was re-run afterwards on the committed tree: **3534 passed, 0 failed**. New: `stream-relay` 13 checks at build time (18 now), `ipc-guard` 12 checks. `scripts/verify-installer.js`: all build-output checks passed. Its manual lifecycle checklist (install, upgrade, uninstall, portable) was **not** run for this build.
 
 ## 6. Installed-app (packaged, unpacked build) acceptance, real model
 
