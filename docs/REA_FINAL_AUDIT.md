@@ -165,3 +165,46 @@ Silent install of alpha.5, boot (smoke), silent upgrade over it with an alpha.6 
 - Items 1-3 and 5-8 of section 8 stand. Item 10 (crash/close only unit-tested) is now closed by S6/S7/S8; a stale renderer after a reload still cannot be tested directly.
 - Command policy remains a deny-list over an allowlist of tools: each review round has found another way an allowlisted tool can run code (`-pe`, `-exec`, `--node-options`). Expect more; the OS-level sandbox is the real fix.
 - Auto mode should stay limited to trusted projects.
+
+## 11. Addendum: third round (continuous security review, `3601e00` .. `7035cc5`)
+
+Cursor's security reviewer examined PR #17 repeatedly after each push. Every finding below was fixed on the branch, replied to and resolved on the thread. Each fix has a unit test; the packaged run in 11.3 predates only the last one (`7035cc5`).
+
+### 11.1 What the reviews found, by area
+
+| Area | Gaps found (each fixed) | Fix in `electron/lib/` |
+|---|---|---|
+| Inline code through allowlisted interpreters | `node -pe`, clustered/attached short options, `py`, `pyw`, `pythonw`, `python3.13t`, `pypy`; `python -m timeit` and other `-m` modules; option values mistaken for the script (`--input-type module -e`, `-X dev -c`) | `cmdpolicy.js`: all Python spellings; `-m` is an allowlist; interpreter options end at the script file |
+| Package managers and runners | `--node-options`; `-c`/`--call`; `--registry`/`--userconfig`/`--prefix`/`--script-shell` incl. abbreviations (`--reg=`); `npx -- node -e`, `yarn node -e`, `npx tsx -e`, `npx bash -c`; `python -mpip --index-url` | `cmdpolicy.js`: runners judge the program they start; shells/interpreters refused when named by a runner; flags matched like nopt/argparse (abbreviations) |
+| Other tools | `go test -exec/-toolexec`, `go -C/-modfile/-overlay`; `make -C/-f/--eval/SHELL=`; `cargo --config/-Z` | `cmdpolicy.js` |
+| Git, untrusted folders | fixed shared-temp hooks dir; filters/merge drivers/ssh/credential helpers in repo config; `core.worktree`, TLS/proxy/CA/rewrite keys; fail-open config scan; gitfile/commondir/alternates/symlink layout; `clone -u`, `-c<k=v>`, `--reference`, `file:` sources, destinations outside the folder; `git:exec` did not apply the command floor | `git.js` (`dangerousLocalKeys` fails closed, `layoutIssues` on real paths, `http.sslVerify` forced on), `cmdpolicy.js`, `main.js` (trust prompt on user actions) |
+| `net:fetch` | cross-host redirects; DNS rebinding between check and connect | `net.js`: same-host redirects only; host resolved once, every address vetted, connection pinned to the vetted address |
+| Lifecycle | terminal outliving its window (including during start-up); `hermes:openSetup` had no confirmation | `main.js`, `stream-relay.js` |
+
+Test files added or extended: `cmdpolicy.test.js` (190 checks), `git-hostile-config.test.js` (26), `net-redirect.test.js` (8), `git-hooks-dir.test.js` (5), `stream-relay.test.js` (18), `ipc-guard.test.js` (12). Full suite at `7035cc5`: **3704 passed, 0 failed**.
+
+### 11.2 CI
+
+GitHub Actions began running on the PR after the workflow trigger change (section 10.5). It found one defect that local runs did not: a test granted trust to the Windows 8.3 short temp path while the app uses the canonical long path. Fixed in `b741328`.
+
+### 11.3 Packaged build `25c1a61` (real model, simple scenarios, `win-unpacked`)
+
+| Phase | Result |
+|---|---|
+| Main | **45/45** (includes S5 reload mid-stream, S6 renderer crash, S7 window close, S8 terminals, rogue-window IPC refusal) |
+| Reopen | **10/10** |
+
+Hashes: `app.asar` `27c1a996f6635a5c6f34b5034c3d45fc423c2e7e6a3a3628163040a1212ffa05`, `CodeSovereign.exe` `e1da7af2f7900d39d450ca545885890cb4460352b44f13d9ef714034b9609613`, NSIS `c17cc1440e4fa70f6658d707c164f4d2d8b60307d28e53842c64e32d164865f5`, portable `ba04feb806ab691dd340eaa2fee35b606af767fc1b7e41d3fff7244b0f43bca3`.
+
+Not repeated on this build: the default rounding scenario (BLOCKED earlier; unrelated to these changes), the REA re-analysis of the artifact, the NSIS install/upgrade/uninstall script. The commit after this build (`7035cc5`, links in git layout) has unit tests with real junctions but no packaged run.
+
+### 11.4 Honest assessment of the command policy
+
+Eleven review rounds each found another way an allowlisted tool could start a program that runs attacker-chosen code: a new spelling, a clustered flag, an abbreviation, a wrapper. The policy is a deny-list over an allowlist of tool names, plus argument rules, and it has improved a lot (several parts are now allowlists: `python -m`, interpreter script detection, runner inner commands), but **there is no basis to expect it to be complete.** The control that closes the class is an OS-level sandbox for agent-run commands (restricted token/job object/AppContainer on Windows, or a container), which does not exist. Until it does: keep Auto mode to trusted projects, keep the approval prompts on, and do not describe the app as safe against a hostile project folder or a prompt-injected agent.
+
+### 11.5 Remaining items (updated)
+
+- OS-level command sandbox (largest gap); unsigned installer; Windows-only testing.
+- Git in a folder whose `.git` is absent but whose parent is a repository is not gated (git's normal upward discovery).
+- Bugbot's usage limit was hit on several later pushes, so the last rounds of fixes were reviewed only by Cursor's separate security reviewer.
+- Hermes Agent never tested live; the portable exe and installer lifecycle edge cases (running app, paths with spaces, per-machine) not tested.
