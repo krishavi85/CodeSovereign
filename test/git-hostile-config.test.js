@@ -65,10 +65,11 @@ module.exports = async function (t) {
 
   // trusting the folder is the user's decision; after it git proceeds
   ws.setRoot(hostile);
-  trust.grant(hostile);
+  const grantedRoot = ws.getRoot();   // the canonical path (on Windows CI the temp dir is an 8.3 short name until resolved)
+  trust.grant(grantedRoot);
   r = await git.exec(['rev-parse', '--is-inside-work-tree']);
   t.ok('once the folder is trusted git runs normally', !r.needsTrust && r.code === 0);
-  trust.revoke(hostile);
+  trust.revoke(grantedRoot);
 
   // the argument floor applies to git:exec as well
   ws.setRoot(benign);

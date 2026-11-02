@@ -183,6 +183,15 @@
     var dd = args.indexOf('--'), pre = dd < 0 ? args : args.slice(0, dd);
     var isPm = base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun';
     var isRunner = base === 'npx' || base === 'pnpx' || base === 'bunx' || (isPm && ['exec', 'x', 'dlx'].indexOf(sub) >= 0);
+    // a runner starts another program: judge that program and its arguments too
+    if (isRunner) {
+      for (var ri = 0; ri < args.length; ri++) {
+        if (typeof args[ri] === 'string' && args[ri].charAt(0) !== '-' && ['node', 'deno', 'bun', 'python', 'python3', 'py', 'pip', 'pip3', 'npm', 'pnpm', 'yarn', 'npx', 'pnpx', 'bunx', 'git', 'go', 'cargo'].indexOf(baseName(args[ri])) >= 0) {
+          var innerRes = classifyCommand(args[ri], args.slice(ri + 1));
+          if (innerRes.deny) return refuse(base + ' would start ' + baseName(args[ri]) + ': ' + innerRes.deny);
+        }
+      }
+    }
     if (isRunner && pre.some(function (x) { return (/^-[^-]/.test(x) && x.indexOf('c') >= 0) || abbrev(x, ['call', 'shell-mode', 'registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell', 'shell']); }))
       return refuse(base + ' with a shell command or registry / configuration overrides is not allowed');
     var mPip = (base === 'python' || base === 'python3' || base === 'py') ? args.indexOf('-m') : -1;

@@ -20,7 +20,11 @@ function baseCmd(cmd) {
   return path.basename(String(cmd || '')).replace(/\.(cmd|exe|bat|ps1)$/i, '').toLowerCase();
 }
 
-function hardRefusal(cmd, args) {
+// Programs a package runner can be asked to start that this policy also judges
+const INNER = new Set(['node', 'deno', 'bun', 'python', 'python3', 'py', 'pip', 'pip3', 'npm', 'pnpm', 'yarn', 'npx', 'pnpx', 'bunx', 'git', 'go', 'cargo']);
+
+function hardRefusal(cmd, args, depth) {
+  depth = depth || 0;
   const base = baseCmd(cmd);
   const a = Array.isArray(args) ? args : [];
   for (const x of a) {
@@ -61,6 +65,16 @@ function hardRefusal(cmd, args) {
   const isPm = base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun';
   const isRunner = base === 'npx' || base === 'pnpx' || base === 'bunx' || (isPm && ['exec', 'x', 'dlx'].includes(sub));
   // short options cluster and take attached values (-yc, -ccalc): any single-dash token containing c may be -c
+  // a runner starts another program: judge that program and its arguments too (npx -- node -e x, npm exec node --eval=x,
+  // npx -p pkg node -pe x). Any token that names a judged program counts, whatever options come before it.
+  if (isRunner && depth < 3) {
+    for (let i = 0; i < a.length; i++) {
+      if (typeof a[i] === 'string' && !a[i].startsWith('-') && INNER.has(baseCmd(a[i]))) {
+        const inner = hardRefusal(a[i], a.slice(i + 1), depth + 1);
+        if (inner) return base + ' would start ' + baseCmd(a[i]) + ': ' + inner;
+      }
+    }
+  }
   if (isRunner && (beforeDD.some((x) => /^-[^-]/.test(x) && x.indexOf('c') >= 0) || beforeDD.some((x) => abbrev(x, ['call', 'shell-mode', 'registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell', 'shell']))))
     return base + ' with a shell command or registry / configuration overrides is not allowed';
   if (isPm) {
