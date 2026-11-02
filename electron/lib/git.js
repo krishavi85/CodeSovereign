@@ -103,16 +103,28 @@ function layoutIssues(root) {
   let st;
   try { st = fs.lstatSync(g); } catch (_) { return []; }
   const issues = [];
-  const insideRoot = (p) => { const r = path.relative(path.resolve(root), path.resolve(p)); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
+  // containment is judged on REAL paths: a symlink or junction inside the folder can lead anywhere
+  let realRoot;
+  try { realRoot = fs.realpathSync(root); } catch (_) { return ['.git (folder cannot be resolved)']; }
+  const realInside = (p) => {
+    try { const r = path.relative(realRoot, fs.realpathSync(p)); return !!r && !r.startsWith('..') && !path.isAbsolute(r); } catch (_) { return false; }
+  };
+  let gitDir = g;
   if (st.isSymbolicLink()) issues.push('.git (symbolic link)');
   else if (st.isFile()) {
     let txt = '';
     try { txt = fs.readFileSync(g, 'utf8'); } catch (_) {}
     const m = /^gitdir:\s*(.+)$/m.exec(txt);
-    if (!m || !insideRoot(path.resolve(root, m[1].trim()))) issues.push('.git (points outside the folder)');
-  } else {
+    gitDir = m ? path.resolve(root, m[1].trim()) : null;
+    if (!gitDir || !realInside(gitDir)) { issues.push('.git (points outside the folder)'); gitDir = null; }
+  } else if (!realInside(g)) issues.push('.git (resolves outside the folder)');
+  if (gitDir && !issues.length) {
     for (const rel of ['commondir', 'objects/info/alternates', 'objects/info/http-alternates']) {
-      try { fs.lstatSync(path.join(g, rel)); issues.push('.git/' + rel); } catch (_) {}
+      try { fs.lstatSync(path.join(gitDir, rel)); issues.push('.git/' + rel); } catch (_) {}
+    }
+    // the parts git reads and writes must be real entries inside the git directory, not links to somewhere else
+    for (const rel of ['objects', 'refs', 'HEAD', 'config', 'index', 'info', 'hooks', 'packed-refs', 'logs', 'worktrees', 'modules']) {
+      try { if (fs.lstatSync(path.join(gitDir, rel)).isSymbolicLink()) issues.push('.git/' + rel + ' (symbolic link)'); } catch (_) {}
     }
   }
   return issues;

@@ -65,6 +65,30 @@ module.exports = async function (t) {
   ws.setRoot(gfIn);
   r = await git.exec(['rev-parse', '--is-inside-work-tree']);
   t.ok('a .git file pointing INSIDE the folder is fine', !r.needsTrust);
+  // links inside the folder that lead to another repository (symlink / junction)
+  const linkTo = (target, p) => { try { fs.symlinkSync(target, p, process.platform === 'win32' ? 'junction' : 'dir'); return true; } catch (_) { return false; } };
+  const gl = path.join(base, 'gitfile-link');
+  fs.mkdirSync(gl);
+  if (linkTo(path.join(elsewhere, '.git'), path.join(gl, 'inner'))) {
+    fs.writeFileSync(path.join(gl, '.git'), 'gitdir: ./inner\n');
+    ws.setRoot(gl);
+    r = await git.exec(['status']);
+    t.ok('a .git file whose in-folder path is a link to another repository is flagged', r.needsTrust === true && (r.keys || []).some((k) => /points outside/.test(k)));
+  }
+  const dl = path.join(base, 'gitdir-link');
+  fs.mkdirSync(dl);
+  if (linkTo(path.join(elsewhere, '.git'), path.join(dl, '.git'))) {
+    ws.setRoot(dl);
+    r = await git.exec(['status']);
+    t.ok('a .git that is itself a link is flagged', r.needsTrust === true);
+  }
+  const ol = mk('objects-link');
+  fs.renameSync(path.join(ol, '.git', 'objects'), path.join(base, 'objects-moved'));
+  if (linkTo(path.join(elsewhere, '.git', 'objects'), path.join(ol, '.git', 'objects'))) {
+    ws.setRoot(ol);
+    r = await git.exec(['status']);
+    t.ok('.git/objects that is a link elsewhere is flagged', r.needsTrust === true && (r.keys || []).some((k) => /objects/.test(k)));
+  }
   const alt = mk('alt');
   fs.mkdirSync(path.join(alt, '.git', 'objects', 'info'), { recursive: true });
   fs.writeFileSync(path.join(alt, '.git', 'objects', 'info', 'alternates'), path.join(elsewhere, '.git', 'objects') + '\n');
