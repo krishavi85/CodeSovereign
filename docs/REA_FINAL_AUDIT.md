@@ -1,14 +1,16 @@
 # REA-assisted audit, repair and release verification
 
-Branch `fix/security-review`. Base commit `6f5c3d67c31cc7d63692ac30981ded1fd88cbc95`.
-**Working tree: modified and uncommitted.** Every result below was produced from base commit + the working-tree changes listed in section 4.
+Branch `fix/security-review`. Base commit `6f5c3d67c31cc7d63692ac30981ded1fd88cbc95`; the changes are committed as `005dff9`.
+The packaged-build results in section 6 were produced from the working tree that became `005dff9` (source files unchanged between the final build at 14:49 and the commit; the only later edits are extra unit tests and this report). The "packaged run" results were not repeated after the commit.
 Date: 2026-11-02. Windows 11 Pro 10.0.26300, Node 24.22.0, Electron 43.6.0, REA (rea-agents) 6.8.0, local model `qwen2.5-coder:7b` via Ollama.
 
 Division of labour: REA supplied static evidence about the shipped artifacts. The code changes were made by the coding agent. Whether anything *works* was decided only by unit tests and runs of the real packaged Electron app. REA's static analysis does not prove runtime behaviour, and nothing here claims it does.
 
 ## 1. Release status: **READY WITH LIMITATIONS** (for a closed alpha/beta on Windows)
 
-Not READY, because: no OS-level command sandbox, an unsigned installer, one unresolved model-capability gap (rounding scenario), Windows-only testing, Hermes Agent never tested live, and the changes are not yet committed or reviewed. Nothing has been merged, published or released.
+Timeline that matters: the first hardened packaged runs (before the abort moved to `did-navigate`) stalled at the interrupt/resume scenario and are **not** used as evidence. Every result in sections 5-7 comes from builds made after that fix.
+
+Not READY, because: no OS-level command sandbox, an unsigned installer, one unresolved model-capability gap (rounding scenario), Windows-only testing, Hermes Agent never tested live, and the changes are committed locally but not pushed, CI-tested or reviewed. Nothing has been merged, published or released.
 
 ## 2. Artifacts inspected (final build)
 
@@ -54,7 +56,7 @@ Modified: `electron/main.js`, `electron/acceptance-agent.js`, `package.json`. Ne
 
 ## 5. Unit tests
 
-Full suite on the final tree: **3529 passed, 0 failed** (3530 earlier; one assertion in the stream-relay test file was replaced when the abort moved to `did-navigate`). New: `stream-relay` 13 checks, `ipc-guard` 12 checks. `scripts/verify-installer.js`: all build-output checks passed. Its manual lifecycle checklist (install, upgrade, uninstall, portable) was **not** run for this build.
+Full suite on the final built tree: **3529 passed, 0 failed** (3530 earlier; one assertion in the stream-relay test file was replaced when the abort moved to `did-navigate`). After the build, five more stream-relay lifecycle tests were added (navigation that fails or is cancelled, a new stream after navigation, concurrent streams, window closed mid-inference); the stream-relay file now has 18 checks, all passing. The full suite was not re-run after those additions. New: `stream-relay` 13 checks at build time (18 now), `ipc-guard` 12 checks. `scripts/verify-installer.js`: all build-output checks passed. Its manual lifecycle checklist (install, upgrade, uninstall, portable) was **not** run for this build.
 
 ## 6. Installed-app (packaged, unpacked build) acceptance, real model
 
@@ -102,11 +104,12 @@ The 7B model did not fix the bug. The app behaved correctly: it reported BLOCKED
 6. Native agent capability: the local 7B model fails the rounding scenario and has been seen to report "verified" when the hidden spec exceeds the visible tests (earlier evals in `docs/eval/`). Stronger models were not evaluated here.
 7. Hermes Agent was never tested against a live Hermes install; OpenClaw only to the extent of earlier work. Phases 5-7 of the requested audit (full agent trace, integrations, UI controls) were **not** re-done with REA in this pass; they rest on `docs/NATIVE_AGENT.md`, `docs/PRODUCT_AUDIT.md` and `docs/SECURITY_REVIEW.md`.
 8. Windows only. The tested build is the unpacked directory (`win-unpacked`), launched in place, not an installed copy; the NSIS install/upgrade/uninstall path and the portable exe were not executed in this pass.
-9. The changes are uncommitted, unreviewed by a second pair of eyes, and not CI-tested; git warns that CRLF will be normalised to LF on the three modified files.
+9. The changes are committed (`005dff9`) but unpushed, unreviewed by a second pair of eyes, and not CI-tested; git warns that CRLF will be normalised to LF on several files.
+10. Lifecycle cases covered only by unit tests (fake sender), not by real Electron runs: navigation that starts and fails, renderer crash without navigation, window closed during inference, and a stale renderer sending after a reload (a reloaded page no longer exists; the rogue-window probe is the only real-Electron evidence of rejection).
 
 ## 9. Gates for moving beyond a closed beta
 
-- Commit on `fix/security-review`, get CI and review.
+- Push `fix/security-review`, open a PR, get CI and review.
 - Run the NSIS install/upgrade/uninstall checklist and the portable exe.
 - Sign the installer.
 - Decide on an OS-level sandbox for agent commands (Windows job objects/AppContainer or a container) or ship with the risk documented to testers.

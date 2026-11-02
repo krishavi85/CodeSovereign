@@ -65,4 +65,29 @@ module.exports = async function (t) {
   s = fakeSender(); s.crashed = true;
   r = relay.create(s, 'c', 's8', null);
   t.ok('a crashed renderer is not sent to, and a missing abort callback is fine', r.push('x') === false && s.sent.length === 0);
+
+  /* lifecycle transitions around a navigation */
+  s = fakeSender(); aborts = 0;
+  r = relay.create(s, 'c', 'n1', () => aborts++);
+  s.emit('did-start-navigation', { url: 'x', isMainFrame: true, isSameDocument: false });
+  s.emit('did-fail-load', {}, -3, 'ERR_ABORTED', 'x', true);
+  t.ok('a navigation that starts and then fails or is cancelled leaves the stream running and delivering', aborts === 0 && r.push('still here') === true);
+
+  s = fakeSender(); aborts = 0;
+  const old = relay.create(s, 'c', 'old', () => aborts++);
+  s.emit('did-navigate');
+  const fresh = relay.create(s, 'c', 'new', () => aborts++);
+  t.ok('a stream started after the navigation is independent of the one it replaced', aborts === 1 && old.push('late') === false && fresh.push('hi') === true && s.sent.length === 1 && s.sent[0][1].id === 'new');
+
+  s = fakeSender(); aborts = 0;
+  const a1 = relay.create(s, 'c', 'a1', () => aborts++), a2 = relay.create(s, 'c', 'a2', () => aborts++);
+  a1.done();
+  s.emit('did-navigate');
+  t.equal('concurrent streams: one that finished is not aborted again, the live one is', aborts, 1);
+  t.ok('a stale stream never sends after it has been stopped', a2.push('x') === false && s.sent.length === 0);
+
+  s = fakeSender(); aborts = 0;
+  r = relay.create(s, 'c', 'w1', () => aborts++);
+  s.destroyed = true; s.emit('destroyed');
+  t.ok('window closed during inference: aborted once, later chunks dropped', aborts === 1 && r.push('x') === false && s.sent.length === 0);
 };
