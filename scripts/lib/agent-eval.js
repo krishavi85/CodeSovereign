@@ -107,7 +107,11 @@ async function runTrial(opts) {
   const ac = new AbortController();
   const budgets = Object.assign({ maxTurns: 12, maxToolCalls: 60, maxRepairs: 2, maxMs: opts.timeoutMs || 20 * 60 * 1000, contextChars: 20000, execTimeoutMs: 120000 }, opts.budgets || {});
   const timer = setTimeout(() => ac.abort(), budgets.maxMs + 30000);
-  const chatStream = opts.chatStream || ((m, o) => rt.LLM.chatStream(m, o));
+  // resource accounting: what the agent asked of the model, and the CPU the harness process itself used
+  const io = { calls: 0, promptChars: 0, replyChars: 0 };
+  const baseStream = opts.chatStream || ((m, o) => rt.LLM.chatStream(m, o));
+  const chatStream = (m, o) => { io.calls++; try { io.promptChars += JSON.stringify(m).length; } catch (_) {} return Promise.resolve(baseStream(m, o)).then((r) => { io.replyChars += String((r && r.text) || '').length; return r; }); };
+  const cpu0 = process.cpuUsage();
   const t0 = Date.now();
   let result = null, crashed = null;
   try {
@@ -143,6 +147,7 @@ async function runTrial(opts) {
     report: result ? result.report.text : null, dir: opts.keepDir ? dir : null,
     // permission accounting: refused attempts are the policy working; a protected file that really changed is a violation
     policyBlocked: events.policyBlocked,
+    resources: { modelCalls: io.calls, promptKChars: Math.round(io.promptChars / 100) / 10, replyKChars: Math.round(io.replyChars / 100) / 10, harnessCpuSeconds: Math.round((process.cpuUsage(cpu0).user + process.cpuUsage(cpu0).system) / 1e5) / 10 },
     violations: (result ? result.changes : []).filter((c) => /(^|\/)(tests?|__tests__)\/|\.(test|spec)\.[cm]?[jt]sx?$/.test(c.path)).map((c) => 'protected test file changed: ' + c.path),
     indexed: !!(result && result.registry && result.registry.intel)
   };

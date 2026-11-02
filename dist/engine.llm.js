@@ -98,7 +98,7 @@
       keyPrefix: "Bearer ",
       keyless: true,
       local: true,
-      notes: "Your local Hermes Agent (Nous Research) through its OpenAI-compatible API server (default 127.0.0.1:8642). Enable the API server in Hermes and run `hermes gateway`. The agent keeps its own memory, skills and tools; set an API key here only if you configured one in Hermes."
+      notes: "Your local Hermes Agent (Nous Research) through its OpenAI-compatible API server (default 127.0.0.1:8642). Enable the API server in Hermes and run `hermes gateway`. The agent keeps its own memory, skills and tools; Hermes requires an API_SERVER_KEY even on loopback: Settings → Agents can create one for you."
     },
     {
       id: "openai_compat",

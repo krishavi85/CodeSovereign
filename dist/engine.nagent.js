@@ -174,15 +174,50 @@
       if (/[\u0000-\u001f]/.test(a)) return refuse('control characters in an argument');
       if (/(&&|\|\||[|;&<>`]|\$\()/.test(a)) return refuse('shell operators are not allowed in arguments (' + a.slice(0, 20) + ')');
       if (/%[A-Za-z_]+%|\$\{?[A-Za-z_]/.test(a)) return refuse('environment-variable expansion is not allowed in arguments');
+      if (/^file:/i.test(a)) return refuse('file: URLs name local paths and are not allowed');
       if (escapesProject(a)) return refuse('"' + a.slice(0, 40) + '" points outside the project');
     }
+    // long options are matched the way nopt / argparse parse them: any unambiguous abbreviation counts
+    var abbrev = function (x, names) { var m = /^--([A-Za-z][A-Za-z-]*)(=|$)/.exec(String(x)); return !!m && m[1].length >= 2 && names.some(function (n) { return n.indexOf(m[1].toLowerCase()) === 0; }); };
+    if (args.some(function (x) { return abbrev(x, ['node-options']); })) return refuse('--node-options injects code into Node processes and is not allowed');
     var sub = args.filter(function (x) { return !/^-/.test(x); })[0];
+    var dd = args.indexOf('--'), pre = dd < 0 ? args : args.slice(0, dd);
+    var isPm = base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun';
+    var isRunner = base === 'npx' || base === 'pnpx' || base === 'bunx' || (isPm && ['exec', 'x', 'dlx'].indexOf(sub) >= 0);
+    // a runner starts another program: judge that program and its arguments too
+    if (isRunner) {
+      for (var ri = 0; ri < args.length; ri++) {
+        if (typeof args[ri] === 'string' && args[ri].charAt(0) !== '-' && ['node', 'deno', 'bun', 'python', 'python3', 'py', 'pip', 'pip3', 'npm', 'pnpm', 'yarn', 'npx', 'pnpx', 'bunx', 'git', 'go', 'cargo'].indexOf(baseName(args[ri])) >= 0) {
+          var innerRes = classifyCommand(args[ri], args.slice(ri + 1));
+          if (innerRes.deny) return refuse(base + ' would start ' + baseName(args[ri]) + ': ' + innerRes.deny);
+        }
+      }
+    }
+    if (isRunner && pre.some(function (x) { return (/^-[^-]/.test(x) && x.indexOf('c') >= 0) || abbrev(x, ['call', 'shell-mode', 'registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell', 'shell']); }))
+      return refuse(base + ' with a shell command or registry / configuration overrides is not allowed');
+    var mPip = (base === 'python' || base === 'python3' || base === 'py') ? args.indexOf('-m') : -1;
+    var pipArgs = (base === 'pip' || base === 'pip3') ? pre : (mPip >= 0 && args[mPip + 1] === 'pip' ? args.slice(mPip + 2) : null);
+    if (pipArgs && pipArgs.some(function (x) { return (/^-[^-]/.test(x) && /[if]/.test(x)) || abbrev(x, ['index-url', 'extra-index-url', 'trusted-host', 'config-settings', 'find-links', 'proxy', 'break-system-packages']); }))
+      return refuse('pip index / system overrides are not allowed');
     var has = function () { for (var j = 0; j < arguments.length; j++) if (args.indexOf(arguments[j]) >= 0) return true; return false; };
     var hasPrefix = function (p) { return args.some(function (x) { return x.indexOf(p) === 0; }); };
 
+    // clustered short options: "node -pe code" is -p and -e
+    var evalCluster = args.some(function (x) { return /^-[A-Za-z]+$/.test(x) && /[eprI]/i.test(x); });
     if (base === 'node') {
-      if (has('-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || hasPrefix('--inspect') || hasPrefix('--eval=') || hasPrefix('--require=') || hasPrefix('--import='))
+      if (has('-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || evalCluster || hasPrefix('--inspect') || hasPrefix('--eval=') || hasPrefix('--require=') || hasPrefix('--import='))
         return refuse('node with inline code, preloads or an inspector is not allowed — write a file and run it');
+      // the test runner loads the module named by --test-reporter (file: / data: URLs run code) and writes to --test-reporter-destination
+      for (var ti = 0; ti < args.length; ti++) {
+        var tm = /^--(test-r[a-z-]*)(?:=([\s\S]*))?$/.exec(args[ti]);
+        if (tm) {
+          var tval = tm[2] !== undefined ? tm[2] : args[ti + 1];
+          var tdest = tm[1].length > 'test-reporter'.length;
+          if (!tdest && ['spec', 'tap', 'dot', 'junit', 'lcov'].indexOf(String(tval)) < 0) return refuse('node --test-reporter may only name a built-in reporter (spec, tap, dot, junit, lcov)');
+          if (tdest && ['stdout', 'stderr'].indexOf(String(tval)) < 0) return refuse('node --test-reporter-destination may only be stdout or stderr');
+        }
+        if (/^--env-file(-if-exists)?(=|$)/.test(args[ti])) return refuse('node --env-file can set NODE_OPTIONS and is not allowed');
+      }
       if (has('--version', '-v') && args.length === 1) return res('read');
       if (args[0] === '--test' || has('--test')) return res('exec', 'runs the project\'s tests');
       var file = args.filter(function (x) { return !/^-/.test(x); })[0];
@@ -190,7 +225,7 @@
       return refuse('node may only run a project .js/.mjs/.cjs file or --test');
     }
     if (base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun') {
-      if (has('-g', '--global', '--location=global') || hasPrefix('--registry') || hasPrefix('--userconfig') || hasPrefix('--prefix') || hasPrefix('--globalconfig'))
+      if (args.some(function (x, i) { return (/^-[^-]/.test(x) && x.indexOf('g') >= 0) || abbrev(x, ['global']) || /^--location=global$/i.test(x) || (abbrev(x, ['location']) && String(args[i + 1]).toLowerCase() === 'global'); }) || (base === 'yarn' && sub === 'global') || hasPrefix('--script-shell') || hasPrefix('--shell') || hasPrefix('--registry') || hasPrefix('--userconfig') || hasPrefix('--prefix') || hasPrefix('--globalconfig') || args.some(function (x) { return abbrev(x, ['registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell']); }))
         return refuse('changing global installs or package-manager configuration is not allowed');
       if (!sub) return refuse('a subcommand is required');
       if (sub === 'test' || sub === 't' || sub === 'tst') return res('exec', 'runs the project\'s test script');
@@ -210,7 +245,7 @@
     if (base === 'npx') return res('network', 'downloads and runs a package (network, arbitrary code)');
     if (base === 'git') {
       if (!sub) return refuse('a git subcommand is required');
-      if (has('-c', '--exec-path') || hasPrefix('--git-dir') || hasPrefix('--work-tree') || hasPrefix('-C')) return refuse('git configuration / path overrides are not allowed');
+      if (has('-c', '--exec-path') || hasPrefix('--git-dir') || hasPrefix('--work-tree') || hasPrefix('-C') || hasPrefix('--separate-git-dir') || hasPrefix('--template') || hasPrefix('--config')) return refuse('git configuration / path overrides are not allowed');
       if (['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame', 'shortlog', 'describe', 'grep', 'cat-file'].indexOf(sub) >= 0) return res('read');
       if (sub === 'branch') return has('-d', '-D', '-m', '-M', '--delete', '--move', '-f', '--force') ? res('destructive', 'deletes or moves a branch') : res('read');
       if (sub === 'stash') return args.indexOf('drop') >= 0 || args.indexOf('clear') >= 0 ? res('destructive', 'drops stashes') : res('exec');
@@ -247,12 +282,15 @@
       return res('exec', 'runs project tooling');
     }
     if (base === 'cargo') {
+      if (args.some(function (x) { return /^--config(=|$)/.test(x) || /^-Z/.test(x); })) return refuse('cargo --config / -Z overrides are not allowed');
       if (['build', 'test', 'check', 'clippy', 'fmt', 'doc', 'bench', 'tree', 'metadata'].indexOf(sub) >= 0) return res('exec');
       if (['install', 'add', 'update', 'fetch', 'search', 'vendor'].indexOf(sub) >= 0) return res('network', 'fetches crates (network)');
       if (['clean', 'remove', 'uninstall'].indexOf(sub) >= 0) return res('destructive');
       return refuse('cargo "' + sub + '" is not allowed (publish, login and similar are blocked)');
     }
     if (base === 'go') {
+      if (sub === 'env' && has('-w', '-u', '--w', '--u')) return refuse('go env -w / -u change the global Go configuration and are not allowed');
+      if (args.some(function (x) { return /^--?(exec|toolexec)(=|$)/.test(x); })) return refuse('go -exec / -toolexec runs an arbitrary program and is not allowed');
       if (['build', 'test', 'vet', 'fmt', 'list', 'env', 'version'].indexOf(sub) >= 0) return res(sub === 'env' || sub === 'version' || sub === 'list' ? 'read' : 'exec');
       if (['get', 'install', 'mod', 'work'].indexOf(sub) >= 0) return res('network', 'may fetch modules (network)');
       if (sub === 'clean') return res('destructive');
@@ -915,11 +953,11 @@
     // "src/format.js imports slugify from src/text.js, which does not export it": caught the moment it is written
     // related: keep only problems that involve this file (as importer or as target), THEN take the first few, so
     // problems that were already there in other files cannot crowd out the one the edit just caused
-    function importNotes(only, related) {
+    function importNotes(only, related, max) {
       if (!intel) return [];
       var probs = intel.importProblems(only);
       if (related) probs = probs.filter(function (x) { return x.from === related || x.to === related; });
-      return probs.slice(0, 3).map(function (x) {
+      return probs.slice(0, max || 3).map(function (x) {
         return x.from + ' imports "' + x.name + '" from ' + x.to + (x.why === 'declared-not-exported' ? ', which defines it but does NOT export it (add it to the exports there)' : ', which does not provide it');
       });
     }
@@ -1116,6 +1154,14 @@
     } catch (_) { return false; }                                         // memory is an aid; it must never break a run
   }
 
+  // why a run was blocked, from the harness's own state history: never the model's words, so nothing a model
+  // (or content it read) wrote can be carried into a later prompt through memory
+  function blockedWhy(run) {
+    var h = (run && run.history) || [];
+    for (var i = h.length - 1; i >= 0; i--) if (h[i].state === 'BLOCKED' && h[i].reason) return clip(String(h[i].reason).replace(/[^\w .,:'()\/-]/g, ' ').replace(/\s+/g, ' '), 80);
+    return 'stopped';
+  }
+
   function rememberOutcome(env, run, status, reason, changes, goal) {
     var files = (changes || []).map(function (c) { return c.path; });
     if (['verified', 'unverified', 'blocked', 'failed'].indexOf(status) < 0) return;
@@ -1123,7 +1169,7 @@
     var lastV = (run.verification || [])[run.verification.length - 1];
     var vtxt = lastV ? lastV.steps.map(function (s) { return s.label + (s.pass != null ? ' ' + s.pass + ' pass/' + s.fail + ' fail' : ' exit ' + s.code); }).join(', ') : 'not verified';
     var title = 'Task (' + status + '): ' + clip(String(goal).replace(/\s+/g, ' '), 90);
-    var body = (status === 'verified' ? 'Verified by the harness (' + vtxt + ').' : status === 'unverified' ? 'Finished but NOT verified (' + vtxt + ').' : status === 'blocked' ? 'BLOCKED: ' + clip(String(reason || '').replace(/\s+/g, ' '), 200) : 'FAILED.') +
+    var body = (status === 'verified' ? 'Verified by the harness (' + vtxt + ').' : status === 'unverified' ? 'Finished but NOT verified (' + vtxt + ').' : status === 'blocked' ? 'BLOCKED: ' + blockedWhy(run) : 'FAILED.') +
       (files.length ? ' Changed: ' + files.slice(0, 8).join(', ') + '.' : '') + (run.attempts && run.attempts.length ? ' Repair attempts: ' + run.attempts.length + '.' : '');
     remember(env, 'artifacts', title, body, { type: 'task', status: status, files: files.slice(0, 12), at: Date.now() });
     if (status === 'verified' && lastV && lastV.ok === true) {
@@ -1221,6 +1267,8 @@
       var changes = reg.ws.changes(cp0);
       var report = buildReport(run, { status: status, summary: text, changes: changes, reg: reg, turns: turnsUsed, ms: Date.now() - t0, budgets: B, claim: lastClaim });
       run.result = { status: status, summary: text }; machine.save();
+      // a background server the agent started must not outlive the task (it would keep running, unwatched)
+      try { reg.stopProcesses(); } catch (_) { /* nothing to stop */ }
       if (!opts.noMemory) rememberOutcome(env, run, status, text, changes, opts.goal);
       return { run: run, report: report, registry: reg, changes: changes };
     }
@@ -1244,6 +1292,12 @@
         });
       });
       return chain.then(function () {
+        // Tests only cover what they cover: a rename that leaves other files importing the old name can pass them all.
+        // The project index checks the imports; if they do not line up, that is a failure like any other.
+        if (results.length && results.every(function (r) { return r.ok || r.skipped || r.empty; })) {
+          var imp = []; try { imp = reg.importNotes(null, null, 6); } catch (_) {}
+          if (imp.length) results.push({ label: 'imports', cmd: 'project index', code: 1, ms: 0, ok: false, failures: [{ name: 'imports do not line up', message: imp.join('\n'), file: null, line: null, frames: [] }], pass: null, fail: imp.length, total: null, outputTail: imp.join('\n') });
+        }
         var failed = results.filter(function (r) { return !r.ok && !r.skipped && !r.empty; });
         var skipped = results.length && results.every(function (r) { return r.skipped || r.empty; });
         var v = { ran: true, ok: failed.length ? false : (skipped ? null : true), results: results, at: Date.now(),
@@ -1384,9 +1438,41 @@
       if (trackDone) trackDone(c, res);
     } });
 
+    // The failing tests are the most concrete statement of the task there is. Before the model edits anything the
+    // harness runs the project's tests once and shows what fails (names, messages, the source they point at), so the
+    // model works from facts instead of guessing from the goal's wording. Once per run; nothing changes if the tests
+    // already pass, if there is no runner, or in a mode that may not run commands.
+    var BROKEN_GOAL = /\b(fail(s|ed|ing|ure)?|broken|breaks?|bug|bugs|error|errors|crash(es|ed|ing)?|exception|wrong|incorrect|not working|doesn't work|does not work|regress(ion|ed)?|started failing)\b/i;
+    var baselineBlock = null;
+    function baseline() {
+      if (baselineBlock != null) return Promise.resolve(baselineBlock);
+      baselineBlock = '';
+      var steps = verificationPlan(env).filter(function (st) { return st.label === 'tests'; });
+      if (!steps.length || mode === 'plan' || !BROKEN_GOAL.test(String(opts.goal || ''))) return Promise.resolve('');
+      return reg.execute(steps[0].spec, { signal: opts.signal }).then(function (e) {
+        if (!e || e.skipped || aborted()) return '';
+        var parsed = parseTestOutput(e.output);
+        if (e.code === 0 && !((parsed.fail || 0) > 0)) return '';
+        var v = { results: [{ label: 'tests', ok: false, failures: parsed.failures, fail: parsed.fail, outputTail: tail(e.output, 1500) }] };
+        var parts = ['The project\'s tests were run BEFORE any change and FAIL (' + (parsed.pass != null ? parsed.pass + ' pass / ' + parsed.fail + ' fail' : 'exit ' + e.code) + '). This is what has to be made to work:'];
+        allFailures(v).slice(0, 4).forEach(function (f, i) {
+          parts.push((i + 1) + '. ' + f.name + '\n' + String(f.message).split('\n').slice(0, 6).join('\n'));
+          var at = reg.analyze((f.frames || []).map(function (x) { return 'at ' + x.file + ':' + x.line; }).join('\n') + (f.file ? '\nat ' + f.file + ':' + (f.line || 1) : ''));
+          at.slice(0, 2).forEach(function (x) { parts.push('   in ' + x.path + ':' + x.line + '\n' + x.snippet); });
+        });
+        baselineBlock = parts.join('\n');
+        return baselineBlock;
+      }, function () { return ''; });
+    }
+
     function execute(nudge) {
       reg.reported = null;
+      return baseline().then(function (base) { return executeWith(nudge, base); });
+    }
+
+    function executeWith(nudge, base) {
       var user = goalText() + '\n\nPlan:\n' + planText(run.plan) + '\n\n' + projectSummary(env, reg, opts.goal + '\n' + planText(run.plan), reg.ws.changes(cp0).map(function (c) { return c.path; }), toolset) +
+        (base ? '\n\n' + base : '') +
         '\n\nCarry out the plan with the tools. When the change is made, call report_result. The harness will run the project\'s tests itself afterwards, so you do not need to.' +
         (nudge ? '\n\n' + nudge : '');
       return loop(toolset, system + '\nYou are EXECUTING the plan.', user, nudge ? 'execute (retry ' + nudges + ')' : 'execute').then(function (lr) {

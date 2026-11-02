@@ -117,6 +117,10 @@ module.exports = async function (t) {
     ];
     t.ok('anything that can supply names we cannot see is left alone (no false alarm)', opaque.every((src) => RI.create(mk({ '/a.js': src, '/impl.js': 'exports.zzz = 1;\n', '/b.js': "const { zzz } = require('./a');\n" })).importProblems().filter((x) => x.why === 'not-provided').length === 0));
     t.ok('importProblems can be limited to given files', RI.create(half).importProblems(['/src/text.js']).length === 0 && (() => { half._d['/src/text.js'] = half._d['/src/text.js'].replace('{ capitalize, slugify }', '{ capitalize }'); return RI.create(half).importProblems(['/src/format.js']).length === 1; })());
+    // a bare identifier binds the whole module (or its default): it is not a named import
+    const ns = mk({ '/math.js': 'function sum(a, b) { return a + b; }\nmodule.exports = { sum };\n', '/use.js': "const math = require('./math');\nmodule.exports = { three: () => math.sum(1, 2) };\n", '/def.js': "import math from './math';\nimport * as all from './math';\nexport const x = math;\n" });
+    t.deepEqual('namespace requires, default imports and import * are not named imports (no false alarm)', RI.create(ns).importProblems(), []);
+    t.deepEqual('...and they record no names, so context lines do not list a binding as an imported name', RI.create(ns).deps('/use.js').imports.map((i) => i.names), [[]]);
     // aliased exports publish a name that no declaration has
     const alias = mk({
       '/a.js': "function internalName() {}\nmodule.exports = { publicName: internalName };\n",

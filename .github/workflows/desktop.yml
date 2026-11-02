@@ -3,8 +3,8 @@ name: Desktop
 on:
   push:
     branches: [main, "desktop/**"]
+  # any base branch, so PRs in a stack are tested against their own heads, not only PRs that target main
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:

@@ -53,7 +53,7 @@ async function main() {
     const rs = results.filter((r) => r.task === t.id), ok = rs.filter((r) => r.success);
     const med = (a) => { const s = a.slice().sort((x, y) => x - y); return s.length ? s[Math.floor(s.length / 2)] : null; };
     return { task: t.id, title: t.title, trials: rs.length, passed: ok.length, rate: rs.length ? ok.length / rs.length : 0,
-      medianSeconds: med(rs.map((r) => Math.round(r.ms / 1000))), medianTurns: med(rs.map((r) => r.turns)), medianToolCalls: med(rs.map((r) => r.toolCalls)),
+      medianSeconds: med(rs.map((r) => Math.round(r.ms / 1000))), medianTurns: med(rs.map((r) => r.turns)), medianToolCalls: med(rs.map((r) => r.toolCalls)), medianModelCalls: med(rs.map((r) => (r.resources || {}).modelCalls)), medianPromptK: med(rs.map((r) => (r.resources || {}).promptKChars)),
       trialsThatRepaired: rs.filter((r) => r.attempts > 0).length, claimedVerifiedButFailedJudge: rs.filter((r) => r.status === 'verified' && !r.success).length,
       unverifiable: rs.filter((r) => r.status === 'unverified').length, blockedRuns: rs.filter((r) => r.status === 'blocked').length, noChanges: rs.filter((r) => r.status === 'no-changes').length,
       crashed: rs.filter((r) => r.crashed).length, policyBlockedCalls: rs.reduce((n, r) => n + (r.policyBlocked || 0), 0), violations: rs.reduce((n, r) => n + (r.violations || []).length, 0) };
@@ -83,8 +83,8 @@ async function main() {
     '| Category | Count |', '|---|---|', '| Passed the independent judge | ' + categories.success + ' |', '| Failed the judge | ' + categories.failed + ' |', '| Reported verified but failed the judge (false verified) | ' + categories.falseVerified + ' |', '| Unverifiable (finished, nothing to verify with) | ' + categories.unverifiable + ' |', '| Ended BLOCKED | ' + categories.blocked + ' |', '| Ended with no changes | ' + categories.noChanges + ' |', '| Crashed | ' + categories.crashed + ' |', '| Permission violations (protected files changed) | ' + categories.permissionViolations + ' |', '| Calls refused by policy (the policy working) | ' + categories.policyBlockedCalls + ' |', '']
     .concat(regressions ? ['Against baseline `' + baselineName + '`:', '', '| Task | Before | After | Change |', '|---|---|---|---|'].concat(regressions.map((g) => '| ' + g.task + ' | ' + g.before + ' | ' + g.after + ' | ' + (g.delta > 0 ? '+' : '') + Math.round(100 * g.delta) + ' pts' + (g.delta < 0 ? ' **REGRESSION**' : '') + ' |')).concat(['']) : [])
     .concat([
-    '| Task | Passed | Median time | Median turns | Median tool calls | Trials that needed repair | Claimed verified but failed judge |', '|---|---|---|---|---|---|---|'])
-    .concat(summary.map((s) => '| ' + s.task + ' | ' + s.passed + '/' + s.trials + ' | ' + s.medianSeconds + 's | ' + s.medianTurns + ' | ' + s.medianToolCalls + ' | ' + s.trialsThatRepaired + ' | ' + s.claimedVerifiedButFailedJudge + ' |'))
+    '| Task | Passed | Median time | Median turns | Median tool calls | Trials that needed repair | Claimed verified but failed judge | Model calls (median) | Prompt k-chars (median) |', '|---|---|---|---|---|---|---|---|---|'])
+    .concat(summary.map((s) => '| ' + s.task + ' | ' + s.passed + '/' + s.trials + ' | ' + s.medianSeconds + 's | ' + s.medianTurns + ' | ' + s.medianToolCalls + ' | ' + s.trialsThatRepaired + ' | ' + s.claimedVerifiedButFailedJudge + ' | ' + s.medianModelCalls + ' | ' + s.medianPromptK + ' |'))
     .concat(['', '## Trials', '', '| Task | # | Result | Agent status | Time | Turns | Tools | Repairs | Changed |', '|---|---|---|---|---|---|---|---|---|'])
     .concat(results.map((r) => '| ' + r.task + ' | ' + r.trial + ' | ' + (r.success ? 'pass' : 'FAIL') + ' | ' + r.status + ' | ' + Math.round(r.ms / 1000) + 's | ' + r.turns + ' | ' + r.toolCalls + ' | ' + r.attempts + ' | ' + (r.changed.join(', ') || '—') + ' |'));
   fs.writeFileSync(path.join(outDir, 'agent-eval-' + stamp + '.md'), md.join('\n') + '\n');

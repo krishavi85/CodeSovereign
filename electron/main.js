@@ -21,7 +21,13 @@ const observer = require('./lib/observer');
 const trust = require('./lib/trust');
 const hardware = require('./lib/hardware');
 const aihost = require('./lib/aihost');
+const streamRelay = require('./lib/stream-relay');
+const ipcGuard = require('./lib/ipc-guard');
+// in-flight model streams by id, so quitting can cancel them instead of leaving requests writing to closed windows
+const aiStreams = new Map();
+if (process.argv.includes('--acceptance-agent')) global.__csActiveStreams = () => aiStreams.size; if (process.argv.includes('--acceptance-agent')) global.__csTerminals = () => terminalManager.count(); // lets the acceptance run prove no stream is left behind
 const openclawManager = require('./lib/openclaw-manager');
+const hermesManager = require('./lib/hermes-manager');
 const terminalManager = require('./lib/terminal-manager');
 const git = require('./lib/git');
 const creds = require('./lib/creds');
@@ -192,6 +198,8 @@ function ok(data) { return { ok: true, ...data }; }
 function fail(e) { return { ok: false, error: String(e && e.message || e) }; }
 
 function registerIpc() {
+  // every channel below answers only the app's own top-level page (checked here, in the main process)
+  ipcGuard.install(ipcMain, ipcGuard.makeTrust(RENDERER), (ch, e) => console.warn('[ipc] refused ' + ch + ' from ' + (e && e.senderFrame && e.senderFrame.url)));
   ipcMain.handle('app:info', () => ({
     app: app.getVersion(),
     electron: process.versions.electron,
@@ -451,13 +459,23 @@ function registerIpc() {
     const root = workspace.getRoot();
     return { root, trusted: root ? trust.isTrusted(root) : false };
   });
-  ipcMain.handle('trust:grant', () => { const r = workspace.getRoot(); if (r) { trust.grant(r); rebuildMenu(); } return ok({ trusted: true }); });
+  // Granting trust is the user's decision, made in a native dialog in this process: an IPC call from the
+  // renderer alone must never be enough (it would bypass the prompt that guards command execution).
+  ipcMain.handle('trust:grant', async () => {
+    try { await ensureTrusted('(trust requested by the app)'); return ok({ trusted: true }); }
+    catch (e) { return fail(e); }
+  });
   ipcMain.handle('trust:revoke', () => { const r = workspace.getRoot(); if (r) { trust.revoke(r); rebuildMenu(); } return ok({ trusted: false }); });
   ipcMain.handle('trust:audit', (_e, limit) => trust.readAudit(typeof limit === 'number' ? limit : 200));
 
   /* ---- MCP stdio (allowlisted spawn + JSON-RPC) ---- */
-  ipcMain.handle('mcp:start', (_e, opts) => {
-    try { return ok(mcp.start(opts || {})); } catch (e) { return fail(e); }
+  ipcMain.handle('mcp:start', async (_e, opts) => {
+    try {
+      const o = opts || {};
+      // an MCP server is a program the project asks us to run: same folder-trust gate as any command
+      await ensureTrusted('MCP server: ' + String(o.cmd || o.command || '') + ' ' + (Array.isArray(o.args) ? o.args.map(String).join(' ') : ''));
+      return ok(mcp.start(o));
+    } catch (e) { return fail(e); }
   });
   ipcMain.handle('mcp:request', async (_e, opts) => {
     try {
@@ -472,8 +490,31 @@ function registerIpc() {
   });
 
   /* ---- HTTPS / localhost HTTP (desktop bypasses renderer CSP) ---- */
+  // net:fetch bypasses the page CSP, so it must not be a way for page code to send data anywhere it likes:
+  // private / link-local addresses are refused, and a host this session has not talked to yet needs the
+  // user's OK in a native dialog (the first use of a remote MCP server, an API, ...).
+  const netHostsOk = new Set();
   ipcMain.handle('net:fetch', async (_e, opts) => {
-    try { return ok(await net.fetchUrl(opts || {})); } catch (e) { return fail(e); }
+    try {
+      const o = opts || {};
+      let u; try { u = new URL(String(o.url || '')); } catch (_) { return fail(new Error('bad url')); }
+      const host = u.hostname.toLowerCase();
+      const local = host === '127.0.0.1' || host === 'localhost' || host === '[::1]';
+      if (!local) {
+        if (net.isPrivateHost(host)) return fail(new Error('Requests to private or link-local addresses are not allowed: ' + host));
+        if (!netHostsOk.has(host)) {
+          const r = await dialog.showMessageBox(win, {
+            type: 'question', title: 'Allow a network request?',
+            message: 'CodeSovereign wants to contact ' + host,
+            detail: 'Method: ' + String(o.method || 'GET').toUpperCase() + '\nURL: ' + u.origin + u.pathname + '\n\nOnly allow hosts you expect (for example a remote MCP server you added).',
+            buttons: ['Allow ' + host + ' this session', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true
+          });
+          if (r.response !== 0) return fail(new Error('Request declined: ' + host));
+          netHostsOk.add(host);
+        }
+      }
+      return ok(await net.fetchUrl(o));
+    } catch (e) { return fail(e); }
   });
 
   /* ---- runtime observer (hidden BrowserWindow, localhost/workspace only) ---- */
@@ -510,7 +551,15 @@ function registerIpc() {
   /* ---- git ---- */
   ipcMain.handle('git:available', () => git.available());
   ipcMain.handle('git:exec', async (_e, args) => {
-    try { return ok(await git.exec(args)); } catch (e) { return fail(e); }
+    try {
+      let r = await git.exec(args);
+      if (r && r.needsTrust) {
+        // an action the user took in a repository whose own config can run programs: ask once, like any command
+        await ensureTrusted('git ' + (Array.isArray(args) ? args.join(' ') : '') + '  (this repository\'s configuration can run programs: ' + (r.keys || []).slice(0, 3).join(', ') + ')');
+        r = await git.exec(args);
+      }
+      return ok(r);
+    } catch (e) { return fail(e); }
   });
   ipcMain.handle('git:status', async () => {
     try { return ok(await git.status()); } catch (e) { return fail(e); }
@@ -661,7 +710,17 @@ function registerIpc() {
     } catch (e) { return fail(e); }
   });
   ipcMain.handle('openclaw:openDashboard', async (_e, url) => {
-    try { await shell.openExternal(url || ('http://127.0.0.1:' + openclawManager.GATEWAY_PORT + '/')); return { ok: true }; }
+    try {
+      // only the local gateway's own http(s) page: a renderer-supplied URL must not become file:, ms-msdt:, or any
+      // other scheme handed to the operating system
+      let target = 'http://127.0.0.1:' + openclawManager.GATEWAY_PORT + '/';
+      if (url) {
+        const u = new URL(String(url));
+        if (!/^https?:$/.test(u.protocol) || !/^(127\.0\.0\.1|localhost|\[::1\])$/.test(u.hostname)) return fail(new Error('Only a local http(s) address can be opened here'));
+        target = u.href;
+      }
+      await shell.openExternal(target); return { ok: true };
+    }
     catch (e) { return fail(e); }
   });
   // No confirmation dialog: install/gatewayInstall/gatewayStart confirm once
@@ -677,6 +736,83 @@ function registerIpc() {
      itself. No command sandboxing here by design: once a terminal is open
      it behaves like a real terminal window; the IPC surface itself
      (create/input/resize/kill only) is the security boundary. ---- */
+  /* ---- Hermes Agent: one-click install and run (electron/lib/hermes-manager.js). Every action is fixed: the renderer
+     never supplies a command, a URL or a path, and each step that installs or starts software asks in a native
+     dialog first. ---- */
+  const hermesStream = (s) => { if (win && !win.isDestroyed()) win.webContents.send('proc:data', { id: 'hermes', stream: 'stdout', data: s + '\n' }); };
+  const hermesKey = (k) => (typeof k === 'string' && /^[A-Za-z0-9_.-]{8,200}$/.test(k) ? k : undefined);
+  ipcMain.handle('hermes:status', async (_e, key) => {
+    try { return ok(await hermesManager.getStatus({ key: hermesKey(key) })); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('hermes:install', async () => {
+    try {
+      const c = hermesManager.installCommand();
+      const r = await dialog.showMessageBox(win, {
+        type: 'warning', noLink: true,
+        title: 'Install Hermes Agent?',
+        message: 'Download and run the official Hermes Agent installer?',
+        detail: 'This runs the vendor\'s documented installer, which downloads a script from ' + c.url + ' and runs it with your account\'s permissions:\n\n    ' + c.shown + '\n\nIt installs Hermes Agent (Nous Research, open source) and the tools it needs under your user profile. Review the script first if you want to: open that address in a browser.\n\nNothing is installed system-wide and nothing starts automatically.',
+        buttons: ['Download and install', 'Open the download page instead', 'Cancel'], defaultId: 2, cancelId: 2
+      });
+      if (r.response === 1) { await shell.openExternal(hermesManager.DOWNLOAD_PAGE); return { ok: false, error: 'opened the download page' }; }
+      if (r.response !== 0) return { ok: false, error: 'declined' };
+      trust.audit({ kind: 'hermes-install', cmd: c.shown, cwd: workspace.getRoot() || '' });
+      return await hermesManager.install(hermesStream);
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('hermes:openSetup', async () => {
+    try {
+      // opens a terminal running Hermes' interactive setup (provider, model, credentials): ask first, like the other Hermes steps
+      const r = await dialog.showMessageBox(win, {
+        type: 'question', noLink: true,
+        title: 'Open Hermes setup?',
+        message: 'Open a terminal window and run `hermes setup`?',
+        detail: 'Hermes\' own interactive setup asks for your model provider and credentials. It runs in a separate terminal window with your account\'s permissions; CodeSovereign does not see what you type there.',
+        buttons: ['Open setup', 'Cancel'], defaultId: 1, cancelId: 1
+      });
+      if (r.response !== 0) return { ok: false, error: 'declined' };
+      trust.audit({ kind: 'hermes-setup', cmd: 'hermes setup', cwd: workspace.getRoot() || '' });
+      return hermesManager.openSetup();
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('hermes:setupApiServer', async () => {
+    try {
+      const r = await dialog.showMessageBox(win, {
+        type: 'warning', noLink: true,
+        title: 'Enable the Hermes API server?',
+        message: 'Let CodeSovereign use your Hermes Agent through its local API server?',
+        detail: 'This runs `hermes config set API_SERVER_ENABLED true` and sets a random API key. The server listens on 127.0.0.1:8642 only and requires that key; CodeSovereign keeps the key in your operating system\'s credential store.\n\nThe API server gives Hermes Agent its full toolset, including running terminal commands, to anything that holds the key.',
+        buttons: ['Enable', 'Cancel'], defaultId: 1, cancelId: 1
+      });
+      if (r.response !== 0) return { ok: false, error: 'declined' };
+      trust.audit({ kind: 'hermes-api-server', cmd: 'hermes config set API_SERVER_ENABLED/API_SERVER_KEY', cwd: workspace.getRoot() || '' });
+      return await hermesManager.setupApiServer();
+    } catch (e) { return fail(e); }
+  });
+  let _hermesGatewayOkd = false;
+  ipcMain.handle('hermes:startGateway', async (_e, key) => {
+    try {
+      if (!_hermesGatewayOkd) {
+        const r = await dialog.showMessageBox(win, {
+          type: 'info', noLink: true,
+          title: 'Start the Hermes gateway?',
+          message: 'Start `hermes gateway` in the background?',
+          detail: 'This starts the Hermes Agent gateway as a process owned by CodeSovereign. It serves the API on 127.0.0.1:8642 and stops when you stop it here or quit the app.',
+          buttons: ['Start', 'Cancel'], defaultId: 0, cancelId: 1
+        });
+        if (r.response !== 0) return { ok: false, error: 'declined' };
+        _hermesGatewayOkd = true;
+      }
+      return await hermesManager.startGateway(hermesStream, { key: hermesKey(key) });
+    } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('hermes:stopGateway', async () => {
+    try { return await hermesManager.stopGateway(); } catch (e) { return fail(e); }
+  });
+  ipcMain.handle('hermes:openDownloadPage', async () => {
+    try { await shell.openExternal(hermesManager.DOWNLOAD_PAGE); return { ok: true }; } catch (e) { return fail(e); }
+  });
+
   ipcMain.handle('terminal:listShells', async () => {
     try { return ok({ shells: await terminalManager.detectShells() }); } catch (e) { return fail(e); }
   });
@@ -685,9 +821,19 @@ function registerIpc() {
       if (!terminalManager.ptyAvailable()) return { ok: false, error: 'terminal engine unavailable (node-pty failed to load)' };
       const id = crypto.randomUUID();
       const sender = event.sender;
+      // output goes through the relay: when the window closes, crashes or reloads the shell is killed instead of
+      // running on with nobody listening, and a send to a disposed frame cannot throw
+      const relay = streamRelay.create(sender, 'terminal:data', id, () => { try { terminalManager.kill(id); } catch (_) {} });
       const res = await terminalManager.create(id, opts || {},
-        (data) => { if (!sender.isDestroyed()) sender.send('terminal:data', { id, data }); },
-        (info) => { if (!sender.isDestroyed()) sender.send('terminal:exit', Object.assign({ id }, info)); });
+        (data) => { relay.push(data); },
+        (info) => {
+          relay.done();
+          try { if (!sender.isDestroyed()) sender.send('terminal:exit', Object.assign({ id }, info)); } catch (_) {}
+        });
+      if (res && res.ok === false) { relay.done(); return res; }
+      // the window may have closed, crashed or reloaded while the shell was starting (the first create waits for shell
+      // detection): the relay already fired its kill before the shell existed, so kill it now that it does
+      if (relay.dead) { try { terminalManager.kill(id); } catch (_) {} return { ok: false, error: 'the window closed while the terminal was starting' }; }
       return res;
     } catch (e) { return fail(e); }
   });
@@ -697,22 +843,23 @@ function registerIpc() {
   // Streaming variant of ai:request for the chat panel: same host allow-list,
   // but each chunk is pushed to the sender as it arrives ('ai:stream-chunk'),
   // and ai:stream-abort cancels the in-flight request by streamId.
-  const aiStreams = new Map();
   ipcMain.handle('ai:stream', async (event, opts) => {
     const o = opts || {};
     const id = String(o.streamId || '');
     if (!id || typeof o.url !== 'string') return fail('streamId and url required');
-    const sender = event.sender;
+    if (aiStreams.has(id)) return fail('streamId already in use');
+    let abortFn = null;
+    const relay = streamRelay.create(event.sender, 'ai:stream-chunk', id, () => { if (abortFn) abortFn(); });
     try {
       const r = await aihost.request({
         url: o.url, method: o.method, headers: o.headers, body: o.body, timeoutMs: o.timeoutMs,
         partialOnTimeout: true,
-        onData: (data) => { if (!sender.isDestroyed()) sender.send('ai:stream-chunk', { id, data }); },
-        onAbort: (fn) => aiStreams.set(id, fn)
+        onData: (data) => { relay.push(data); },
+        onAbort: (fn) => { abortFn = fn; aiStreams.set(id, fn); if (relay.dead) fn(); }
       });
       return r;
     } catch (e) { return fail(e); }
-    finally { aiStreams.delete(id); }
+    finally { relay.done(); aiStreams.delete(id); }
   });
   ipcMain.handle('ai:stream-abort', async (_e, id) => {
     const fn = aiStreams.get(String(id));
@@ -792,7 +939,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { proc.killAllSync(); observer.stop(); terminalManager.killAll(); });
+  app.on('before-quit', () => { for (const fn of Array.from(aiStreams.values())) { try { fn(); } catch (_) {} } proc.killAllSync(); observer.stop(); terminalManager.killAll(); try { hermesManager.stopGateway(); } catch (_) {} });
 }
 
 /* -------- observer integration check: serve a fixture page, crawl it -------- */

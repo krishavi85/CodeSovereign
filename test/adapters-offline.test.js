@@ -32,7 +32,7 @@ module.exports = async function (t) {
     t.ok('sign: checksums.sha256 has real 64-hex digests', /^[0-9a-f]{64}  /m.test(fs.readFileSync(path.join(root, 'checksums.sha256'), 'utf8')));
     t.ok('sign: without cosign -> PARTIAL, names cosign as the need, GitHub upload credential-gated',
       r.status === 'PARTIAL' && r.stages.ARTIFACT_SIGNING === 'BLOCKED_COSIGN_REQUIRED' && r.evidence.external.GITHUB_RELEASE_UPLOAD === 'BLOCKED_GITHUB_TOKEN_REQUIRED');
-    fs.rmSync(root, { recursive: true, force: true });
+    try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }); } catch (_) { /* a killed cargo can still be writing target/: leftover temp files are not a test failure */ }
   }
 
   /* ---------- §7 otel — no collector reachable -> BLOCKED (real network probe) ---------- */
@@ -45,7 +45,7 @@ module.exports = async function (t) {
     t.equal('otel: machine-readable reason', r.reason, 'OTEL_COLLECTOR_UNREACHABLE');
     t.ok('otel: need names a local collector + the always-on fallback', /collector/i.test(r.need) && /debug\/traces/.test(r.evidence.localFallback));
     t.equal('otel: hosted Sentry export stays credential-gated', r.evidence.external.HOSTED_SENTRY_EXPORT, 'BLOCKED_CREDENTIAL_REQUIRED');
-    fs.rmSync(root, { recursive: true, force: true });
+    try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }); } catch (_) { /* a killed cargo can still be writing target/: leftover temp files are not a test failure */ }
   }
 
   /* ---------- §9 extension — MV3 validate + plain zip build (fully offline) ---------- */
@@ -70,7 +70,7 @@ module.exports = async function (t) {
     t.ok('ext: load-unpacked -> PARTIAL (Playwright absent = PLAYWRIGHT_REQUIRED, or present + headless SW inspection incomplete) — never a silent FAIL',
       (r.status === 'PARTIAL' || r.status === 'PASS') &&
       (/PLAYWRIGHT_REQUIRED/.test(r.reason || '') ? /playwright/i.test(r.need || '') : (r.reason === 'RUNTIME_INSPECTION_INCOMPLETE' || r.status === 'PASS')));
-    fs.rmSync(root, { recursive: true, force: true });
+    try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }); } catch (_) { /* a killed cargo can still be writing target/: leftover temp files are not a test failure */ }
   }
 
   /* ---------- §5 registry — npm pack + clean-consumer tarball install (real, offline) ---------- */
@@ -86,7 +86,7 @@ module.exports = async function (t) {
     t.equal('registry: a clean consumer installs the tarball', r.stages.LOCAL_TARBALL_INSTALL, 'PASS');
     t.ok('registry: the consumer can require the package -> overall PASS', r.stages.IMPORT_SMOKE === 'PASS' && r.status === 'PASS');
     t.equal('registry: npmjs.com publish stays credential-gated', r.evidence.external.NPMJS_EXTERNAL_PUBLISH, 'BLOCKED_CREDENTIAL_REQUIRED');
-    fs.rmSync(root, { recursive: true, force: true });
+    try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }); } catch (_) { /* a killed cargo can still be writing target/: leftover temp files are not a test failure */ }
   }
 
   /* ---------- §10 desktop (Tauri) — `cargo check` runs when cargo is installed ---------- */
@@ -134,7 +134,7 @@ module.exports = async function (t) {
           : ['PARTIAL', 'PASS'].includes(r.status)));
       t.ok('desktop(tauri): evidence file written', !!readEv(root, 'desktop-evidence.json'));
     }
-    fs.rmSync(root, { recursive: true, force: true });
+    try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 250 }); } catch (_) { /* a killed cargo can still be writing target/: leftover temp files are not a test failure */ }
   }
 
   workspace.setRoot(null);

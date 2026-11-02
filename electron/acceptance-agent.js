@@ -37,13 +37,36 @@ const proc = require('./lib/proc');
 const aihost = require('./lib/aihost');
 
 const RENDERER = path.join(__dirname, '..', 'dist', 'index.html');
-const { byId } = require('../scripts/lib/agent-eval-tasks');
+const { byId } = require('./lib/agent-eval-tasks');
 
 const results = [];
 function check(name, pass, detail) {
   results.push({ name, pass: !!pass, detail: detail || '' });
   console.log('[acceptance-agent] ' + (pass ? 'PASS ' : 'FAIL ') + name + (detail ? '  — ' + detail : ''));
 }
+
+// Evidence for a release record: CS_AGENT_EVIDENCE=<dir> collects screenshots, the log, test outputs and version info.
+// CS_AGENT_KEEP=<dir> keeps the workspaces so a second launch (CS_AGENT_PHASE=reopen) can prove they persist.
+const EVID = process.env.CS_AGENT_EVIDENCE || null;
+const PHASE = process.env.CS_AGENT_PHASE || 'main';
+const KEEP = process.env.CS_AGENT_KEEP || null;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function evid(name, data) {
+  if (!EVID) return;
+  try { fs.mkdirSync(EVID, { recursive: true }); fs.writeFileSync(path.join(EVID, name), typeof data === 'string' ? data : JSON.stringify(data, null, 2)); } catch (_) {}
+}
+let shotN = 0;
+async function shot(win, name) {
+  if (!EVID) return;
+  try {
+    const img = await win.webContents.capturePage();
+    fs.mkdirSync(EVID, { recursive: true });
+    fs.writeFileSync(path.join(EVID, PHASE + '-' + String(++shotN).padStart(2, '0') + '-' + name + '.png'), img.toPNG());
+  } catch (_) { /* a screenshot is evidence, never a reason to fail */ }
+}
+const logLines = [];
+const origLog = console.log;
+console.log = (...a) => { logLines.push(a.join(' ')); origLog.apply(console, a); };
 
 function writeTree(dir, files) {
   Object.keys(files).forEach((p) => {
@@ -66,7 +89,7 @@ function readTree(dir, rel) {
 function judge(dir) {
   return new Promise((resolve) => {
     let out = '';
-    const child = spawn('node', ['--test', '--test-reporter=spec'], { cwd: dir, shell: process.platform === 'win32', windowsHide: true, env: Object.assign({}, process.env, { NODE_OPTIONS: '', FORCE_COLOR: '0' }) });
+    const child = spawn('node', ['--test', '--test-reporter=spec'], { cwd: dir, windowsHide: true, env: Object.assign({}, process.env, { NODE_OPTIONS: '', FORCE_COLOR: '0' }) }) /* the shipped build has the RunAsNode fuse off, so the judge uses the system Node */;
     const timer = setTimeout(() => { try { child.kill(); } catch (_) {} }, 120000);
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });
@@ -96,6 +119,7 @@ function startDriver(cfg) {
       Chat.setMode(cfg.mode || 'agent');
       const sending = Chat.send(cfg.goal);
       R.planCard = !!(await until(() => { const t = Chat.task.current(); return t && t.awaitingPlan; }, cfg.planMs));
+      await wait(cfg.planPauseMs || 0);
       R.planSteps = (Chat.task.current() && Chat.task.current().plan || []).length;
       R.approveButton = !!document.querySelector('[data-cs-task="approve"]');
       R.approveClicked = click('[data-cs-task="approve"]');
@@ -121,6 +145,8 @@ function startDriver(cfg) {
       R.streamedText = msgs.some((m) => m.role === 'assistant' && String(m.content || '').length > 0);
       R.busyAfter = Chat.busy;
       R.reviewing = !!(window.CSEditor && window.CSEditor.reviewing && window.CSEditor.reviewing());
+      R.monacoLoaded = !!window.monaco;
+      R.reviewDock = !!document.querySelector('[id*="eview"],[class*="review"]');
       R.reviewBtn = !!document.querySelector('[data-cs-task="revert"]');
       await (FS.__flush ? FS.__flush() : null);
       await sending.catch(() => null);
@@ -185,6 +211,29 @@ function permissionDriver(cfg) {
   })()`;
 }
 
+/* ---- second launch of the same installed app: do the files and the memory survive a real close and reopen? ---- */
+async function reopenPhase(c) {
+  const { win, exec, tmp, model, baseUrl, shot } = c;
+  let st = null;
+  try { st = JSON.parse(fs.readFileSync(path.join(tmp, 'state.json'), 'utf8')); } catch (_) {}
+  check('REOPEN: the first launch left its record', !!st && !!st.dir4, st ? st.dir4 : 'no state.json');
+  if (!st) return;
+  check('REOPEN: the project folder is still there with the agent\'s change on disk', fs.existsSync(st.dir4) && st.judgeOk === true, 'first-launch agent=' + st.agentStatus);
+  const t = byId(st.taskId);
+  const j = await judge(st.dir4);                                         // hidden tests were left in place by the first launch
+  check('REOPEN: the independent judge still passes on the files after the app was closed and reopened', j.code === 0 && j.fail === 0, j.pass + ' pass / ' + j.fail + ' fail');
+  const brainPath = path.join(st.dir4, '.codesovereign', 'project', 'brain.json');
+  let items = []; try { items = (JSON.parse(fs.readFileSync(brainPath, 'utf8')).items) || []; } catch (_) {}
+  check('REOPEN: the project memory file on disk still records the task', items.some((i) => /^Task \(verified\)/.test(i.title) && i.meta && i.meta.agent === true), items.map((i) => i.title.slice(0, 40)).join(' | ') || 'no memory file');
+  await openWorkspace(win, st.dir4);
+  const r = await exec('(async () => { const w = window; const t0 = Date.now(); while (Date.now() - t0 < 15000 && !(w.Engine.FS.__hasWorkspace && w.Engine.FS.__hasWorkspace())) await new Promise((r) => setTimeout(r, 200)); const PB = w.Engine.ProjectBrain; const items = PB ? (PB.get().items || []) : []; return JSON.stringify({ hasWs: !!(w.Engine.FS.__hasWorkspace && w.Engine.FS.__hasWorkspace()), files: Object.keys(w.Engine.FS._data).filter((p) => w.Engine.FS.isFile(p)).length, memory: items.map((i) => i.title.slice(0, 50)), interrupted: !!(w.CSChat && w.CSChat.task && w.CSChat.task.interrupted && w.CSChat.task.interrupted()) }); })()');
+  await shot(win, 'reopened-project');
+  check('REOPEN: the reopened app loads the project from disk', r.hasWs === true && r.files >= 3, 'files=' + r.files);
+  check('REOPEN: the app\'s project memory (Engine.ProjectBrain) has the task after the restart', (r.memory || []).some((m) => /^Task \(verified\)/.test(m)), JSON.stringify(r.memory));
+  check('REOPEN: no stale half-finished run is offered (the last run had finished)', r.interrupted === false);
+  void model; void baseUrl; void t;
+}
+
 /* ---- the run ---- */
 async function openWorkspace(win, dir) {
   const canonical = workspace.setRoot(dir);
@@ -223,9 +272,14 @@ async function run() {
     });
     const have = tags && (tags.models || []).some((m) => m.name === model || m.model === model);
     check('the local model is available (' + model + ')', !!have, have ? baseUrl : 'Ollama not reachable or model not pulled');
+    const versionInfo = { app: app.getName(), version: app.getVersion(), packaged: app.isPackaged, execPath: process.execPath, appPath: app.getAppPath(), electron: process.versions.electron, chrome: process.versions.chrome, node: process.versions.node, platform: process.platform + ' ' + os.release(), userData: app.getPath('userData'), model, ollama: baseUrl, phase: PHASE, at: new Date().toISOString() };
+    evid('version.json', versionInfo);
+    console.log('[acceptance-agent] build: ' + JSON.stringify(versionInfo));
+    if (process.env.CS_AGENT_REQUIRE_PACKAGED === '1') check('this is the installed, packaged application (not electron . from source)', app.isPackaged === true && /app\.asar/.test(app.getAppPath()), versionInfo.appPath);
     if (!have) throw new Error('no model');
 
-    tmp = await fsp.mkdtemp(path.join(os.tmpdir(), 'cs-agentacc-'));
+    tmp = KEEP ? KEEP : await fsp.mkdtemp(path.join(os.tmpdir(), 'cs-agentacc-'));
+    if (KEEP) fs.mkdirSync(KEEP, { recursive: true });
     recentsSnap = store.snapshotRecents();
     session.defaultSession.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
     const win = new BrowserWindow({ show: false, width: 1280, height: 900, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
@@ -236,6 +290,13 @@ async function run() {
       if (level === 'error' || level === 3) rendererErrors.push(String(message).slice(0, 300));
     });
     const exec = async (src) => JSON.parse(await win.webContents.executeJavaScript(src));
+    if (process.env.CS_AGENT_DEBUG === '1') setInterval(() => {
+      win.webContents.executeJavaScript("(function(){var t=window.Engine&&window.Engine.NativeAgent&&window.Chat&&0;try{var C=window.__chat||null;}catch(e){}return document.title+' | '+((document.querySelector('[data-cs-task]')||{}).getAttribute?document.querySelector('[data-cs-task]').getAttribute('data-cs-task'):'-')+' | '+document.body.innerText.slice(-300).replace(/\s+/g,' ');})()").then((x) => console.log('[debug] ' + x), (e) => console.log('[debug] err ' + e.message));
+    }, 60000);
+
+    if (PHASE === 'reopen') {
+      await reopenPhase({ win, exec, tmp, model, baseUrl, shot });
+    } else {
 
     /* ── scenario 1: a full Agent-mode task, judged independently, then reverted ── */
     const t1 = byId(taskIds[0]);
@@ -247,7 +308,17 @@ async function run() {
     await openWorkspace(win, dir1);
     const cfg1 = { model, baseUrl, goal: t1.goal, mode: 'agent', planMs: 10 * 60 * 1000, runMs };
     const calls0 = proxy.calls;
-    const r1 = await exec(startDriver(cfg1));
+    const p1 = exec(startDriver(Object.assign({}, cfg1, { planPauseMs: EVID ? 3000 : 0 })));
+    if (EVID) {
+      for (let i = 0; i < 1200; i++) {
+        const has = await win.webContents.executeJavaScript('!!(window.CSChat && CSChat.task && CSChat.task.current() && CSChat.task.current().awaitingPlan)').catch(() => false);
+        if (has) { await shot(win, 'plan-card-awaiting-approval'); break; }
+        await sleep(500);
+      }
+    }
+    const r1 = await p1;
+    await shot(win, 'run-finished-report-and-review');
+    evid('S1-report.md', String(r1.reportText || ''));
     console.log('[acceptance-agent] S1 driver: ' + JSON.stringify(Object.assign({}, r1, { reportText: String(r1.reportText || '').slice(0, 300) })));
     check('S1: the chat panel mounted in the IDE', r1.hostMounted === true && !r1.fatal, r1.fatal || '');
     check('S1: Agent mode produced a plan and stopped for approval (card shown)', r1.planCard === true && r1.planSteps > 0 && r1.approveButton === true, 'steps=' + r1.planSteps);
@@ -255,6 +326,7 @@ async function run() {
     check('S1: the run finished with the panel free again', r1.finished === true && r1.busyAfter === false, 'state=' + r1.state);
     check('S1: tools ran in labelled phases', r1.toolRows >= 2 && (r1.phases || []).length >= 2, 'tools=' + JSON.stringify(r1.toolNames) + ' phases=' + JSON.stringify(r1.phases));
     check('S1: the harness ran the tests through the real runner', !!(r1.verify && r1.verify.ran && r1.verify.results.length >= 1 && r1.verify.results.every((x) => typeof x.code === 'number')), JSON.stringify(r1.verify));
+    check('S1: the changes are offered for review in the editor (review mode on, or review dock present)', r1.reviewing === true || r1.reviewDock === true, 'monacoLoaded=' + r1.monacoLoaded + ' reviewing=' + r1.reviewing + ' dock=' + r1.reviewDock);
     const after1 = readTree(dir1);
     const changedOnDisk = Object.keys(after1).filter((k) => after1[k] !== before1[k] || !(k in before1)).concat(Object.keys(before1).filter((k) => !(k in after1)));
     check('S1: files really changed on disk', changedOnDisk.length > 0, JSON.stringify(changedOnDisk));
@@ -273,6 +345,7 @@ async function run() {
 
     if ((r1.changes || []).length) {
       const rv = await exec(revertDriver(cfg1));
+      await shot(win, 'after-revert-all');
       // the brain file is flushed to disk asynchronously: give it a moment
       for (let i = 0; i < 20 && !/Reverted by the user/.test(readTree(dir1)['/.codesovereign/project/brain.json'] || ''); i++) await new Promise((r) => setTimeout(r, 250));
       const afterRevertAll = readTree(dir1);
@@ -324,6 +397,136 @@ async function run() {
     check('S3: reading outside the project is refused', pr.outside && pr.outside.ok === false, JSON.stringify(pr.outside));
     check('S3: network and destructive commands asked the user first', pr.askedCount >= 2, JSON.stringify(pr.asked));
 
+    /* a window that is NOT the app page, but has the same preload (what a navigated or injected page would look like):
+     * the main process must refuse its calls, while the real app window keeps working */
+    {
+      const rogue = new BrowserWindow({ show: false, width: 400, height: 300, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+      let rogueRes = null;
+      try {
+        await rogue.loadURL('data:text/html,<title>rogue</title><p>not the app</p>');
+        rogueRes = await rogue.webContents.executeJavaScript("window.desktop.info().then(function (r) { return { allowed: true, r: r }; }, function (e) { return { allowed: false, e: String(e && e.message || e) }; })");
+      } catch (e) { rogueRes = { allowed: false, e: String(e && e.message || e) }; }
+      try { rogue.destroy(); } catch (_) {}
+      check('S3: IPC from a page that is not the app window is refused by the main process', rogueRes && rogueRes.allowed === false && /IPC refused/.test(rogueRes.e || ''), JSON.stringify(rogueRes));
+      const appRes = await win.webContents.executeJavaScript("window.desktop.info().then(function (r) { return !!r; }, function () { return false; })");
+      check('S3: the real app window still gets answers', appRes === true);
+    }
+
+    /* ── S5: reload the page while a long model answer is streaming (stream relay + IPC guard together) ── */
+    {
+      const active = () => (typeof global.__csActiveStreams === 'function' ? global.__csActiveStreams() : -1);
+      const body = (n, prompt) => ({ model, stream: true, messages: [{ role: 'user', content: prompt }], options: { num_predict: n } });
+      const startOld = `(function () { window.__s5 = { chunks: 0, done: null };
+        var h = window.desktop.ai.stream({ url: ${JSON.stringify(baseUrl + '/api/chat')}, method: 'POST', body: ${JSON.stringify(body(3000, 'Count from 1 to 1000, one number per line, nothing else.'))}, timeoutMs: 600000 }, function () { window.__s5.chunks++; });
+        h.done.then(function (r) { window.__s5.done = r; }, function (e) { window.__s5.done = { error: String(e) }; }); return true; })()`;
+      await win.webContents.executeJavaScript(startOld);
+      let got = false;
+      for (let i = 0; i < 240 && !got; i++) { await new Promise((r) => setTimeout(r, 500)); got = (await win.webContents.executeJavaScript('window.__s5.chunks')) > 2; }
+      const during = active();
+      check('S5: a long model answer is streaming and tracked by the main process', got && during === 1, 'gotChunks=' + got + ' active=' + during);
+      const loaded = new Promise((r) => win.webContents.once('did-finish-load', r));
+      win.webContents.reload();
+      await loaded;
+      await new Promise((r) => setTimeout(r, 1500));
+      let left = active();
+      for (let i = 0; i < 40 && left !== 0; i++) { await new Promise((r) => setTimeout(r, 250)); left = active(); }
+      check('S5: reloading the page ended the old stream (no request left running in the main process)', left === 0, 'active=' + left);
+      const second = await win.webContents.executeJavaScript(`(async function () { var n = 0; var h = window.desktop.ai.stream({ url: ${JSON.stringify(baseUrl + '/api/chat')}, method: 'POST', body: ${JSON.stringify(body(24, 'Say hello in five words.'))}, timeoutMs: 120000 }, function () { n++; });
+        var r = await h.done; return JSON.stringify({ ok: r && r.ok, status: r && r.status, chunks: n, info: !!(await window.desktop.info()) }); })()`);
+      const sec = JSON.parse(second);
+      check('S5: a new model request in the reloaded page completes, and the page still gets privileged answers', sec.ok === true && sec.chunks > 0 && sec.info === true, second);
+      check('S5: nothing is left running afterwards', active() === 0, 'active=' + active());
+    }
+
+    /* ── S6/S7: the renderer crashes, and a window is closed, in the middle of a streaming answer ── */
+    {
+      const active = () => (typeof global.__csActiveStreams === 'function' ? global.__csActiveStreams() : -1);
+      const uncaught = []; const onUncaught = (e) => uncaught.push(String(e && e.message || e)); process.on('uncaughtException', onUncaught); process.on('unhandledRejection', onUncaught);
+      const chatUrl = baseUrl + '/api/chat';
+      const longBody = { model, stream: true, messages: [{ role: 'user', content: 'Count from 1 to 1000, one number per line, nothing else.' }], options: { num_predict: 3000 } };
+      const shortBody = { model, stream: true, messages: [{ role: 'user', content: 'Say hello in five words.' }], options: { num_predict: 24 } };
+      const longStream = (w) => w.webContents.executeJavaScript('(function () { window.__s6 = { chunks: 0 }; window.desktop.ai.stream({ url: ' + JSON.stringify(chatUrl) + ', method: "POST", body: ' + JSON.stringify(longBody) + ', timeoutMs: 600000 }, function () { window.__s6.chunks++; }).done.catch(function () {}); return true; })()');
+      const waitChunks = async (w) => { for (let i = 0; i < 240; i++) { await new Promise((r) => setTimeout(r, 500)); try { if ((await w.webContents.executeJavaScript('window.__s6.chunks')) > 2) return true; } catch (_) {} } return false; };
+      const drain = async () => { let n = active(); for (let i = 0; i < 40 && n !== 0; i++) { await new Promise((r) => setTimeout(r, 250)); n = active(); } return n; };
+
+      await longStream(win);
+      const gotA = await waitChunks(win);
+      const beforeCrash = active();
+      const gone = new Promise((r) => win.webContents.once('render-process-gone', (_e, d) => r(d && d.reason)));
+      win.webContents.forcefullyCrashRenderer();
+      const reason = await Promise.race([gone, new Promise((r) => setTimeout(() => r('timeout'), 15000))]);
+      const afterCrash = await drain();
+      check('S6: the renderer crashed in the middle of a streaming answer, and the main process ended the stream', gotA && beforeCrash === 1 && reason !== 'timeout' && afterCrash === 0, 'chunks=' + gotA + ' before=' + beforeCrash + ' reason=' + reason + ' after=' + afterCrash);
+      const reloaded = new Promise((r) => win.webContents.once('did-finish-load', r));
+      win.webContents.reload();
+      await reloaded; await new Promise((r) => setTimeout(r, 1500));
+      const rec = JSON.parse(await win.webContents.executeJavaScript('(async function () { var n = 0; var r = await window.desktop.ai.stream({ url: ' + JSON.stringify(chatUrl) + ', method: "POST", body: ' + JSON.stringify(shortBody) + ', timeoutMs: 120000 }, function () { n++; }).done; return JSON.stringify({ ok: r && r.ok, chunks: n, info: !!(await window.desktop.info()) }); })()'));
+      check('S6: after the crash the page reloads and works again (a new model request completes, privileged calls answer)', rec.ok === true && rec.chunks > 0 && rec.info === true && active() === 0, JSON.stringify(rec));
+
+      const w2 = new BrowserWindow({ show: false, width: 800, height: 600, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+      await w2.loadFile(RENDERER); await new Promise((r) => setTimeout(r, 1000));
+      await longStream(w2);
+      const gotB = await waitChunks(w2);
+      const beforeClose = active();
+      w2.close();
+      const afterClose = await drain();
+      await new Promise((r) => setTimeout(r, 1500));
+      check('S7: a window closed in the middle of a streaming answer ends the request and leaves nothing running', gotB && beforeClose === 1 && afterClose === 0, 'chunks=' + gotB + ' before=' + beforeClose + ' after=' + afterClose);
+      check('S6/S7: no uncaught exception or unhandled rejection in the main process', uncaught.length === 0, JSON.stringify(uncaught.slice(0, 3)));
+      process.removeListener('uncaughtException', onUncaught); process.removeListener('unhandledRejection', onUncaught);
+    }
+
+    /* ── S8: a terminal must not outlive the window that opened it (closed, or reloaded) ── */
+    {
+      const terms = () => (typeof global.__csTerminals === 'function' ? global.__csTerminals() : -1);
+      const waitZero = async () => { let n = terms(); for (let i = 0; i < 40 && n !== 0; i++) { await new Promise((r) => setTimeout(r, 250)); n = terms(); } return n; };
+      const openTerm = async (w) => w.webContents.executeJavaScript('window.desktop.terminal.create({}).then(function (r) { return !!(r && r.ok !== false); }, function () { return false; })');
+      const mk = async () => { const w = new BrowserWindow({ show: false, width: 800, height: 600, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } }); await w.loadFile(RENDERER); await new Promise((r) => setTimeout(r, 1000)); return w; };
+      const w3 = await mk();
+      const made3 = await openTerm(w3);
+      const open3 = terms();
+      w3.close();
+      const left3 = await waitZero();
+      check('S8: closing the window that owns a terminal kills the shell', made3 && open3 === 1 && left3 === 0, 'created=' + made3 + ' open=' + open3 + ' after=' + left3);
+      const w4 = await mk();
+      const made4 = await openTerm(w4);
+      const open4 = terms();
+      const reloaded4 = new Promise((r) => w4.webContents.once('did-finish-load', r));
+      w4.webContents.reload();
+      await reloaded4;
+      const left4 = await waitZero();
+      check('S8: reloading the page that owns a terminal kills the shell', made4 && open4 === 1 && left4 === 0, 'created=' + made4 + ' open=' + open4 + ' after=' + left4);
+      try { w4.destroy(); } catch (_) {}
+    }
+
+    /* ── scenario 4: the user breaks working code; the agent diagnoses and repairs it; the result is kept for the reopen ── */
+    const t4 = byId(taskIds[2] || 'regression-rounding');
+    const dir4 = path.join(tmp, 'broken-' + t4.id);
+    writeTree(dir4, t4.files); writeTree(dir4, t4.reference);               // a working project...
+    const greenJudge = await judge(dir4);
+    check('S4: the project works before anything is broken', greenJudge.code === 0 && greenJudge.fail === 0, 'pass=' + greenJudge.pass + ' fail=' + greenJudge.fail);
+    writeTree(dir4, t4.files);                                              // ...then the deliberate error (the original defect comes back)
+    const brokenJudge = await judge(dir4);
+    check('S4: after the deliberate error the tests really fail', brokenJudge.fail > 0, 'fail=' + brokenJudge.fail);
+    evid('S4-tests-after-deliberate-error.txt', brokenJudge.out);
+    await openWorkspace(win, dir4);
+    const cfg4 = { model, baseUrl, goal: 'The test suite started failing after my last edit. Find the cause and fix it. Do not change the tests.', mode: 'agent', planMs: 10 * 60 * 1000, runMs, planPauseMs: 0 };
+    const r4 = await exec(startDriver(cfg4));
+    await shot(win, 'S4-repair-report');
+    evid('S4-report.md', String(r4.reportText || ''));
+    console.log('[acceptance-agent] S4 driver: ' + JSON.stringify(Object.assign({}, r4, { reportText: String(r4.reportText || '').slice(0, 300) })));
+    check('S4: the agent diagnosed and changed source (not the tests)', (r4.changes || []).length > 0 && !(r4.changes || []).some((c) => /\.test\.js$/.test(c)), JSON.stringify(r4.changes));
+    writeTree(dir4, t4.hidden);
+    const j4 = await judge(dir4);
+    const judge4Ok = j4.code === 0 && j4.fail === 0;
+    evid('S4-independent-judge.txt', j4.out);
+    check('S4: the agent REPAIRED the deliberate error (it reports verified and the independent judge agrees)', r4.status === 'verified' && judge4Ok, 'agent=' + r4.status + ' judge ' + (judge4Ok ? 'PASS' : 'FAIL'));
+    check('S4: no false "verified" on the repair', !(r4.status === 'verified' && !judge4Ok), 'agent=' + r4.status + ' judge ' + (judge4Ok ? 'PASS' : 'FAIL') + ' (' + j4.pass + ' pass / ' + j4.fail + ' fail)');
+    check('S4: the completion report is evidence-based (status, plan, changed files, verification runs with counts)', /VERIFIED|NOT VERIFIED|BLOCKED|FAILED/.test(String(r4.reportText || '')) && /Changed files:/.test(String(r4.reportText || '')) && /Verification runs:/.test(String(r4.reportText || '')) && /Effort:/.test(String(r4.reportText || '')), String(r4.reportText || '').split('\n')[0]);
+    console.log('[acceptance-agent] S4 outcome: agent=' + r4.status + ' judge=' + (judge4Ok ? 'PASS' : 'FAIL') + ' attempts=' + r4.attempts);
+    if (KEEP) fs.writeFileSync(path.join(KEEP, 'state.json'), JSON.stringify({ dir4, taskId: t4.id, agentStatus: r4.status, judgeOk: judge4Ok, hiddenFiles: Object.keys(t4.hidden), changed: r4.changes }, null, 2));
+    }
+
     check('renderer produced no console errors', rendererErrors.length === 0, rendererErrors.slice(0, 5).join(' | '));
 
     const failed = results.filter((x) => !x.pass);
@@ -337,7 +540,9 @@ async function run() {
   } finally {
     clearTimeout(watchdog);
     try { proc.killAll(); } catch (_) {}
-    if (tmp) { try { await fsp.rm(tmp, { recursive: true, force: true }); } catch (_) {} }
+    evid(PHASE + '-checks.json', results);
+    evid(PHASE + '-log.txt', logLines.join('\n'));
+    if (tmp && !(KEEP && PHASE !== 'reopen')) { try { await fsp.rm(tmp, { recursive: true, force: true }); } catch (_) {} }
     try { store.restoreRecents(recentsSnap); } catch (_) {}
     app.exit(exitCode);
   }

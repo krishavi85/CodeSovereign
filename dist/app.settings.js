@@ -15,6 +15,10 @@
  *
  * The engines behind them are untouched; only the controls that implied
  * behaviour the app does not have are gone from the UI.
+ *
+ * IMPORTANT: cards are never MOVED. Several handlers look their inputs up through the container they were
+ * bound to (host.querySelector at click time), so re-parenting a card silently breaks its buttons. Sections
+ * are shown and hidden with CSS only; the grid places the navigation in the left column.
  * ===================================================================== */
 (function () {
   'use strict';
@@ -40,55 +44,49 @@
 
   function S() { return window.S || {}; }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]; }); }
+  function def(id) { return SECTIONS.filter(function (s) { return s.id === id; })[0]; }
 
   function titleOf(el) {
     var h = el.querySelector('h3, h2, summary');
     return h ? h.textContent.replace(/\s+/g, ' ').trim().toLowerCase() : '';
   }
+  function sectionFor(title) {
+    var key = Object.keys(MAP).filter(function (k) { return title.indexOf(k) === 0; })[0];
+    return key ? MAP[key] : 'advanced';
+  }
+  function isRemoved(title) { return REMOVE.some(function (r) { return title.indexOf(r) === 0; }); }
 
-  // the section element for an id, created (with its nav button) the first time something lands in it
-  function ensureSection(inner, id) {
-    var body = inner.querySelector('.cs-set-body'), nav = inner.querySelector('.cs-set-nav');
-    var sec = body.querySelector('[data-set-sec="' + id + '"]');
-    if (sec) return sec;
-    var def = SECTIONS.filter(function (s) { return s.id === id; })[0], active = S().settingsSection;
-    sec = document.createElement('section');
-    sec.setAttribute('data-set-sec', id);
-    sec.style.display = id === active ? '' : 'none';
-    var head = document.createElement('header');
-    head.innerHTML = '<h1>' + esc(def.label) + '</h1>' + (def.blurb ? '<p>' + esc(def.blurb) + '</p>' : '');
-    sec.appendChild(head);
-    // keep SECTIONS order
-    var idx = SECTIONS.indexOf(def), before = null;
-    Array.prototype.forEach.call(body.children, function (c) { if (!before && SECTIONS.map(function (x) { return x.id; }).indexOf(c.getAttribute('data-set-sec')) > idx) before = c; });
-    body.insertBefore(sec, before);
-    var btn = document.createElement('button');
-    btn.type = 'button'; btn.setAttribute('data-set-nav', id); btn.className = id === active ? 'active' : ''; btn.textContent = def.label;
-    var nb = null;
-    Array.prototype.forEach.call(nav.children, function (c) { if (!nb && SECTIONS.map(function (x) { return x.id; }).indexOf(c.getAttribute('data-set-nav')) > idx) nb = c; });
-    nav.insertBefore(btn, nb);
-    return sec;
+  function show(inner, id) {
+    S().settingsSection = id;
+    Array.prototype.forEach.call(inner.querySelectorAll('[data-set-sec]'), function (el) { el.style.display = el.getAttribute('data-set-sec') === id ? '' : 'none'; });
+    Array.prototype.forEach.call(inner.querySelectorAll('[data-set-nav]'), function (b) { b.classList.toggle('active', b.getAttribute('data-set-nav') === id); });
+    var d = def(id), head = inner.querySelector('.cs-set-head');
+    if (head && d) head.innerHTML = '<h1>' + esc(d.label) + '</h1>' + (d.blurb ? '<p>' + esc(d.blurb) + '</p>' : '');
   }
 
-  // put one stray node where it belongs (or drop it if it is one of the unwired cards)
-  function place(inner, el) {
-    if (el.nodeType !== 1 || el.classList.contains('cs-set-nav') || el.classList.contains('cs-set-body')) return;
-    // an injector may add one wrapper holding several cards: place each card on its own
-    var inside = el.classList.contains('card') ? [] : Array.prototype.slice.call(el.querySelectorAll(':scope > .card'));
-    if (inside.length > 1) {
-      inside.forEach(function (c) { place(inner, c); });
-      if (!el.querySelector('.card') && el.parentNode) el.parentNode.removeChild(el);
-      return;
-    }
+  // tag one card (in place) with its section, or drop it if it is one of the unwired cards
+  function tag(inner, el) {
+    if (el.nodeType !== 1 || el.hasAttribute('data-set-sec') || el.classList.contains('cs-set-nav') || el.classList.contains('cs-set-head')) return;
+    var cards = el.classList.contains('card') ? [] : Array.prototype.slice.call(el.querySelectorAll(':scope > .card'));
+    if (cards.length > 1) { cards.forEach(function (c) { tag(inner, c); }); return; }   // an injector's wrapper holding several cards
     var t = titleOf(el);
-    if (!t) { if (el.querySelector && el.querySelector('h1')) el.parentNode.removeChild(el); return; }   // the old page header
-    if (REMOVE.some(function (r) { return t.indexOf(r) === 0; })) { el.parentNode.removeChild(el); return; }
-    var key = Object.keys(MAP).filter(function (k) { return t.indexOf(k) === 0; })[0];
-    ensureSection(inner, key ? MAP[key] : 'advanced').appendChild(el);
+    if (!t) { if (el.querySelector && el.querySelector('h1') && el.parentNode) el.parentNode.removeChild(el); return; }   // the old page header
+    if (isRemoved(t)) { if (el.parentNode) el.parentNode.removeChild(el); return; }
+    var sec = sectionFor(t);
+    el.setAttribute('data-set-sec', sec);
+    el.style.display = sec === S().settingsSection ? '' : 'none';
+    var nav = inner.querySelector('.cs-set-nav');
+    if (nav && !nav.querySelector('[data-set-nav="' + sec + '"]')) {
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.setAttribute('data-set-nav', sec); btn.className = sec === S().settingsSection ? 'active' : ''; btn.textContent = def(sec).label;
+      var idx = SECTIONS.indexOf(def(sec)), before = null;
+      Array.prototype.forEach.call(nav.children, function (c) { if (!before && SECTIONS.indexOf(def(c.getAttribute('data-set-nav'))) > idx) before = c; });
+      nav.insertBefore(btn, before);
+    }
   }
 
   function absorb(inner) {
-    Array.prototype.slice.call(inner.children).forEach(function (el) { place(inner, el); });
+    Array.prototype.slice.call(inner.children).forEach(function (el) { tag(inner, el); });
   }
 
   function organize() {
@@ -103,26 +101,22 @@
       inner.classList.add('cs-set');
       inner.removeAttribute('style');
       var nav = document.createElement('nav'); nav.className = 'cs-set-nav';
-      var body = document.createElement('div'); body.className = 'cs-set-body';
-      inner.insertBefore(body, inner.firstChild);
+      var head = document.createElement('div'); head.className = 'cs-set-head';
+      inner.insertBefore(head, inner.firstChild);
       inner.insertBefore(nav, inner.firstChild);
       // cards that other modules add after the first paint (local AI status, autonomy, ...) arrive later: catch them too
-      try {
-        var mo = new MutationObserver(function () { absorb(inner); });
-        mo.observe(inner, { childList: true });
-      } catch (_) {}
+      try { new MutationObserver(function () { absorb(inner); }).observe(inner, { childList: true }); } catch (_) {}
     }
     absorb(inner);
+    show(inner, st.settingsSection);
   }
 
   // switching section is a visibility change only: no re-render, so nothing in flight is lost
   document.addEventListener('click', function (e) {
     var b = e.target && e.target.closest && e.target.closest('[data-set-nav]');
     if (!b) return;
-    var id = b.getAttribute('data-set-nav');
-    S().settingsSection = id;
-    document.querySelectorAll('[data-set-nav]').forEach(function (x) { x.classList.toggle('active', x === b); });
-    document.querySelectorAll('[data-set-sec]').forEach(function (x) { x.style.display = x.getAttribute('data-set-sec') === id ? '' : 'none'; });
+    var inner = b.closest('.cs-set');
+    if (inner) show(inner, b.getAttribute('data-set-nav'));
     var m = document.getElementById('main'); if (m) m.scrollTop = 0;
   });
 
