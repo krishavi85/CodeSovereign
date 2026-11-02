@@ -18,7 +18,7 @@ function loadClassifier() {
 
 module.exports = async function (t) {
   const refused = [
-    ['node', ['-e', 'process.exit()']], ['node', ['--eval=1']], ['node', ['-p', '1']], ['node', ['-r', './x.js', 'app.js']], ['node', ['--require', 'x', 'app.js']],
+    ['node', ['-e', 'process.exit()']], ['node', ['-pe', '1']], ['node', ['-ep', '1']], ['node', ['-pe', 'x.js']], ['go', ['test', '-exec', 'calc']], ['go', ['test', '-toolexec=calc', './...']], ['go', ['run', '--exec', 'x', '.']], ['cargo', ['build', '--config', 'build.rustc-wrapper="x"']], ['node', ['--eval=1']], ['node', ['-p', '1']], ['node', ['-r', './x.js', 'app.js']], ['node', ['--require', 'x', 'app.js']],
     ['node', ['--import', 'x', 'app.js']], ['node', ['--inspect', 'app.js']], ['node', ['--inspect-brk=9229', 'app.js']], ['node', ['-i']], ['deno', ['eval', '1']],
     ['python', ['-c', 'print(1)']], ['python3', ['-ic', 'x']], ['python', ['-i']],
     ['npm', ['install', '-g', 'x']], ['npm', ['i', '--global', 'x']], ['pnpm', ['add', '-g', 'x']], ['npm', ['publish']], ['npm', ['login']], ['npm', ['config', 'set', 'x', 'y']],

@@ -34,9 +34,12 @@ function hardRefusal(cmd, args) {
   const beforeDD = dd < 0 ? a : a.slice(0, dd);                    // after "--" everything belongs to the script
   const hasIn = (list, ...names) => names.some((n) => list.includes(n));
   const prefixIn = (list, ...ps) => list.some((x) => ps.some((p) => x.indexOf(p) === 0));
+  // short options can be clustered: "node -pe code" is -p and -e. Any single-dash cluster that contains an
+  // eval / print / require / interactive letter counts as that option.
+  const evalCluster = (list) => list.some((x) => /^-[A-Za-z]+$/.test(x) && /[eprI]/.test(x));
 
   if (base === 'node' || base === 'deno' || base === 'bun') {
-    if (hasIn(head, '-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') ||
+    if (hasIn(head, '-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || evalCluster(head) ||
         prefixIn(head, '--eval=', '--print=', '--require=', '--import=', '--loader=', '--experimental-loader=', '--inspect', '--debug'))
       return base + ' with inline code, a preload or an inspector is not allowed';
     if (base === 'deno' && sub === 'eval') return 'deno eval is not allowed';
@@ -61,6 +64,10 @@ function hardRefusal(cmd, args) {
     if (a.some((x) => /^ext::/i.test(x) || /^--(upload-pack|receive-pack|exec)(=|$)/.test(x))) return 'git transport helpers are not allowed';
     if (sub && ['credential', 'config'].includes(sub)) return 'git "' + sub + '" is not allowed';
   }
+  // go runs a program named by -exec / -toolexec (go test -exec <prog>): arbitrary code through an allowlisted tool
+  if (base === 'go' && beforeDD.some((x) => /^--?(exec|toolexec)(=|$)/.test(x))) return 'go -exec / -toolexec runs an arbitrary program and is not allowed';
+  // cargo --config can name a rustc wrapper or runner; -Z enables unstable behaviour
+  if (base === 'cargo' && (beforeDD.some((x) => /^--config(=|$)/.test(x)) || beforeDD.some((x) => /^-Z/.test(x)))) return 'cargo --config / -Z overrides are not allowed';
   if (base === 'cargo' && sub && ['publish', 'login', 'owner', 'yank', 'logout'].includes(sub)) return 'cargo "' + sub + '" is not allowed';
   if ((base === 'pip' || base === 'pip3') && (prefixIn(beforeDD, '--index-url', '--extra-index-url', '--trusted-host', '--config-settings') || hasIn(beforeDD, '-i', '--break-system-packages')))
     return 'pip index / system overrides are not allowed';

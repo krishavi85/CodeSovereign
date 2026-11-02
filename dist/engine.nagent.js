@@ -180,8 +180,10 @@
     var has = function () { for (var j = 0; j < arguments.length; j++) if (args.indexOf(arguments[j]) >= 0) return true; return false; };
     var hasPrefix = function (p) { return args.some(function (x) { return x.indexOf(p) === 0; }); };
 
+    // clustered short options: "node -pe code" is -p and -e
+    var evalCluster = args.some(function (x) { return /^-[A-Za-z]+$/.test(x) && /[eprI]/.test(x); });
     if (base === 'node') {
-      if (has('-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || hasPrefix('--inspect') || hasPrefix('--eval=') || hasPrefix('--require=') || hasPrefix('--import='))
+      if (has('-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || evalCluster || hasPrefix('--inspect') || hasPrefix('--eval=') || hasPrefix('--require=') || hasPrefix('--import='))
         return refuse('node with inline code, preloads or an inspector is not allowed — write a file and run it');
       if (has('--version', '-v') && args.length === 1) return res('read');
       if (args[0] === '--test' || has('--test')) return res('exec', 'runs the project\'s tests');
@@ -247,12 +249,14 @@
       return res('exec', 'runs project tooling');
     }
     if (base === 'cargo') {
+      if (args.some(function (x) { return /^--config(=|$)/.test(x) || /^-Z/.test(x); })) return refuse('cargo --config / -Z overrides are not allowed');
       if (['build', 'test', 'check', 'clippy', 'fmt', 'doc', 'bench', 'tree', 'metadata'].indexOf(sub) >= 0) return res('exec');
       if (['install', 'add', 'update', 'fetch', 'search', 'vendor'].indexOf(sub) >= 0) return res('network', 'fetches crates (network)');
       if (['clean', 'remove', 'uninstall'].indexOf(sub) >= 0) return res('destructive');
       return refuse('cargo "' + sub + '" is not allowed (publish, login and similar are blocked)');
     }
     if (base === 'go') {
+      if (args.some(function (x) { return /^--?(exec|toolexec)(=|$)/.test(x); })) return refuse('go -exec / -toolexec runs an arbitrary program and is not allowed');
       if (['build', 'test', 'vet', 'fmt', 'list', 'env', 'version'].indexOf(sub) >= 0) return res(sub === 'env' || sub === 'version' || sub === 'list' ? 'read' : 'exec');
       if (['get', 'install', 'mod', 'work'].indexOf(sub) >= 0) return res('network', 'may fetch modules (network)');
       if (sub === 'clean') return res('destructive');
