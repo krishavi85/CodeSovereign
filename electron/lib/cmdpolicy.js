@@ -36,11 +36,14 @@ function hardRefusal(cmd, args) {
   const prefixIn = (list, ...ps) => list.some((x) => ps.some((p) => x.indexOf(p) === 0));
   // short options can be clustered: "node -pe code" is -p and -e. Any single-dash cluster that contains an
   // eval / print / require / interactive letter counts as that option.
+  // long options are matched the way the tools parse them: nopt (npm) and argparse (pip) accept any unambiguous
+  // abbreviation ("--cal" is "--call", "--index" is "--index-url"). Refuse a token that is a prefix of a listed name.
+  const abbrev = (x, names) => { const m = /^--([A-Za-z][A-Za-z-]*)(=|$)/.exec(String(x)); return !!m && m[1].length >= 2 && names.some((n) => n.indexOf(m[1].toLowerCase()) === 0); };
   const evalCluster = (list) => list.some((x) => /^-[A-Za-z]+$/.test(x) && /[eprI]/i.test(x));
 
   // --node-options hands flags (--require, --import, --experimental-loader, --inspect) to every Node process the tool
   // starts, which is code execution without a project file. No tool the agent runs needs it, whichever tool it is given to.
-  if (beforeDD.some((x) => /^--node-options(=|$)/i.test(x))) return '--node-options injects code into Node processes and is not allowed';
+  if (beforeDD.some((x) => abbrev(x, ['node-options']))) return '--node-options injects code into Node processes and is not allowed';
   if (base === 'node' || base === 'deno' || base === 'bun') {
     if (hasIn(head, '-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || evalCluster(head) ||
         prefixIn(head, '--eval=', '--print=', '--require=', '--import=', '--loader=', '--experimental-loader=', '--inspect', '--debug'))
@@ -57,7 +60,8 @@ function hardRefusal(cmd, args) {
   // registry / config flags point the download at an attacker's index.
   const isPm = base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun';
   const isRunner = base === 'npx' || base === 'pnpx' || base === 'bunx' || (isPm && ['exec', 'x', 'dlx'].includes(sub));
-  if (isRunner && (hasIn(beforeDD, '-c', '--call', '--shell-mode') || prefixIn(beforeDD, '--call=', '--registry', '--userconfig', '--globalconfig', '--prefix', '--script-shell', '--shell')))
+  // short options cluster and take attached values (-yc, -ccalc): any single-dash token containing c may be -c
+  if (isRunner && (beforeDD.some((x) => /^-[^-]/.test(x) && x.indexOf('c') >= 0) || beforeDD.some((x) => abbrev(x, ['call', 'shell-mode', 'registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell', 'shell']))))
     return base + ' with a shell command or registry / configuration overrides is not allowed';
   if (isPm) {
     if (hasIn(beforeDD, '-g', '--global', '--location=global') || prefixIn(beforeDD, '--registry', '--userconfig', '--globalconfig', '--prefix', '--script-shell', '--shell'))
@@ -81,7 +85,8 @@ function hardRefusal(cmd, args) {
   // pip, and the same pip run as `python -m pip`
   const mPip = (base === 'python' || base === 'python3' || base === 'py') ? a.indexOf('-m') : -1;
   const pipArgs = (base === 'pip' || base === 'pip3') ? beforeDD : (mPip >= 0 && a[mPip + 1] === 'pip' ? a.slice(mPip + 2, dd < 0 ? undefined : dd) : null);
-  if (pipArgs && (prefixIn(pipArgs, '--index-url', '--extra-index-url', '--trusted-host', '--config-settings', '--find-links', '--proxy') || hasIn(pipArgs, '-i', '-f', '--break-system-packages')))
+  // -i / -f take attached values too (-ihttp://evil/simple)
+  if (pipArgs && (pipArgs.some((x) => /^-[^-]/.test(x) && /[if]/.test(x)) || pipArgs.some((x) => abbrev(x, ['index-url', 'extra-index-url', 'trusted-host', 'config-settings', 'find-links', 'proxy', 'break-system-packages']))))
     return 'pip index / system overrides are not allowed';
   return null;
 }

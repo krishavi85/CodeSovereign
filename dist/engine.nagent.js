@@ -176,16 +176,18 @@
       if (/%[A-Za-z_]+%|\$\{?[A-Za-z_]/.test(a)) return refuse('environment-variable expansion is not allowed in arguments');
       if (escapesProject(a)) return refuse('"' + a.slice(0, 40) + '" points outside the project');
     }
-    if (args.some(function (x) { return /^--node-options(=|$)/i.test(x); })) return refuse('--node-options injects code into Node processes and is not allowed');
+    // long options are matched the way nopt / argparse parse them: any unambiguous abbreviation counts
+    var abbrev = function (x, names) { var m = /^--([A-Za-z][A-Za-z-]*)(=|$)/.exec(String(x)); return !!m && m[1].length >= 2 && names.some(function (n) { return n.indexOf(m[1].toLowerCase()) === 0; }); };
+    if (args.some(function (x) { return abbrev(x, ['node-options']); })) return refuse('--node-options injects code into Node processes and is not allowed');
     var sub = args.filter(function (x) { return !/^-/.test(x); })[0];
     var dd = args.indexOf('--'), pre = dd < 0 ? args : args.slice(0, dd);
     var isPm = base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun';
     var isRunner = base === 'npx' || base === 'pnpx' || base === 'bunx' || (isPm && ['exec', 'x', 'dlx'].indexOf(sub) >= 0);
-    if (isRunner && pre.some(function (x) { return x === '-c' || x === '--shell-mode' || /^--(call|registry|userconfig|globalconfig|prefix|script-shell|shell)(=|$)/.test(x); }))
+    if (isRunner && pre.some(function (x) { return (/^-[^-]/.test(x) && x.indexOf('c') >= 0) || abbrev(x, ['call', 'shell-mode', 'registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell', 'shell']); }))
       return refuse(base + ' with a shell command or registry / configuration overrides is not allowed');
     var mPip = (base === 'python' || base === 'python3' || base === 'py') ? args.indexOf('-m') : -1;
     var pipArgs = (base === 'pip' || base === 'pip3') ? pre : (mPip >= 0 && args[mPip + 1] === 'pip' ? args.slice(mPip + 2) : null);
-    if (pipArgs && pipArgs.some(function (x) { return x === '-i' || x === '-f' || x === '--break-system-packages' || /^--(index-url|extra-index-url|trusted-host|config-settings|find-links|proxy)(=|$)/.test(x); }))
+    if (pipArgs && pipArgs.some(function (x) { return (/^-[^-]/.test(x) && /[if]/.test(x)) || abbrev(x, ['index-url', 'extra-index-url', 'trusted-host', 'config-settings', 'find-links', 'proxy', 'break-system-packages']); }))
       return refuse('pip index / system overrides are not allowed');
     var has = function () { for (var j = 0; j < arguments.length; j++) if (args.indexOf(arguments[j]) >= 0) return true; return false; };
     var hasPrefix = function (p) { return args.some(function (x) { return x.indexOf(p) === 0; }); };
