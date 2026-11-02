@@ -42,6 +42,10 @@ function hardRefusal(cmd, args, depth) {
   const firstPos = a.findIndex((x) => !/^-/.test(x));              // the script / subcommand
   const head = firstPos < 0 ? a : a.slice(0, firstPos);            // options that belong to the tool itself
   const sub = firstPos < 0 ? undefined : a[firstPos];
+  // for interpreters the options end at the script file: a value like "module" in "--input-type module -e x" is not it
+  const scriptRe = isPython(base) ? /\.pyw?$/i : /\.(c|m)?[jt]sx?$/i;
+  const scriptIdx = a.findIndex((x) => !x.startsWith('-') && scriptRe.test(x));
+  const ihead = scriptIdx < 0 ? a : a.slice(0, scriptIdx);
   const dd = a.indexOf('--');
   const beforeDD = dd < 0 ? a : a.slice(0, dd);                    // after "--" everything belongs to the script
   const hasIn = (list, ...names) => names.some((n) => list.includes(n));
@@ -57,23 +61,25 @@ function hardRefusal(cmd, args, depth) {
   // starts, which is code execution without a project file. No tool the agent runs needs it, whichever tool it is given to.
   if (beforeDD.some((x) => abbrev(x, ['node-options']))) return '--node-options injects code into Node processes and is not allowed';
   if (base === 'node' || base === 'deno' || base === 'bun') {
-    if (hasIn(head, '-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || evalCluster(head) ||
-        prefixIn(head, '--eval=', '--print=', '--require=', '--import=', '--loader=', '--experimental-loader=', '--inspect', '--debug'))
+    if (hasIn(ihead, '-e', '--eval', '-p', '--print', '-r', '--require', '--import', '--loader', '--experimental-loader', '-i', '--interactive') || evalCluster(ihead) ||
+        prefixIn(ihead, '--eval=', '--print=', '--require=', '--import=', '--loader=', '--experimental-loader=', '--inspect', '--debug'))
       return base + ' with inline code, a preload or an inspector is not allowed';
     if (base === 'deno' && sub === 'eval') return 'deno eval is not allowed';
   }
+  let pyMod = null, pyAfter = 0;      // the module `python -m` runs, and where its arguments start
   if (isPython(base)) {
     const mIdx = a.indexOf('-m');
-    const pyHead = mIdx >= 0 && (firstPos < 0 || mIdx < firstPos) ? a.slice(0, mIdx) : head;
+    const pyHead = mIdx >= 0 && (scriptIdx < 0 || mIdx < scriptIdx) ? a.slice(0, mIdx) : ihead;
     if (hasIn(pyHead, '-i') || pyHead.some((x) => x === '-c' || (/^-[A-Za-z]*c/.test(x) && !/^--/.test(x))))
       return 'python with inline code is not allowed';
     // -m <module>, also attached (-mtimeit) or clustered (-Im timeit)
-    for (let i = 0; i < a.length && (firstPos < 0 || i <= firstPos); i++) {
-      let mod = null;
-      if (a[i] === '-m') mod = a[i + 1];
+    for (let i = 0; i < a.length && (scriptIdx < 0 || i < scriptIdx); i++) {
+      let mod = null, after = i + 1;
+      if (a[i] === '-m') { mod = a[i + 1]; after = i + 2; }
       else if (/^-[A-Za-z]*m.+/.test(a[i]) && !/^--/.test(a[i])) mod = a[i].replace(/^-[A-Za-z]*?m/, '');
-      else if (/^-[A-Za-z]*m$/.test(a[i]) && !/^--/.test(a[i])) mod = a[i + 1];
+      else if (/^-[A-Za-z]*m$/.test(a[i]) && !/^--/.test(a[i])) { mod = a[i + 1]; after = i + 2; }
       if (mod != null) {
+        pyMod = String(mod).split('.')[0]; pyAfter = after;
         const top = String(mod).split('.')[0];
         if (!PY_MODULES.has(top)) return 'python -m ' + String(mod).slice(0, 30) + ' is not allowed (only test, lint, build-check and pip modules)';
         break;
@@ -126,7 +132,14 @@ function hardRefusal(cmd, args, depth) {
     if (beforeDD.some((x) => (sub === 'clone' && x === '-c') || /^--config(=|$)/.test(x) || /^--template(=|$)/.test(x) || /^--separate-git-dir(=|$)/.test(x) || abbrev(x, ['config', 'template', 'separate-git-dir'])))
       return 'git --config / --template / --separate-git-dir are not allowed';
     // clone / init create a repository where the argument says, relative to the workspace: not outside it
+    if (sub === 'clone') {
+      // -u upload-pack, -c / -c<k=v> config, -s shared, -l local; --reference / --shared / --dissociate read or borrow another repository
+      if (a.slice(firstPos + 1).some((x) => (/^-[A-Za-z]+$/.test(x) && /[uscl]/.test(x)) || /^-c./.test(x) || /^--(reference|reference-if-able|shared|dissociate|local|no-hardlinks|upload-pack|template|config|separate-git-dir)/.test(x) || abbrev(x, ['reference', 'reference-if-able', 'shared', 'dissociate', 'local', 'upload-pack', 'template', 'config', 'separate-git-dir'])))
+        return 'git clone options that run helpers, write configuration or borrow another repository are not allowed';
+    }
     if (sub === 'clone' || sub === 'init') {
+      // file: URLs name a local path as surely as a bare path does
+      if (a.slice(firstPos + 1).some((x) => /^file:/i.test(x))) return 'git ' + sub + ' from a file: URL is not allowed';
       const isUrl = (x) => /^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(x) || /^[\w.-]+@[\w.-]+:/.test(x);
       for (const x of a.slice(firstPos + 1)) {
         if (x.startsWith('-') || isUrl(x)) continue;
@@ -147,8 +160,7 @@ function hardRefusal(cmd, args, depth) {
   if (base === 'cargo' && (beforeDD.some((x) => /^--config(=|$)/.test(x)) || beforeDD.some((x) => /^-Z/.test(x)))) return 'cargo --config / -Z overrides are not allowed';
   if (base === 'cargo' && sub && ['publish', 'login', 'owner', 'yank', 'logout'].includes(sub)) return 'cargo "' + sub + '" is not allowed';
   // pip, and the same pip run as `python -m pip`
-  const mPip = isPython(base) ? a.indexOf('-m') : -1;
-  const pipArgs = (base === 'pip' || base === 'pip3') ? beforeDD : (mPip >= 0 && a[mPip + 1] === 'pip' ? a.slice(mPip + 2, dd < 0 ? undefined : dd) : null);
+  const pipArgs = (base === 'pip' || base === 'pip3') ? beforeDD : (pyMod === 'pip' ? a.slice(pyAfter, dd < 0 ? undefined : dd) : null);
   // -i / -f take attached values too (-ihttp://evil/simple)
   if (pipArgs && (pipArgs.some((x) => /^-[^-]/.test(x) && /[if]/.test(x)) || pipArgs.some((x) => abbrev(x, ['index-url', 'extra-index-url', 'trusted-host', 'config-settings', 'find-links', 'proxy', 'break-system-packages']))))
     return 'pip index / system overrides are not allowed';

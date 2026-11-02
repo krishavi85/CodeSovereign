@@ -32,7 +32,7 @@ function emptyHooksDir() {
 }
 function gitEnv(root) {
   const cfg = [['core.fsmonitor', 'false']];
-  if (!trust.isTrusted(root)) cfg.push(['core.hooksPath', emptyHooksDir()]);
+  if (!trust.isTrusted(root)) { cfg.push(['core.hooksPath', emptyHooksDir()]); cfg.push(['http.sslVerify', 'true']); }   // certificate checking cannot be switched off by the folder
   const env = Object.assign({}, sanitizedEnv(), { GIT_TERMINAL_PROMPT: '0', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_COUNT: String(cfg.length) });
   if (process.env.SSH_AUTH_SOCK) env.SSH_AUTH_SOCK = process.env.SSH_AUTH_SOCK;      // ssh-agent for push/fetch over ssh
   for (const k of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) if (process.env[k]) env[k] = process.env[k];   // identity only
@@ -88,7 +88,12 @@ const RUNS_PROGRAMS = [
   /^filter\..+\.(clean|smudge|process)$/i, /^merge\..+\.driver$/i, /^diff\..+\.(command|textconv)$/i, /^diff\.external$/i,
   /^core\.(sshcommand|gitproxy|askpass|editor|pager)$/i, /^gpg(\..+)?\.program$/i, /^credential(\..+)?\.helper$/i,
   /^sequence\.editor$/i, /^pager\..+/i, /^remote\..+\.(uploadpack|receivepack|vcs)$/i, /^protocol\.ext\.allow$/i,
-  /^uploadpack\.packobjectshook$/i, /^include(if)?\..+/i
+  /^uploadpack\.packobjectshook$/i, /^include(if)?\..+/i,
+  // not programs, but they point git (or its network traffic) somewhere the user did not choose: a work tree or git
+  // dir outside the project, certificate checking / CA / proxy / headers / cookies on https, rewritten remote URLs
+  /^core\.(worktree|gitdir|alternaterefscommand)$/i,
+  /^http(\..+)?\.(sslverify|sslcainfo|sslcapath|sslcert|sslkey|proxy|proxyauthmethod|extraheader|cookiefile|savecookies|sslcertpasswordprotected)$/i,
+  /^https?\.proxy$/i, /^url\..+\.(insteadof|pushinsteadof)$/i
 ];
 const scanCache = new Map(); // root -> { at, keys }
 function dangerousLocalKeys(root) {

@@ -174,6 +174,7 @@
       if (/[\u0000-\u001f]/.test(a)) return refuse('control characters in an argument');
       if (/(&&|\|\||[|;&<>`]|\$\()/.test(a)) return refuse('shell operators are not allowed in arguments (' + a.slice(0, 20) + ')');
       if (/%[A-Za-z_]+%|\$\{?[A-Za-z_]/.test(a)) return refuse('environment-variable expansion is not allowed in arguments');
+      if (/^file:/i.test(a)) return refuse('file: URLs name local paths and are not allowed');
       if (escapesProject(a)) return refuse('"' + a.slice(0, 40) + '" points outside the project');
     }
     // long options are matched the way nopt / argparse parse them: any unambiguous abbreviation counts

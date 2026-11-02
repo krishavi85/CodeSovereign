@@ -32,5 +32,19 @@ module.exports = async function (t) {
   t.ok('a redirect loop stops after a few hops instead of running forever', r.redirectBlocked === true);
   r = await fetchUrl({ url: base + '/' });
   t.equal('an ordinary response is unchanged', r.text, 'plain');
+  // the destination is bound to what was vetted: a name that resolves to a private address is refused,
+  // and a second lookup (DNS rebinding) is never made because the connection uses the vetted address
+  const dns = require("dns");
+  const realLookup = dns.promises.lookup;
+  let lookups = 0;
+  dns.promises.lookup = async (h, o) => { lookups++; if (h === "rebind.example") return [{ address: "169.254.169.254", family: 4 }]; return realLookup.call(dns.promises, h, o); };
+  let err = null;
+  try { await fetchUrl({ url: "https://rebind.example/" }); } catch (e) { err = e; }
+  t.ok("a name that resolves to a link-local address is refused before any connection", !!err && /private or link-local/.test(err.message));
+  lookups = 0;
+  await fetchUrl({ url: base + "/" });
+  t.equal("one request makes exactly one lookup (the connection reuses the vetted address)", lookups, 1);
+  dns.promises.lookup = realLookup;
   origin.close(); target.close();
 };
+

@@ -46,6 +46,11 @@ module.exports = async function (t) {
   ws.setRoot(merge);
   t.ok('a repository-local merge driver is flagged', (await git.exec(['merge', 'x'])).needsTrust === true);
 
+  for (const [name, key, val] of [['worktree', 'core.worktree', '/'], ['tls', 'http.sslVerify', 'false'], ['ca', 'http.sslCAInfo', '/tmp/evil.pem'], ['proxy', 'http.proxy', 'http://evil:1'], ['rewrite', 'url.file:///evil/.insteadOf', 'https://github.com/']]) {
+    const d = mk('k-' + name); cfg(d, key, val); ws.setRoot(d);
+    const rr = await git.exec(['status']);
+    t.ok('a repository-local ' + key + ' is flagged', rr.needsTrust === true);
+  }
   const benign = mk('benign');
   cfg(benign, 'user.name', 'n'); cfg(benign, 'user.email', 'a@b.c'); cfg(benign, 'core.autocrlf', 'false');
   ws.setRoot(benign);
