@@ -438,6 +438,67 @@ async function run() {
       check('S5: nothing is left running afterwards', active() === 0, 'active=' + active());
     }
 
+    /* ── S6/S7: the renderer crashes, and a window is closed, in the middle of a streaming answer ── */
+    {
+      const active = () => (typeof global.__csActiveStreams === 'function' ? global.__csActiveStreams() : -1);
+      const uncaught = []; const onUncaught = (e) => uncaught.push(String(e && e.message || e)); process.on('uncaughtException', onUncaught); process.on('unhandledRejection', onUncaught);
+      const chatUrl = baseUrl + '/api/chat';
+      const longBody = { model, stream: true, messages: [{ role: 'user', content: 'Count from 1 to 1000, one number per line, nothing else.' }], options: { num_predict: 3000 } };
+      const shortBody = { model, stream: true, messages: [{ role: 'user', content: 'Say hello in five words.' }], options: { num_predict: 24 } };
+      const longStream = (w) => w.webContents.executeJavaScript('(function () { window.__s6 = { chunks: 0 }; window.desktop.ai.stream({ url: ' + JSON.stringify(chatUrl) + ', method: "POST", body: ' + JSON.stringify(longBody) + ', timeoutMs: 600000 }, function () { window.__s6.chunks++; }).done.catch(function () {}); return true; })()');
+      const waitChunks = async (w) => { for (let i = 0; i < 240; i++) { await new Promise((r) => setTimeout(r, 500)); try { if ((await w.webContents.executeJavaScript('window.__s6.chunks')) > 2) return true; } catch (_) {} } return false; };
+      const drain = async () => { let n = active(); for (let i = 0; i < 40 && n !== 0; i++) { await new Promise((r) => setTimeout(r, 250)); n = active(); } return n; };
+
+      await longStream(win);
+      const gotA = await waitChunks(win);
+      const beforeCrash = active();
+      const gone = new Promise((r) => win.webContents.once('render-process-gone', (_e, d) => r(d && d.reason)));
+      win.webContents.forcefullyCrashRenderer();
+      const reason = await Promise.race([gone, new Promise((r) => setTimeout(() => r('timeout'), 15000))]);
+      const afterCrash = await drain();
+      check('S6: the renderer crashed in the middle of a streaming answer, and the main process ended the stream', gotA && beforeCrash === 1 && reason !== 'timeout' && afterCrash === 0, 'chunks=' + gotA + ' before=' + beforeCrash + ' reason=' + reason + ' after=' + afterCrash);
+      const reloaded = new Promise((r) => win.webContents.once('did-finish-load', r));
+      win.webContents.reload();
+      await reloaded; await new Promise((r) => setTimeout(r, 1500));
+      const rec = JSON.parse(await win.webContents.executeJavaScript('(async function () { var n = 0; var r = await window.desktop.ai.stream({ url: ' + JSON.stringify(chatUrl) + ', method: "POST", body: ' + JSON.stringify(shortBody) + ', timeoutMs: 120000 }, function () { n++; }).done; return JSON.stringify({ ok: r && r.ok, chunks: n, info: !!(await window.desktop.info()) }); })()'));
+      check('S6: after the crash the page reloads and works again (a new model request completes, privileged calls answer)', rec.ok === true && rec.chunks > 0 && rec.info === true && active() === 0, JSON.stringify(rec));
+
+      const w2 = new BrowserWindow({ show: false, width: 800, height: 600, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+      await w2.loadFile(RENDERER); await new Promise((r) => setTimeout(r, 1000));
+      await longStream(w2);
+      const gotB = await waitChunks(w2);
+      const beforeClose = active();
+      w2.close();
+      const afterClose = await drain();
+      await new Promise((r) => setTimeout(r, 1500));
+      check('S7: a window closed in the middle of a streaming answer ends the request and leaves nothing running', gotB && beforeClose === 1 && afterClose === 0, 'chunks=' + gotB + ' before=' + beforeClose + ' after=' + afterClose);
+      check('S6/S7: no uncaught exception or unhandled rejection in the main process', uncaught.length === 0, JSON.stringify(uncaught.slice(0, 3)));
+      process.removeListener('uncaughtException', onUncaught); process.removeListener('unhandledRejection', onUncaught);
+    }
+
+    /* ── S8: a terminal must not outlive the window that opened it (closed, or reloaded) ── */
+    {
+      const terms = () => (typeof global.__csTerminals === 'function' ? global.__csTerminals() : -1);
+      const waitZero = async () => { let n = terms(); for (let i = 0; i < 40 && n !== 0; i++) { await new Promise((r) => setTimeout(r, 250)); n = terms(); } return n; };
+      const openTerm = async (w) => w.webContents.executeJavaScript('window.desktop.terminal.create({}).then(function (r) { return !!(r && r.ok !== false); }, function () { return false; })');
+      const mk = async () => { const w = new BrowserWindow({ show: false, width: 800, height: 600, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } }); await w.loadFile(RENDERER); await new Promise((r) => setTimeout(r, 1000)); return w; };
+      const w3 = await mk();
+      const made3 = await openTerm(w3);
+      const open3 = terms();
+      w3.close();
+      const left3 = await waitZero();
+      check('S8: closing the window that owns a terminal kills the shell', made3 && open3 === 1 && left3 === 0, 'created=' + made3 + ' open=' + open3 + ' after=' + left3);
+      const w4 = await mk();
+      const made4 = await openTerm(w4);
+      const open4 = terms();
+      const reloaded4 = new Promise((r) => w4.webContents.once('did-finish-load', r));
+      w4.webContents.reload();
+      await reloaded4;
+      const left4 = await waitZero();
+      check('S8: reloading the page that owns a terminal kills the shell', made4 && open4 === 1 && left4 === 0, 'created=' + made4 + ' open=' + open4 + ' after=' + left4);
+      try { w4.destroy(); } catch (_) {}
+    }
+
     /* ── scenario 4: the user breaks working code; the agent diagnoses and repairs it; the result is kept for the reopen ── */
     const t4 = byId(taskIds[2] || 'regression-rounding');
     const dir4 = path.join(tmp, 'broken-' + t4.id);

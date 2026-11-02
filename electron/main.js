@@ -25,7 +25,7 @@ const streamRelay = require('./lib/stream-relay');
 const ipcGuard = require('./lib/ipc-guard');
 // in-flight model streams by id, so quitting can cancel them instead of leaving requests writing to closed windows
 const aiStreams = new Map();
-if (process.argv.includes('--acceptance-agent')) global.__csActiveStreams = () => aiStreams.size; // lets the acceptance run prove no stream is left behind
+if (process.argv.includes('--acceptance-agent')) global.__csActiveStreams = () => aiStreams.size; if (process.argv.includes('--acceptance-agent')) global.__csTerminals = () => terminalManager.count(); // lets the acceptance run prove no stream is left behind
 const openclawManager = require('./lib/openclaw-manager');
 const hermesManager = require('./lib/hermes-manager');
 const terminalManager = require('./lib/terminal-manager');
@@ -753,7 +753,19 @@ function registerIpc() {
     } catch (e) { return fail(e); }
   });
   ipcMain.handle('hermes:openSetup', async () => {
-    try { return hermesManager.openSetup(); } catch (e) { return fail(e); }
+    try {
+      // opens a terminal running Hermes' interactive setup (provider, model, credentials): ask first, like the other Hermes steps
+      const r = await dialog.showMessageBox(win, {
+        type: 'question', noLink: true,
+        title: 'Open Hermes setup?',
+        message: 'Open a terminal window and run `hermes setup`?',
+        detail: 'Hermes\' own interactive setup asks for your model provider and credentials. It runs in a separate terminal window with your account\'s permissions; CodeSovereign does not see what you type there.',
+        buttons: ['Open setup', 'Cancel'], defaultId: 1, cancelId: 1
+      });
+      if (r.response !== 0) return { ok: false, error: 'declined' };
+      trust.audit({ kind: 'hermes-setup', cmd: 'hermes setup', cwd: workspace.getRoot() || '' });
+      return hermesManager.openSetup();
+    } catch (e) { return fail(e); }
   });
   ipcMain.handle('hermes:setupApiServer', async () => {
     try {
@@ -801,9 +813,16 @@ function registerIpc() {
       if (!terminalManager.ptyAvailable()) return { ok: false, error: 'terminal engine unavailable (node-pty failed to load)' };
       const id = crypto.randomUUID();
       const sender = event.sender;
+      // output goes through the relay: when the window closes, crashes or reloads the shell is killed instead of
+      // running on with nobody listening, and a send to a disposed frame cannot throw
+      const relay = streamRelay.create(sender, 'terminal:data', id, () => { try { terminalManager.kill(id); } catch (_) {} });
       const res = await terminalManager.create(id, opts || {},
-        (data) => { if (!sender.isDestroyed()) sender.send('terminal:data', { id, data }); },
-        (info) => { if (!sender.isDestroyed()) sender.send('terminal:exit', Object.assign({ id }, info)); });
+        (data) => { relay.push(data); },
+        (info) => {
+          relay.done();
+          try { if (!sender.isDestroyed()) sender.send('terminal:exit', Object.assign({ id }, info)); } catch (_) {}
+        });
+      if (res && res.ok === false) relay.done();
       return res;
     } catch (e) { return fail(e); }
   });

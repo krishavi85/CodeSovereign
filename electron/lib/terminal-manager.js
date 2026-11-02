@@ -172,4 +172,6 @@ function killAll() {
   for (const id of Array.from(terminals.keys())) kill(id);
 }
 
-module.exports = { ptyAvailable, detectShells, create, write, resize, kill, killAll };
+function count() { return terminals.size; }
+
+module.exports = { ptyAvailable, detectShells, create, write, resize, kill, killAll, count };
