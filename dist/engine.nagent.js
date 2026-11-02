@@ -233,7 +233,7 @@
     if (base === 'npx') return res('network', 'downloads and runs a package (network, arbitrary code)');
     if (base === 'git') {
       if (!sub) return refuse('a git subcommand is required');
-      if (has('-c', '--exec-path') || hasPrefix('--git-dir') || hasPrefix('--work-tree') || hasPrefix('-C')) return refuse('git configuration / path overrides are not allowed');
+      if (has('-c', '--exec-path') || hasPrefix('--git-dir') || hasPrefix('--work-tree') || hasPrefix('-C') || hasPrefix('--separate-git-dir') || hasPrefix('--template') || hasPrefix('--config')) return refuse('git configuration / path overrides are not allowed');
       if (['status', 'diff', 'log', 'show', 'rev-parse', 'ls-files', 'blame', 'shortlog', 'describe', 'grep', 'cat-file'].indexOf(sub) >= 0) return res('read');
       if (sub === 'branch') return has('-d', '-D', '-m', '-M', '--delete', '--move', '-f', '--force') ? res('destructive', 'deletes or moves a branch') : res('read');
       if (sub === 'stash') return args.indexOf('drop') >= 0 || args.indexOf('clear') >= 0 ? res('destructive', 'drops stashes') : res('exec');
