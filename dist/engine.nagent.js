@@ -214,7 +214,7 @@
       return refuse('node may only run a project .js/.mjs/.cjs file or --test');
     }
     if (base === 'npm' || base === 'pnpm' || base === 'yarn' || base === 'bun') {
-      if (has('-g', '--global', '--location=global') || hasPrefix('--script-shell') || hasPrefix('--shell') || hasPrefix('--registry') || hasPrefix('--userconfig') || hasPrefix('--prefix') || hasPrefix('--globalconfig'))
+      if (has('-g', '--global', '--location=global') || hasPrefix('--script-shell') || hasPrefix('--shell') || hasPrefix('--registry') || hasPrefix('--userconfig') || hasPrefix('--prefix') || hasPrefix('--globalconfig') || args.some(function (x) { return abbrev(x, ['registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell']); }))
         return refuse('changing global installs or package-manager configuration is not allowed');
       if (!sub) return refuse('a subcommand is required');
       if (sub === 'test' || sub === 't' || sub === 'tst') return res('exec', 'runs the project\'s test script');

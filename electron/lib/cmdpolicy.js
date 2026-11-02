@@ -116,7 +116,8 @@ function hardRefusal(cmd, args, depth) {
   if (isRunner && (beforeDD.some((x) => /^-[^-]/.test(x) && x.indexOf('c') >= 0) || beforeDD.some((x) => abbrev(x, ['call', 'shell-mode', 'registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell', 'shell']))))
     return base + ' with a shell command or registry / configuration overrides is not allowed';
   if (isPm) {
-    if (hasIn(beforeDD, '-g', '--global', '--location=global') || prefixIn(beforeDD, '--registry', '--userconfig', '--globalconfig', '--prefix', '--script-shell', '--shell'))
+    if (hasIn(beforeDD, '-g', '--global', '--location=global') || prefixIn(beforeDD, '--registry', '--userconfig', '--globalconfig', '--prefix', '--script-shell', '--shell') ||
+        beforeDD.some((x) => abbrev(x, ['registry', 'userconfig', 'globalconfig', 'prefix', 'script-shell'])))
       return 'changing global installs or package-manager configuration is not allowed';
     if (sub && ['publish', 'unpublish', 'deprecate', 'login', 'adduser', 'logout', 'token', 'config', 'set', 'owner', 'access', 'team', 'org', 'profile', 'whoami', 'set-script', 'link', 'unlink'].includes(sub))
       return base + ' "' + sub + '" is not allowed (it publishes, changes accounts or changes configuration)';

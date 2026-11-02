@@ -51,6 +51,32 @@ module.exports = async function (t) {
     const rr = await git.exec(['status']);
     t.ok('a repository-local ' + key + ' is flagged', rr.needsTrust === true);
   }
+  // layout that sends git to another repository: gitfile / commondir / alternates
+  const elsewhere = mk('elsewhere');
+  const gf = path.join(base, 'gitfile');
+  fs.mkdirSync(gf);
+  fs.writeFileSync(path.join(gf, '.git'), 'gitdir: ' + path.join(elsewhere, '.git') + '\n');
+  ws.setRoot(gf);
+  r = await git.exec(['status']);
+  t.ok('a .git file pointing at another repository is flagged', r.needsTrust === true && (r.keys || []).some((k) => /points outside/.test(k)));
+  const gfIn = path.join(base, 'gitfile-in');
+  fs.mkdirSync(path.join(gfIn, 'data'), { recursive: true });
+  spawnSync('git', ['init', '-q', '--separate-git-dir', path.join(gfIn, 'data', 'g'), gfIn]);
+  ws.setRoot(gfIn);
+  r = await git.exec(['rev-parse', '--is-inside-work-tree']);
+  t.ok('a .git file pointing INSIDE the folder is fine', !r.needsTrust);
+  const alt = mk('alt');
+  fs.mkdirSync(path.join(alt, '.git', 'objects', 'info'), { recursive: true });
+  fs.writeFileSync(path.join(alt, '.git', 'objects', 'info', 'alternates'), path.join(elsewhere, '.git', 'objects') + '\n');
+  ws.setRoot(alt);
+  r = await git.exec(['status']);
+  t.ok('objects/info/alternates is flagged', r.needsTrust === true && (r.keys || []).some((k) => /alternates/.test(k)));
+  const cd = mk('commondir');
+  fs.writeFileSync(path.join(cd, '.git', 'commondir'), path.join(elsewhere, '.git') + '\n');
+  ws.setRoot(cd);
+  r = await git.exec(['status']);
+  t.ok('.git/commondir is flagged', r.needsTrust === true && (r.keys || []).some((k) => /commondir/.test(k)));
+
   const benign = mk('benign');
   cfg(benign, 'user.name', 'n'); cfg(benign, 'user.email', 'a@b.c'); cfg(benign, 'core.autocrlf', 'false');
   ws.setRoot(benign);

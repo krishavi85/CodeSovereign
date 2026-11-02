@@ -34,7 +34,7 @@
     if (cache == null) { mounted.innerHTML = row('Checking git…'); return; }
     if (cache.needsTrust) {
       mounted.innerHTML =
-        '<div style="padding:16px;font-size:12.5px;color:#8b93a7">This repository\'s own configuration can run programs on your computer (' +
+        '<div style="padding:16px;font-size:12.5px;color:#8b93a7">This repository\'s own configuration or layout can run programs or point Git outside this folder (' +
         (cache.keys || []).slice(0, 2).map(function (k) { return String(k).replace(/[<>&"]/g, ''); }).join(', ') + '). Git is paused until you trust the folder.' +
         '<div style="margin-top:10px"><button class="btn primary" id="gTrust" style="padding:5px 11px;font-size:12px">Review and trust…</button></div></div>';
       mounted.querySelector('#gTrust').onclick = function () { D.git.exec(['status']).then(refresh, refresh); };

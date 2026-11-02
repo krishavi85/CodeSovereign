@@ -95,6 +95,28 @@ const RUNS_PROGRAMS = [
   /^http(\..+)?\.(sslverify|sslcainfo|sslcapath|sslcert|sslkey|proxy|proxyauthmethod|extraheader|cookiefile|savecookies|sslcertpasswordprotected)$/i,
   /^https?\.proxy$/i, /^url\..+\.(insteadof|pushinsteadof)$/i
 ];
+// Layout that sends git to another repository on disk: a .git that is a symlink or a gitfile pointing outside the folder,
+// .git/commondir (shared worktree data), objects/info/alternates (borrowed objects). The config of the target looks
+// ordinary, so the config scan alone cannot see this.
+function layoutIssues(root) {
+  const g = path.join(root, '.git');
+  let st;
+  try { st = fs.lstatSync(g); } catch (_) { return []; }
+  const issues = [];
+  const insideRoot = (p) => { const r = path.relative(path.resolve(root), path.resolve(p)); return !!r && !r.startsWith('..') && !path.isAbsolute(r); };
+  if (st.isSymbolicLink()) issues.push('.git (symbolic link)');
+  else if (st.isFile()) {
+    let txt = '';
+    try { txt = fs.readFileSync(g, 'utf8'); } catch (_) {}
+    const m = /^gitdir:\s*(.+)$/m.exec(txt);
+    if (!m || !insideRoot(path.resolve(root, m[1].trim()))) issues.push('.git (points outside the folder)');
+  } else {
+    for (const rel of ['commondir', 'objects/info/alternates', 'objects/info/http-alternates']) {
+      try { fs.lstatSync(path.join(g, rel)); issues.push('.git/' + rel); } catch (_) {}
+    }
+  }
+  return issues;
+}
 const scanCache = new Map(); // root -> { at, keys }
 function dangerousLocalKeys(root) {
   const hit = scanCache.get(root);
@@ -125,9 +147,9 @@ async function exec(args) {
   const bad = validateArgs(args) || cmdpolicy.hardRefusal('git', args);
   if (bad) return { code: -1, stdout: '', stderr: bad };
   if (!trust.isTrusted(root)) {
-    const keys = await dangerousLocalKeys(root);
+    const keys = layoutIssues(root).concat(await dangerousLocalKeys(root));
     if (keys.length) {
-      return { code: -1, stdout: '', stderr: 'This repository\'s own configuration can run programs (' + keys.slice(0, 3).join(', ') + '). Trust the folder to use Git here.', needsTrust: true, keys };
+      return { code: -1, stdout: '', stderr: 'This repository\'s own configuration or layout can run programs or point Git outside this folder (' + keys.slice(0, 3).join(', ') + '). Trust the folder to use Git here.', needsTrust: true, keys };
     }
   }
   return new Promise((resolve) => {
