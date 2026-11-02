@@ -21,6 +21,11 @@ const observer = require('./lib/observer');
 const trust = require('./lib/trust');
 const hardware = require('./lib/hardware');
 const aihost = require('./lib/aihost');
+const streamRelay = require('./lib/stream-relay');
+const ipcGuard = require('./lib/ipc-guard');
+// in-flight model streams by id, so quitting can cancel them instead of leaving requests writing to closed windows
+const aiStreams = new Map();
+if (process.argv.includes('--acceptance-agent')) global.__csActiveStreams = () => aiStreams.size; // lets the acceptance run prove no stream is left behind
 const openclawManager = require('./lib/openclaw-manager');
 const hermesManager = require('./lib/hermes-manager');
 const terminalManager = require('./lib/terminal-manager');
@@ -193,6 +198,8 @@ function ok(data) { return { ok: true, ...data }; }
 function fail(e) { return { ok: false, error: String(e && e.message || e) }; }
 
 function registerIpc() {
+  // every channel below answers only the app's own top-level page (checked here, in the main process)
+  ipcGuard.install(ipcMain, ipcGuard.makeTrust(RENDERER), (ch, e) => console.warn('[ipc] refused ' + ch + ' from ' + (e && e.senderFrame && e.senderFrame.url)));
   ipcMain.handle('app:info', () => ({
     app: app.getVersion(),
     electron: process.versions.electron,
@@ -806,22 +813,23 @@ function registerIpc() {
   // Streaming variant of ai:request for the chat panel: same host allow-list,
   // but each chunk is pushed to the sender as it arrives ('ai:stream-chunk'),
   // and ai:stream-abort cancels the in-flight request by streamId.
-  const aiStreams = new Map();
   ipcMain.handle('ai:stream', async (event, opts) => {
     const o = opts || {};
     const id = String(o.streamId || '');
     if (!id || typeof o.url !== 'string') return fail('streamId and url required');
-    const sender = event.sender;
+    if (aiStreams.has(id)) return fail('streamId already in use');
+    let abortFn = null;
+    const relay = streamRelay.create(event.sender, 'ai:stream-chunk', id, () => { if (abortFn) abortFn(); });
     try {
       const r = await aihost.request({
         url: o.url, method: o.method, headers: o.headers, body: o.body, timeoutMs: o.timeoutMs,
         partialOnTimeout: true,
-        onData: (data) => { if (!sender.isDestroyed()) sender.send('ai:stream-chunk', { id, data }); },
-        onAbort: (fn) => aiStreams.set(id, fn)
+        onData: (data) => { relay.push(data); },
+        onAbort: (fn) => { abortFn = fn; aiStreams.set(id, fn); if (relay.dead) fn(); }
       });
       return r;
     } catch (e) { return fail(e); }
-    finally { aiStreams.delete(id); }
+    finally { relay.done(); aiStreams.delete(id); }
   });
   ipcMain.handle('ai:stream-abort', async (_e, id) => {
     const fn = aiStreams.get(String(id));
@@ -901,7 +909,7 @@ if (!app.requestSingleInstanceLock()) {
   });
 
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
-  app.on('before-quit', () => { proc.killAllSync(); observer.stop(); terminalManager.killAll(); try { hermesManager.stopGateway(); } catch (_) {} });
+  app.on('before-quit', () => { for (const fn of Array.from(aiStreams.values())) { try { fn(); } catch (_) {} } proc.killAllSync(); observer.stop(); terminalManager.killAll(); try { hermesManager.stopGateway(); } catch (_) {} });
 }
 
 /* -------- observer integration check: serve a fixture page, crawl it -------- */

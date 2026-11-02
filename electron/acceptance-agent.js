@@ -89,7 +89,7 @@ function readTree(dir, rel) {
 function judge(dir) {
   return new Promise((resolve) => {
     let out = '';
-    const child = spawn(process.execPath, ['--test', '--test-reporter=spec'], { cwd: dir, windowsHide: true, env: Object.assign({}, process.env, { NODE_OPTIONS: '', FORCE_COLOR: '0', ELECTRON_RUN_AS_NODE: '1' }) });
+    const child = spawn('node', ['--test', '--test-reporter=spec'], { cwd: dir, windowsHide: true, env: Object.assign({}, process.env, { NODE_OPTIONS: '', FORCE_COLOR: '0' }) }) /* the shipped build has the RunAsNode fuse off, so the judge uses the system Node */;
     const timer = setTimeout(() => { try { child.kill(); } catch (_) {} }, 120000);
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });
@@ -290,6 +290,9 @@ async function run() {
       if (level === 'error' || level === 3) rendererErrors.push(String(message).slice(0, 300));
     });
     const exec = async (src) => JSON.parse(await win.webContents.executeJavaScript(src));
+    if (process.env.CS_AGENT_DEBUG === '1') setInterval(() => {
+      win.webContents.executeJavaScript("(function(){var t=window.Engine&&window.Engine.NativeAgent&&window.Chat&&0;try{var C=window.__chat||null;}catch(e){}return document.title+' | '+((document.querySelector('[data-cs-task]')||{}).getAttribute?document.querySelector('[data-cs-task]').getAttribute('data-cs-task'):'-')+' | '+document.body.innerText.slice(-300).replace(/\s+/g,' ');})()").then((x) => console.log('[debug] ' + x), (e) => console.log('[debug] err ' + e.message));
+    }, 60000);
 
     if (PHASE === 'reopen') {
       await reopenPhase({ win, exec, tmp, model, baseUrl, shot });
@@ -393,6 +396,47 @@ async function run() {
     check('S3: shell operators in arguments are refused', pr.shellOp && pr.shellOp.ok === false, JSON.stringify(pr.shellOp));
     check('S3: reading outside the project is refused', pr.outside && pr.outside.ok === false, JSON.stringify(pr.outside));
     check('S3: network and destructive commands asked the user first', pr.askedCount >= 2, JSON.stringify(pr.asked));
+
+    /* a window that is NOT the app page, but has the same preload (what a navigated or injected page would look like):
+     * the main process must refuse its calls, while the real app window keeps working */
+    {
+      const rogue = new BrowserWindow({ show: false, width: 400, height: 300, webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: true } });
+      let rogueRes = null;
+      try {
+        await rogue.loadURL('data:text/html,<title>rogue</title><p>not the app</p>');
+        rogueRes = await rogue.webContents.executeJavaScript("window.desktop.info().then(function (r) { return { allowed: true, r: r }; }, function (e) { return { allowed: false, e: String(e && e.message || e) }; })");
+      } catch (e) { rogueRes = { allowed: false, e: String(e && e.message || e) }; }
+      try { rogue.destroy(); } catch (_) {}
+      check('S3: IPC from a page that is not the app window is refused by the main process', rogueRes && rogueRes.allowed === false && /IPC refused/.test(rogueRes.e || ''), JSON.stringify(rogueRes));
+      const appRes = await win.webContents.executeJavaScript("window.desktop.info().then(function (r) { return !!r; }, function () { return false; })");
+      check('S3: the real app window still gets answers', appRes === true);
+    }
+
+    /* ── S5: reload the page while a long model answer is streaming (stream relay + IPC guard together) ── */
+    {
+      const active = () => (typeof global.__csActiveStreams === 'function' ? global.__csActiveStreams() : -1);
+      const body = (n, prompt) => ({ model, stream: true, messages: [{ role: 'user', content: prompt }], options: { num_predict: n } });
+      const startOld = `(function () { window.__s5 = { chunks: 0, done: null };
+        var h = window.desktop.ai.stream({ url: ${JSON.stringify(baseUrl + '/api/chat')}, method: 'POST', body: ${JSON.stringify(body(3000, 'Count from 1 to 1000, one number per line, nothing else.'))}, timeoutMs: 600000 }, function () { window.__s5.chunks++; });
+        h.done.then(function (r) { window.__s5.done = r; }, function (e) { window.__s5.done = { error: String(e) }; }); return true; })()`;
+      await win.webContents.executeJavaScript(startOld);
+      let got = false;
+      for (let i = 0; i < 240 && !got; i++) { await new Promise((r) => setTimeout(r, 500)); got = (await win.webContents.executeJavaScript('window.__s5.chunks')) > 2; }
+      const during = active();
+      check('S5: a long model answer is streaming and tracked by the main process', got && during === 1, 'gotChunks=' + got + ' active=' + during);
+      const loaded = new Promise((r) => win.webContents.once('did-finish-load', r));
+      win.webContents.reload();
+      await loaded;
+      await new Promise((r) => setTimeout(r, 1500));
+      let left = active();
+      for (let i = 0; i < 40 && left !== 0; i++) { await new Promise((r) => setTimeout(r, 250)); left = active(); }
+      check('S5: reloading the page ended the old stream (no request left running in the main process)', left === 0, 'active=' + left);
+      const second = await win.webContents.executeJavaScript(`(async function () { var n = 0; var h = window.desktop.ai.stream({ url: ${JSON.stringify(baseUrl + '/api/chat')}, method: 'POST', body: ${JSON.stringify(body(24, 'Say hello in five words.'))}, timeoutMs: 120000 }, function () { n++; });
+        var r = await h.done; return JSON.stringify({ ok: r && r.ok, status: r && r.status, chunks: n, info: !!(await window.desktop.info()) }); })()`);
+      const sec = JSON.parse(second);
+      check('S5: a new model request in the reloaded page completes, and the page still gets privileged answers', sec.ok === true && sec.chunks > 0 && sec.info === true, second);
+      check('S5: nothing is left running afterwards', active() === 0, 'active=' + active());
+    }
 
     /* ── scenario 4: the user breaks working code; the agent diagnoses and repairs it; the result is kept for the reopen ── */
     const t4 = byId(taskIds[2] || 'regression-rounding');

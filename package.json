@@ -38,6 +38,13 @@
   "build": {
     "appId": "io.codesovereign.desktop",
     "productName": "CodeSovereign",
+    "electronFuses": {
+      "runAsNode": false,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
     "directories": {
       "output": "release",
       "buildResources": "build"
