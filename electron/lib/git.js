@@ -18,9 +18,15 @@ const { sanitizedEnv } = require('./proc');
 //  - diff / show / log never call an external diff or textconv program
 //  - the environment is the sanitized one: no tokens for a hook or filter to read
 // These go in through GIT_CONFIG_COUNT / KEY / VALUE (highest-precedence config), not `-c`.
+// The empty hooks directory is created fresh for this process with mkdtemp (unpredictable name, mode 0700 on POSIX),
+// never at a fixed path: a fixed shared-temp path could be pre-created by another user or process with hooks in it.
 let noHooksDir = null;
 function emptyHooksDir() {
-  if (!noHooksDir) { noHooksDir = path.join(os.tmpdir(), 'cs-no-hooks'); try { fs.mkdirSync(noHooksDir, { recursive: true }); } catch (_) {} }
+  if (!noHooksDir) {
+    noHooksDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cs-no-hooks-'));
+    try { fs.chmodSync(noHooksDir, 0o700); } catch (_) {}
+    process.once('exit', () => { try { fs.rmSync(noHooksDir, { recursive: true, force: true }); } catch (_) {} });
+  }
   return noHooksDir;
 }
 function gitEnv(root) {
@@ -124,4 +130,4 @@ async function status() {
   return { repo: true, branch, ahead, behind, files };
 }
 
-module.exports = { available, exec, status, validateArgs, ALLOWED_SUBCMDS };
+module.exports = { available, exec, status, validateArgs, ALLOWED_SUBCMDS, gitEnv };
